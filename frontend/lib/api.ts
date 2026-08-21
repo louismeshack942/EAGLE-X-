@@ -1,16 +1,17 @@
 /**
  * EAGLE-X API client.
  *
- * API_BASE is resolved at *runtime* (in the browser) so builds never freeze
- * a bad URL. Order: NEXT_PUBLIC_BACKEND_URL -> hardcoded Render URL -> localhost.
+ * In the browser we go through the same-origin runtime proxy (/api/proxy/*)
+ * — resolved by the server at request time, so builds never freeze a bad URL.
+ * NEXT_PUBLIC_BACKEND_URL, when set, still wins (direct connection, e.g. for
+ * debugging; Deriv OAuth endpoints are fine through the proxy too).
  */
 
+/** Browser: same-origin proxy. Server-side: BACKEND_URL or production default. */
 export const API_BASE =
   typeof window !== "undefined"
-    ? (process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") ??
-       "https://eaglex-backend.onrender.com")
-    : (process.env.BACKEND_URL?.replace(/\/$/, "") ??
-       "https://eaglex-backend.onrender.com");
+    ? (process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") || "/api/proxy")
+    : (process.env.BACKEND_URL?.replace(/\/$/, "") || "https://eaglex-backend.onrender.com");
 
 function join(path: string) {
   return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
