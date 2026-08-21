@@ -1,0 +1,2 @@
+file '/workspace/eagle-x/scripts/_tmp_videos/30-full-day-session-0.mp4'
+file '/workspace/eagle-x/scripts/_tmp_videos/30-full-day-session-1.mp4'

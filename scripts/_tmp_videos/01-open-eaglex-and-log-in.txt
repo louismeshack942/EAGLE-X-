@@ -1,0 +1,3 @@
+file '/workspace/eagle-x/scripts/_tmp_videos/01-open-eaglex-and-log-in-0.mp4'
+file '/workspace/eagle-x/scripts/_tmp_videos/01-open-eaglex-and-log-in-1.mp4'
+file '/workspace/eagle-x/scripts/_tmp_videos/01-open-eaglex-and-log-in-2.mp4'

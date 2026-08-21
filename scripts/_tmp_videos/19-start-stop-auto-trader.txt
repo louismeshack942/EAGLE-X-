@@ -1,0 +1,2 @@
+file '/workspace/eagle-x/scripts/_tmp_videos/19-start-stop-auto-trader-0.mp4'
+file '/workspace/eagle-x/scripts/_tmp_videos/19-start-stop-auto-trader-1.mp4'

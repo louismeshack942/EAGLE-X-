@@ -1,0 +1,3 @@
+file '/workspace/eagle-x/scripts/_tmp_videos/06-place-matches-trade-0.mp4'
+file '/workspace/eagle-x/scripts/_tmp_videos/06-place-matches-trade-1.mp4'
+file '/workspace/eagle-x/scripts/_tmp_videos/06-place-matches-trade-2.mp4'

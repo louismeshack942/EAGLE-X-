@@ -1,0 +1,272 @@
+[
+  {
+    "n": 1,
+    "slug": "open-eaglex-and-log-in",
+    "cat": "Beginner",
+    "title": "How to Open EAGLE-X and Log In",
+    "src": "/videos/01-open-eaglex-and-log-in.mp4",
+    "thumb": "/videos/thumbnails/01-open-eaglex-and-log-in.jpg",
+    "duration": 44
+  },
+  {
+    "n": 2,
+    "slug": "dashboard-layout",
+    "cat": "Beginner",
+    "title": "Understanding the Dashboard Layout",
+    "src": "/videos/02-dashboard-layout.mp4",
+    "thumb": "/videos/thumbnails/02-dashboard-layout.jpg",
+    "duration": 36
+  },
+  {
+    "n": 3,
+    "slug": "read-the-header",
+    "cat": "Beginner",
+    "title": "How to Read the Header",
+    "src": "/videos/03-read-the-header.mp4",
+    "thumb": "/videos/thumbnails/03-read-the-header.jpg",
+    "duration": 23
+  },
+  {
+    "n": 4,
+    "slug": "check-intelligence-engine",
+    "cat": "Beginner",
+    "title": "How to Check the Intelligence Engine",
+    "src": "/videos/04-check-intelligence-engine.mp4",
+    "thumb": "/videos/thumbnails/04-check-intelligence-engine.jpg",
+    "duration": 25
+  },
+  {
+    "n": 5,
+    "slug": "scan-all-markets",
+    "cat": "Beginner",
+    "title": "How to Scan All Markets",
+    "src": "/videos/05-scan-all-markets.mp4",
+    "thumb": "/videos/thumbnails/05-scan-all-markets.jpg",
+    "duration": 17
+  },
+  {
+    "n": 6,
+    "slug": "place-matches-trade",
+    "cat": "Beginner",
+    "title": "How to Place a MATCHES Trade",
+    "src": "/videos/06-place-matches-trade.mp4",
+    "thumb": "/videos/thumbnails/06-place-matches-trade.jpg",
+    "duration": 33
+  },
+  {
+    "n": 7,
+    "slug": "place-differs-trade",
+    "cat": "Beginner",
+    "title": "How to Place a DIFFERS Trade",
+    "src": "/videos/07-place-differs-trade.mp4",
+    "thumb": "/videos/thumbnails/07-place-differs-trade.jpg",
+    "duration": 18
+  },
+  {
+    "n": 8,
+    "slug": "place-odd-trade",
+    "cat": "Beginner",
+    "title": "How to Place an ODD Trade",
+    "src": "/videos/08-place-odd-trade.mp4",
+    "thumb": "/videos/thumbnails/08-place-odd-trade.jpg",
+    "duration": 13
+  },
+  {
+    "n": 9,
+    "slug": "place-even-trade",
+    "cat": "Beginner",
+    "title": "How to Place an EVEN Trade",
+    "src": "/videos/09-place-even-trade.mp4",
+    "thumb": "/videos/thumbnails/09-place-even-trade.jpg",
+    "duration": 12
+  },
+  {
+    "n": 10,
+    "slug": "place-over-under-trades",
+    "cat": "Beginner",
+    "title": "How to Place OVER and UNDER Trades",
+    "src": "/videos/10-place-over-under-trades.mp4",
+    "thumb": "/videos/thumbnails/10-place-over-under-trades.jpg",
+    "duration": 19
+  },
+  {
+    "n": 11,
+    "slug": "use-the-tick-timer",
+    "cat": "Intermediate",
+    "title": "How to Use the Tick Timer",
+    "src": "/videos/11-use-the-tick-timer.mp4",
+    "thumb": "/videos/thumbnails/11-use-the-tick-timer.jpg",
+    "duration": 22
+  },
+  {
+    "n": 12,
+    "slug": "read-market-master",
+    "cat": "Intermediate",
+    "title": "How to Read Market Master",
+    "src": "/videos/12-read-market-master.mp4",
+    "thumb": "/videos/thumbnails/12-read-market-master.jpg",
+    "duration": 22
+  },
+  {
+    "n": 13,
+    "slug": "digit-hacker-frequency",
+    "cat": "Intermediate",
+    "title": "Digit Hacker \u2013 Frequency Tab",
+    "src": "/videos/13-digit-hacker-frequency.mp4",
+    "thumb": "/videos/thumbnails/13-digit-hacker-frequency.jpg",
+    "duration": 21
+  },
+  {
+    "n": 14,
+    "slug": "digit-hacker-psychology",
+    "cat": "Intermediate",
+    "title": "Digit Hacker \u2013 Psychology Tab",
+    "src": "/videos/14-digit-hacker-psychology.mp4",
+    "thumb": "/videos/thumbnails/14-digit-hacker-psychology.jpg",
+    "duration": 24
+  },
+  {
+    "n": 15,
+    "slug": "digit-hacker-contract",
+    "cat": "Intermediate",
+    "title": "Digit Hacker \u2013 Contract Tab",
+    "src": "/videos/15-digit-hacker-contract.mp4",
+    "thumb": "/videos/thumbnails/15-digit-hacker-contract.jpg",
+    "duration": 13
+  },
+  {
+    "n": 16,
+    "slug": "digit-hacker-predictor",
+    "cat": "Intermediate",
+    "title": "Digit Hacker \u2013 Predictor Tab",
+    "src": "/videos/16-digit-hacker-predictor.mp4",
+    "thumb": "/videos/thumbnails/16-digit-hacker-predictor.jpg",
+    "duration": 9
+  },
+  {
+    "n": 17,
+    "slug": "digit-hacker-gaps",
+    "cat": "Intermediate",
+    "title": "Digit Hacker \u2013 Gaps Tab",
+    "src": "/videos/17-digit-hacker-gaps.mp4",
+    "thumb": "/videos/thumbnails/17-digit-hacker-gaps.jpg",
+    "duration": 13
+  },
+  {
+    "n": 18,
+    "slug": "use-paper-mode",
+    "cat": "Intermediate",
+    "title": "How to Use Paper Mode",
+    "src": "/videos/18-use-paper-mode.mp4",
+    "thumb": "/videos/thumbnails/18-use-paper-mode.jpg",
+    "duration": 18
+  },
+  {
+    "n": 19,
+    "slug": "start-stop-auto-trader",
+    "cat": "Intermediate",
+    "title": "How to Start and Stop Auto Trader",
+    "src": "/videos/19-start-stop-auto-trader.mp4",
+    "thumb": "/videos/thumbnails/19-start-stop-auto-trader.jpg",
+    "duration": 20
+  },
+  {
+    "n": 20,
+    "slug": "read-activity-log",
+    "cat": "Intermediate",
+    "title": "How to Read the Activity Log",
+    "src": "/videos/20-read-activity-log.mp4",
+    "thumb": "/videos/thumbnails/20-read-activity-log.jpg",
+    "duration": 10
+  },
+  {
+    "n": 21,
+    "slug": "strategy-builder-load-template",
+    "cat": "Advanced",
+    "title": "Strategy Builder \u2013 Load a Template",
+    "src": "/videos/21-strategy-builder-load-template.mp4",
+    "thumb": "/videos/thumbnails/21-strategy-builder-load-template.jpg",
+    "duration": 12
+  },
+  {
+    "n": 22,
+    "slug": "strategy-builder-custom",
+    "cat": "Advanced",
+    "title": "Strategy Builder \u2013 Build a Custom Strategy",
+    "src": "/videos/22-strategy-builder-custom.mp4",
+    "thumb": "/videos/thumbnails/22-strategy-builder-custom.jpg",
+    "duration": 12
+  },
+  {
+    "n": 23,
+    "slug": "strategy-builder-save-export",
+    "cat": "Advanced",
+    "title": "Strategy Builder \u2013 Save, Export, and Import",
+    "src": "/videos/23-strategy-builder-save-export.mp4",
+    "thumb": "/videos/thumbnails/23-strategy-builder-save-export.jpg",
+    "duration": 11
+  },
+  {
+    "n": 24,
+    "slug": "run-a-backtest",
+    "cat": "Advanced",
+    "title": "How to Run a Backtest",
+    "src": "/videos/24-run-a-backtest.mp4",
+    "thumb": "/videos/thumbnails/24-run-a-backtest.jpg",
+    "duration": 19
+  },
+  {
+    "n": 25,
+    "slug": "backtest-optimization",
+    "cat": "Advanced",
+    "title": "Backtest Optimization and Walk-Forward",
+    "src": "/videos/25-backtest-optimization.mp4",
+    "thumb": "/videos/thumbnails/25-backtest-optimization.jpg",
+    "duration": 8
+  },
+  {
+    "n": 26,
+    "slug": "deploy-strategy-auto-trader",
+    "cat": "Advanced",
+    "title": "How to Deploy a Strategy to Auto Trader",
+    "src": "/videos/26-deploy-strategy-auto-trader.mp4",
+    "thumb": "/videos/thumbnails/26-deploy-strategy-auto-trader.jpg",
+    "duration": 10
+  },
+  {
+    "n": 27,
+    "slug": "copy-trading-follow",
+    "cat": "Advanced",
+    "title": "Copy Trading \u2013 Follow a Leader",
+    "src": "/videos/27-copy-trading-follow.mp4",
+    "thumb": "/videos/thumbnails/27-copy-trading-follow.jpg",
+    "duration": 9
+  },
+  {
+    "n": 28,
+    "slug": "copy-trading-leader",
+    "cat": "Advanced",
+    "title": "Copy Trading \u2013 Register as a Leader",
+    "src": "/videos/28-copy-trading-leader.mp4",
+    "thumb": "/videos/thumbnails/28-copy-trading-leader.jpg",
+    "duration": 9
+  },
+  {
+    "n": 29,
+    "slug": "portfolio-manager-track",
+    "cat": "Advanced",
+    "title": "Portfolio Manager \u2013 Track Assets",
+    "src": "/videos/29-portfolio-manager-track.mp4",
+    "thumb": "/videos/thumbnails/29-portfolio-manager-track.jpg",
+    "duration": 10
+  },
+  {
+    "n": 30,
+    "slug": "full-day-session",
+    "cat": "Advanced",
+    "title": "Full Day Trading Session (Live)",
+    "src": "/videos/30-full-day-session.mp4",
+    "thumb": "/videos/thumbnails/30-full-day-session.jpg",
+    "duration": 18
+  }
+]

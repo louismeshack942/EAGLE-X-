@@ -1,0 +1,2 @@
+file '/workspace/eagle-x/scripts/_tmp_videos/18-use-paper-mode-0.mp4'
+file '/workspace/eagle-x/scripts/_tmp_videos/18-use-paper-mode-1.mp4'

@@ -1,0 +1,2 @@
+file '/workspace/eagle-x/scripts/_tmp_videos/24-run-a-backtest-0.mp4'
+file '/workspace/eagle-x/scripts/_tmp_videos/24-run-a-backtest-1.mp4'
