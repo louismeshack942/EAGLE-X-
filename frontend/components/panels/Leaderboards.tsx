@@ -19,7 +19,7 @@ export default function Leaderboards({ refreshMs = 8000 }: { refreshMs?: number 
   }, [refreshMs]);
 
   return (
-    <Card title="🏅 LEADERBOARDS">
+    <Card emoji="🏅" title="LEADERBOARDS">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <div style={{ maxHeight: 160, overflow: "auto", fontSize: "0.75rem" }}>
         {leaders.map((l: any) => (

@@ -27,7 +27,7 @@ export default function RiskEngine({ refreshMs = 3000 }: { refreshMs?: number })
   const stopLoss = balance * 0.2;
 
   return (
-    <Card title="🛡️ RISK ENGINE — GK" actions={<Pill label={status?.running ? "ACTIVE" : "IDLE"} color={status?.running ? "#3fb950" : "#8b949e"} /> }>
+    <Card pos="GK" emoji="🛡️" title="RISK ENGINE" actions={<Pill label={status?.running ? "ACTIVE" : "IDLE"} status={status?.running ? "running" : "neutral"} pulse={Boolean(status?.running)} />}>
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Balance" value={fmtUsd(balance)} />
       <Row label="Stake (10%)" value={fmtUsd(stake)} />

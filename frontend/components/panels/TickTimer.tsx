@@ -1,13 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { Card, Row, Pill } from "@/components/ui";
+import { Card, Row, Pill, type PillStatus } from "@/components/ui";
 
-const STATUS_COLOR: Record<string, string> = {
-  GREEN: "#3fb950",
-  YELLOW: "#d29922",
-  ORANGE: "#f47067",
-  RED: "#f85149",
+const TIMER_STATUS: Record<string, PillStatus> = {
+  GREEN: "strong",
+  YELLOW: "weak",
+  ORANGE: "weak",
+  RED: "stopped",
 };
 
 export default function TickTimerPanel({ symbol = "R_100", refreshMs = 1000 }: { symbol?: string; refreshMs?: number }) {
@@ -28,7 +28,7 @@ export default function TickTimerPanel({ symbol = "R_100", refreshMs = 1000 }: {
   }, [symbol, refreshMs]);
 
   return (
-    <Card title="⏱️ TICK TIMER — RB" actions={<Pill label={timer?.status ?? "…"} color={STATUS_COLOR[timer?.status as string] ?? "#8b949e"} />}>
+    <Card pos="RB" emoji="⏱️" title="TICK TIMER" actions={<Pill label={timer?.status ?? "…"} status={TIMER_STATUS[timer?.status as string] ?? "neutral"} pulse={timer?.status === "GREEN"} />}>
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Seconds to tick" value={timer?.seconds ?? "—"} />
       <Row label="Avg interval" value={`${timer?.avg_interval ?? "—"}s`} />

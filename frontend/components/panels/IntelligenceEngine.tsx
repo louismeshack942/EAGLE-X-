@@ -1,15 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
 import { apiGet } from "@/lib/api";
-import { Card, Row, Pill } from "@/components/ui";
+import { Card, Row, Pill, type PillStatus } from "@/components/ui";
 
-const COLOR: Record<string, string> = {
-  STRONG_DATA_SUPPORT: "#3fb950",
-  WEAK_DATA_SUPPORT: "#d29922",
-  NEUTRAL: "#8b949e",
-  NO_CLEAR_STATISTICAL_EDGE: "#f85149",
-  INSUFFICIENT_DATA: "#58a6ff",
-  WEAK_DATA_CONTRARY: "#f85149",
+const STATUS: Record<string, PillStatus> = {
+  STRONG_DATA_SUPPORT: "strong",
+  WEAK_DATA_SUPPORT: "weak",
+  NEUTRAL: "neutral",
+  NO_CLEAR_STATISTICAL_EDGE: "stopped",
+  INSUFFICIENT_DATA: "neutral",
+  WEAK_DATA_CONTRARY: "stopped",
 };
 
 export default function IntelligenceEngine({ symbol = "R_100", refreshMs = 4000 }: { symbol?: string; refreshMs?: number }) {
@@ -33,7 +33,7 @@ export default function IntelligenceEngine({ symbol = "R_100", refreshMs = 4000 
 
   const decision = intel?.decision ?? "UNKNOWN";
   return (
-    <Card title="🧠 INTELLIGENCE ENGINE — CB" actions={<Pill label={decision} color={COLOR[decision] ?? "#8b949e"} />}>
+    <Card pos="CB" emoji="🧠" title="INTELLIGENCE ENGINE" actions={<Pill label={decision.replaceAll("_", " ")} status={STATUS[decision] ?? "neutral"} pulse={STATUS[decision] === "strong"} />}>
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Data Quality" value={intel?.data_quality ?? "—"} />
       <Row label="Volatility" value={intel?.volatility?.regime ?? "—"} />

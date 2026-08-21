@@ -29,7 +29,7 @@ export default function PortfolioManager({ refreshMs = 8000 }: { refreshMs?: num
   const summary = data?.summary ?? {};
   const assets = data?.assets ?? [];
   return (
-    <Card title="💼 PORTFOLIO MANAGER">
+    <Card emoji="💼" title="PORTFOLIO MANAGER">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Total Value" value={fmtUsd(summary.total_value)} />
       <Row label="Total P&L" value={fmtUsd(summary.total_pl)} accent={(summary.total_pl ?? 0) >= 0 ? "#3fb950" : "#f85149"} />

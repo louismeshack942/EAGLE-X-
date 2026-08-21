@@ -19,7 +19,7 @@ export default function PerformanceAnalytics({ refreshMs = 8000 }: { refreshMs?:
   }, [refreshMs]);
 
   return (
-    <Card title="📈 PERFORMANCE ANALYTICS">
+    <Card emoji="📈" title="PERFORMANCE ANALYTICS">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Trades" value={perf?.total_trades ?? 0} />
       <Row label="Win Rate" value={`${perf?.win_rate ?? 0}%`} />
@@ -46,7 +46,7 @@ export function DiversificationAnalyzer({ refreshMs = 10000 }: { refreshMs?: num
   }, [refreshMs]);
 
   return (
-    <Card title="🧩 DIVERSIFICATION ANALYZER">
+    <Card emoji="🧩" title="DIVERSIFICATION ANALYZER">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Score" value={`${div?.score ?? 0}/100`} />
       <Row label="Grade" value={div?.grade ?? "—"} />

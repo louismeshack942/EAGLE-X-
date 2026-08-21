@@ -72,9 +72,8 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
   const connected = Boolean(acct?.connected);
 
   return (
-    <Card
-      title="🔐 CONNECT DERIV"
-      actions={<Pill label={connected ? "CONNECTED" : "NOT CONNECTED"} color={connected ? "#3fb950" : "#8b949e"} />}
+    <Card emoji="🔗" title="CONNECT DERIV"
+      actions={<Pill label={connected ? "CONNECTED" : "NOT CONNECTED"} status={connected ? "running" : "neutral"} />}
     >
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       {connected ? (

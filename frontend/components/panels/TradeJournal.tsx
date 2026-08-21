@@ -23,7 +23,7 @@ export default function TradeJournal({ refreshMs = 5000 }: { refreshMs?: number 
   const dash = journal?.dashboard ?? {};
   const entries = journal?.entries ?? [];
   return (
-    <Card title="📒 TRADE JOURNAL — SCOREBOARD">
+    <Card pos="SCORE" emoji="📝" title="TRADE JOURNAL">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Trades Today" value={dash.trades_today ?? 0} />
       <Row label="Wins / Losses" value={`${dash.wins ?? 0}/${dash.losses ?? 0}`} />

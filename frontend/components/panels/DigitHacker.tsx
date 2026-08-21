@@ -43,7 +43,7 @@ export default function DigitHacker({ symbol = "R_100", refreshMs = 4000 }: { sy
   ];
 
   return (
-    <Card title="🔬 DIGIT HACKER">
+    <Card emoji="🔬" title="DIGIT HACKER">
       <div style={{ display: "flex", gap: 4, marginBottom: 8, flexWrap: "wrap" }}>
         {tabs.map((t) => (
           <Btn small key={t.id} variant={tab === t.id ? "primary" : "secondary"} onClick={() => setTab(t.id)}>

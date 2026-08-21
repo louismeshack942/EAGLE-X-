@@ -32,9 +32,8 @@ export default function AutoTraderPanel({ refreshMs = 3000 }: { refreshMs?: numb
 
   const rec = status?.current_recommendation;
   return (
-    <Card
-      title="🤖 AUTO TRADER — CF"
-      actions={<Pill label={status?.mode?.toUpperCase() ?? "PAPER"} color={status?.running ? "#3fb950" : "#8b949e"} />}
+    <Card pos="CF" emoji="🏹" title="AUTO TRADER"
+      actions={<Pill label={status?.running ? "RUNNING" : "STOPPED"} status={status?.running ? "running" : "stopped"} pulse={Boolean(status?.running)} />}
     >
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Status" value={status?.status ?? "stopped"} />

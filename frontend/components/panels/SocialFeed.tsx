@@ -39,7 +39,7 @@ export default function SocialFeed({ refreshMs = 5000 }: { refreshMs?: number })
   };
 
   return (
-    <Card title="💬 SOCIAL FEED">
+    <Card emoji="💬" title="SOCIAL FEED">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
         <input value={newPost} onChange={(e) => setNewPost(e.target.value)}

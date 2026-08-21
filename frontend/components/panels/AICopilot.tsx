@@ -19,7 +19,7 @@ export default function AICopilot() {
   };
 
   return (
-    <Card title="🤖 AI COPILOT — AMF">
+    <Card pos="AMF" emoji="🤖" title="AI COPILOT">
       <Row label="Ask" value="Anything about markets" />
       <textarea
         value={question}

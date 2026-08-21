@@ -43,7 +43,7 @@ export default function StrategyBuilder() {
   };
 
   return (
-    <Card title="🛠️ STRATEGY BUILDER">
+    <Card emoji="🛠️" title="STRATEGY BUILDER">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
         <input value={name} onChange={(e) => setName(e.target.value)} style={{ background: "#010409", color: "#c9d1d9", border: "1px solid #30363d", borderRadius: 4, padding: "4px 8px" }} />

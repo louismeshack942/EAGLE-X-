@@ -19,11 +19,22 @@ import Backtesting from "@/components/panels/Backtesting";
 import SocialFeed from "@/components/panels/SocialFeed";
 import CopyTrading from "@/components/panels/CopyTrading";
 import Leaderboards from "@/components/panels/Leaderboards";
+import TradingRooms from "@/components/panels/TradingRooms";
 import PortfolioManager from "@/components/panels/PortfolioManager";
 import RiskDashboard from "@/components/panels/RiskDashboard";
 import PerformanceAnalytics, { DiversificationAnalyzer } from "@/components/panels/PerformanceAnalytics";
 
 const SYMBOLS = ["R_10", "R_25", "R_50", "R_75", "R_100"];
+
+function SectionHeader({ emoji, title, sub }: { emoji: string; title: string; sub?: string }) {
+  return (
+    <h2 className="section-header">
+      <span className="sh-emoji">{emoji}</span>
+      {title}
+      {sub && <span className="sh-sub">{sub}</span>}
+    </h2>
+  );
+}
 
 export default function Dashboard() {
   const [symbol, setSymbol] = useState("R_100");
@@ -48,25 +59,32 @@ export default function Dashboard() {
     return () => { mounted = false; clearInterval(t); };
   }, []);
 
-  const mode = status?.mode ?? "demo";
   const live = Boolean(status?.is_live);
+  const balance = status?.balance;
 
   return (
     <div>
       <header className="header-bar">
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span className="header-title">🦅 EAGLE-X</span>
-          <Pill label={live ? "LIVE DATA" : "DEMO DATA"} color={live ? "#3fb950" : "#d29922"} />
-          <Pill label={`Deriv ● ${live ? "LIVE" : "DEMO"}`} color={live ? "#3fb950" : "#8b949e"} />
+          <Pill label={live ? "LIVE DATA" : "DEMO DATA"} status={live ? "live" : "demo"} pulse={live} />
+          <Pill label={`Deriv ${live ? "● LIVE" : "● DEMO"}`} status={live ? "live" : "neutral"} />
           {lastTick && (
-            <span style={{ color: "#8b949e", fontSize: "0.8rem" }}>
-              {lastTick.symbol}: {lastTick.quote}
-            </span>
+            <span className="header-price">last: {lastTick.quote}</span>
           )}
         </div>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <span style={{ color: "#8b949e", fontSize: "0.8rem" }}>Market:</span>
-          <select value={symbol} onChange={(e) => setSymbol(e.target.value)} style={{ background: "#010409", color: "#c9d1d9", border: "1px solid #30363d", borderRadius: 4, padding: "4px 8px" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {typeof balance === "number" && (
+            <span style={{ color: "#F5C518", fontWeight: 800, fontSize: "0.9rem", fontVariantNumeric: "tabular-nums" }}>
+              {fmtUsd(balance)}
+            </span>
+          )}
+          <select
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value)}
+            className="ex-select"
+            aria-label="Market"
+          >
             {SYMBOLS.map((s) => <option key={s}>{s}</option>)}
           </select>
           <a href="/learn" style={{ fontSize: "0.8rem" }}>Learn</a>
@@ -74,19 +92,22 @@ export default function Dashboard() {
         </div>
       </header>
 
-      {error && <div style={{ margin: 12, padding: 12, background: "#161b22", border: "1px solid #f85149", borderRadius: 8, color: "#f85149", fontSize: "0.8rem" }}>
-        Disconnected — {error}. The dashboard will retry automatically.
-      </div>}
-
-      {!error && status?.last_error && (
-        <div style={{ margin: 12, padding: 12, background: "#161b22", border: "1px solid #d29922", borderRadius: 8, color: "#d29922", fontSize: "0.8rem" }}>
-          ⚠️ {status.last_error}
+      {error && (
+        <div className="banner banner-error">
+          <span>🔌</span>
+          <span><strong>Disconnected</strong> — {error}. The dashboard will retry automatically.</span>
         </div>
       )}
 
-      <main style={{ padding: "1rem" }}>
-        {/* STARTING XI */}
-        <h2 style={{ fontSize: "0.85rem", color: "#8b949e", marginBottom: 8 }}>STARTING XI (4-3-3)</h2>
+      {!error && status?.last_error && (
+        <div className="banner banner-warn">
+          <span>⚠️</span>
+          <span>{status.last_error}</span>
+        </div>
+      )}
+
+      <main style={{ padding: "0 1rem 1rem" }}>
+        <SectionHeader emoji="🏆" title="Starting XI" sub="4-3-3" />
         <div className="main-grid">
           <RiskEngine />
           <IntelligenceEnginePanel symbol={symbol} />
@@ -100,8 +121,7 @@ export default function Dashboard() {
           <AutoTraderPanel />
         </div>
 
-        {/* BENCH */}
-        <h2 style={{ fontSize: "0.85rem", color: "#8b949e", margin: "1.5rem 0 8px" }}>SECOND XI (BENCH)</h2>
+        <SectionHeader emoji="🔄" title="Second XI" sub="Bench" />
         <div className="main-grid">
           <TradeJournal />
           <DigitHacker symbol={symbol} />
@@ -110,6 +130,7 @@ export default function Dashboard() {
           <SocialFeed />
           <CopyTrading />
           <Leaderboards />
+          <TradingRooms />
           <PortfolioManager />
           <RiskDashboard />
           <PerformanceAnalytics />
@@ -117,8 +138,10 @@ export default function Dashboard() {
         </div>
       </main>
 
-      <footer style={{ padding: "1rem", borderTop: "1px solid #30363d", color: "#8b949e", fontSize: "0.75rem" }}>
-        ⚠️ EAGLE-X is a statistical analysis tool — NOT a guaranteed-profit engine. All analytical scores are derived from actual data. Past performance does not guarantee future results. Never trade more than you can afford to lose.
+      <footer className="disclaimer">
+        ⚠️ <strong>EAGLE-X is a statistical analysis tool — NOT a guaranteed-profit engine.</strong><br />
+        All analytical scores are derived from actual data. Past performance does not guarantee future results.
+        Never trade more than you can afford to lose.
       </footer>
     </div>
   );

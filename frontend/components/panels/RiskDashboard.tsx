@@ -25,7 +25,7 @@ export default function RiskDashboard({ refreshMs = 8000 }: { refreshMs?: number
   }, [refreshMs]);
 
   return (
-    <Card title="🛡️ RISK DASHBOARD">
+    <Card emoji="🛡️" title="RISK DASHBOARD">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="VaR (historical)" value={fmtUsd(var95?.var_historical)} />
       <Row label="VaR (parametric)" value={fmtUsd(var95?.var_parametric)} />

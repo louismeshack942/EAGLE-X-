@@ -32,7 +32,7 @@ export default function TradePlanner() {
   };
 
   return (
-    <Card title="⚡ TRADE PLANNER — SS">
+    <Card pos="SS" emoji="⚡" title="TRADE PLANNER">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Symbol" value={symbol} />
       <Row label="Contract" value={contract} />

@@ -22,7 +22,7 @@ export default function DataQuality({ symbol = "R_100", refreshMs = 4000 }: { sy
 
   const comp = q?.components ?? {};
   return (
-    <Card title="📊 DATA QUALITY — LB">
+    <Card pos="LB" emoji="📊" title="DATA QUALITY">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Score" value={`${q?.score ?? "—"}/100`} />
       <Row label="Grade" value={q?.grade ?? "—"} accent={q?.grade === "HIGH" ? "#3fb950" : q?.grade === "MEDIUM" ? "#d29922" : "#f85149"} />

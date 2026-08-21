@@ -1,16 +1,7 @@
 "use client";
-import React from "react";
-
-import { ReactNode } from "react";
+import React, { ReactNode } from "react";
 
 type BtnVariant = "primary" | "success" | "danger" | "secondary";
-
-const btnPalette: Record<BtnVariant, string> = {
-  primary: "#58a6ff",
-  success: "#3fb950",
-  danger: "#f85149",
-  secondary: "#2d333b",
-};
 
 export function Btn({
   children,
@@ -32,54 +23,85 @@ export function Btn({
       title={title}
       onClick={onClick}
       disabled={disabled}
-      style={{
-        background: btnPalette[variant],
-        color: variant === "secondary" ? "#c9d1d9" : "#0d1117",
-        border: "1px solid #30363d",
-        borderRadius: 6,
-        padding: small ? "2px 8px" : "6px 12px",
-        fontWeight: 700,
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.5 : 1,
-        fontSize: small ? "0.75rem" : "0.9rem",
-      }}
+      className={`ex-btn ex-btn-${variant}`}
+      style={small ? { padding: "3px 10px", fontSize: "0.75rem" } : undefined}
     >
       {children}
     </button>
   );
 }
 
-export function Pill({ label, color = "#30363d" }: { label: string; color?: string }) {
+/** Status badge with the design-system colour + optional pulse. */
+export type PillStatus =
+  | "live" | "demo" | "strong" | "weak" | "neutral"
+  | "running" | "stopped" | "idle";
+
+export function Pill({
+  label,
+  status,
+  pulse,
+}: {
+  label: string;
+  status?: PillStatus;
+  pulse?: boolean;
+}) {
+  const cls = status ? `ex-pill-${status}` : "ex-pill-neutral";
+  return <span className={`ex-pill ${cls}${pulse ? " ex-pill-pulse" : ""}`}>{label}</span>;
+}
+
+/** Legacy colour-string Pill kept for panels not yet migrated. */
+export function PillColor({ label, color = "#8b949e" }: { label: string; color?: string }) {
   return (
     <span
-      style={{
-        background: `${color}33`,
-        border: `1px solid ${color}`,
-        color,
-        borderRadius: 999,
-        padding: "2px 8px",
-        fontSize: "0.75rem",
-        fontWeight: 700,
-      }}
+      className="ex-pill"
+      style={{ background: `${color}26`, color, border: `1px solid ${color}80` }}
     >
       {label}
     </span>
   );
 }
 
-export function Card({ title, children, actions }: { title: string; children: ReactNode; actions?: ReactNode }) {
+/** Position badge — GK / CB / LB / RB / DMF / RMF / LMF / AMF / SS / CF. */
+export function PositionTag({ pos }: { pos: string }) {
+  return <span className="ex-card-pos">{pos}</span>;
+}
+
+/**
+ * Card — the core surface. Supports a football position label, emoji, and a
+ * status pill on the right.
+ */
+export function Card({
+  title,
+  emoji,
+  pos,
+  statusLabel,
+  status,
+  pulse,
+  children,
+  actions,
+}: {
+  title: string;
+  emoji?: string;
+  pos?: string;
+  statusLabel?: string;
+  status?: PillStatus;
+  pulse?: boolean;
+  children: ReactNode;
+  actions?: ReactNode;
+}) {
   return (
-    <div
-      style={{
-        background: "#161b22",
-        border: "1px solid #30363d",
-        borderRadius: 8,
-        padding: "1rem",
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{title}</div>
-        {actions}
+    <div className="ex-card">
+      <div className="ex-card-head">
+        <div className="ex-card-title-wrap">
+          {pos && <PositionTag pos={pos} />}
+          {emoji && <span className="ex-card-emoji">{emoji}</span>}
+          <span className="ex-card-title">{title}</span>
+        </div>
+        {statusLabel ? (
+          <Pill label={statusLabel} status={status} pulse={pulse} />
+        ) : (
+          actions
+        )}
       </div>
       {children}
     </div>
@@ -88,9 +110,35 @@ export function Card({ title, children, actions }: { title: string; children: Re
 
 export function Row({ label, value, accent }: { label: string; value: ReactNode; accent?: string }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", padding: "2px 0" }}>
-      <span style={{ color: "#8b949e" }}>{label}</span>
-      <span style={{ color: accent ?? "#c9d1d9", fontWeight: 600 }}>{value}</span>
+    <div className="ex-row">
+      <span className="ex-row-label">{label}</span>
+      <span className="ex-row-value" style={accent ? { color: accent } : undefined}>{value}</span>
+    </div>
+  );
+}
+
+/** Confidence bar with the spec gradient tiers. */
+export function ConfidenceBar({ value }: { value: number }) {
+  const pct = Math.max(0, Math.min(100, value));
+  const tier = pct > 70 ? "conf-high" : pct >= 50 ? "conf-mid" : "conf-low";
+  const color = pct > 70 ? "#3fb950" : pct >= 50 ? "#d29922" : "#f85149";
+  return (
+    <div className="conf-bar-wrap">
+      <div className="conf-bar-track">
+        <div className={`conf-bar-fill ${tier}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="conf-label" style={{ color }}>{Math.round(pct)}%</span>
+    </div>
+  );
+}
+
+/** Skeleton placeholder while data loads. */
+export function Skeleton({ lines = 4 }: { lines?: number }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {Array.from({ length: lines }).map((_, i) => (
+        <div key={i} className="skeleton" style={{ height: 14, width: `${88 - i * 10}%` }} />
+      ))}
     </div>
   );
 }

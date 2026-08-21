@@ -21,7 +21,7 @@ export default function MostLikelyNumber({ symbol = "R_100", refreshMs = 4000 }:
   }, [symbol, refreshMs]);
 
   return (
-    <Card title="🎯 MOST LIKELY NUMBER — DMF">
+    <Card pos="DMF" emoji="🎯" title="MOST LIKELY NUMBER">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Digit" value={data?.digit ?? "—"} accent="#58a6ff" />
       <Row label="Contract" value={data?.contract ?? "—"} />

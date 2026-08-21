@@ -27,7 +27,7 @@ export default function CopyTrading({ refreshMs = 5000 }: { refreshMs?: number }
   };
 
   return (
-    <Card title="👥 COPY TRADING">
+    <Card emoji="👥" title="COPY TRADING">
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Register as leader"
