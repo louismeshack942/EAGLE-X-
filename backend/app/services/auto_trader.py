@@ -70,6 +70,8 @@ class AutoTrader:
         self.log: list[str] = []
         self._task: Optional[asyncio.Task] = None
         self._paper_rng = random.Random(20240821)
+        self.phase = "matchday"
+        self._last_scan_log = 0.0
 
     def _log(self, msg: str) -> None:
         stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -195,7 +197,7 @@ class AutoTrader:
                 best_symbol = None
                 best_plays: list[dict] = []
                 best_team: dict = {}
-                best_score = -1
+                best_rank = (-1, -1.0)  # (top score, data quality) — better DQ wins ties
                 for sym in symbols:
                     try:
                         mm = market_master.analyze(sym, window=100)
@@ -204,8 +206,9 @@ class AutoTrader:
                     plays = select_plays(mm, sym)
                     if not plays:
                         continue
-                    if plays[0]["score"] > best_score:
-                        best_score = plays[0]["score"]
+                    rank = (plays[0]["score"], mm.get("data_quality", 0) or 0)
+                    if rank > best_rank:
+                        best_rank = rank
                         best_symbol = sym
                         best_plays = plays
                         best_team = {
@@ -215,6 +218,7 @@ class AutoTrader:
                             "movement": (mm.get("movement") or {}).get("regime"),
                             "anomaly_count": mm.get("anomaly_count"),
                         }
+                self.phase = "matchday" if best_plays else "training"
 
                 if best_plays:
                     key = best_symbol + ":" + "|".join(sorted(p["name"] for p in best_plays))
@@ -261,6 +265,10 @@ class AutoTrader:
                     # account grows, the stake grows with it. Same percentage.
                     total_stake = compute_stake(self.balance)
                     plays = best_plays
+                    if len(plays) > 1 and self.consecutive_losses > 0:
+                        # Coach's recovery rule: after a miss, no fluid gambles.
+                        self._log("Coach benches fluid play after a miss — single strike until he scores")
+                        plays = plays[:1]
                     per = round(total_stake / len(plays), 2)
                     if len(plays) > 1 and per < 0.35:
                         # Deriv minimum stake: fall back to the single top play.
@@ -286,6 +294,14 @@ class AutoTrader:
                     worst = "loss" if any(not o["won"] for o in outcomes) else "win"
                     await asyncio.sleep(cooldown_for(worst))
                 else:
+                    if not best_plays:
+                        now = time.time()
+                        if now - self._last_scan_log > 15:
+                            self._last_scan_log = now
+                            self._log(
+                                "CF training ground: "
+                                f"{len(symbols)} markets scanned — no clean pass, drilling"
+                            )
                     await asyncio.sleep(1.0)
         except asyncio.CancelledError:  # normal shutdown path
             pass
@@ -305,6 +321,7 @@ class AutoTrader:
             "consecutive_losses": self.consecutive_losses,
             "wins_today": self.wins_today,
             "losses_today": self.losses_today,
+            "phase": self.phase,
             "status": "running" if self.running else "stopped",
             "last_trade": self.last_trade,
             "current_recommendation": self.current_recommendation,

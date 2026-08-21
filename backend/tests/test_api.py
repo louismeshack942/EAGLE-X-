@@ -135,3 +135,33 @@ def test_auto_trader_lifecycle(client):
     assert status.status_code == 200
     stop = client.post("/auto-trader/stop")
     assert stop.status_code == 200
+
+
+def test_club_endpoints(client):
+    manager = client.get("/club/manager")
+    assert manager.status_code == 200
+    m = manager.json()
+    assert m["morale"] and m["formation"] and m["briefing"]
+    assert isinstance(m["directives"], list)
+
+    news = client.get("/club/news")
+    assert news.status_code == 200
+    assert "headlines" in news.json()
+
+    fans = client.get("/club/fans")
+    assert fans.status_code == 200
+    assert fans.json()["chant"] and fans.json()["crowd"]
+
+    board = client.get("/club/board")
+    assert board.status_code == 200
+    assert board.json()["sponsors"] and board.json()["statement"]
+
+    alerts = client.get("/club/alerts")
+    assert alerts.status_code == 200
+    assert "count" in alerts.json()
+
+    overview = client.get("/club")
+    assert overview.status_code == 200
+    body = overview.json()
+    for k in ("manager", "board", "news", "fans", "alerts"):
+        assert k in body

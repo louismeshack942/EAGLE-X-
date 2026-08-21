@@ -17,6 +17,7 @@ from app.core.queue import tick_queue
 from app.models.tick import Tick
 from app.services import timer as contract_timer
 from app.services import community
+from app.services import club as club_svc
 from app.services import portfolio as portfolio_svc
 from app.services import risk_analytics as risk_svc
 from app.services.ai_copilot import ai_copilot
@@ -666,6 +667,41 @@ def rooms_post_message(room_id: str, body: RoomMessageBody):
     if not msg:
         raise HTTPException(404, "room not found")
     return msg
+
+
+# ---------------- Club: team manager, board, news, fans, alerts ----------------
+def _active_syms():
+    return settings.active_symbols
+
+
+@app.get("/club")
+def club_overview(window: int = 100):
+    return club_svc.overview(_active_syms(), window)
+
+
+@app.get("/club/manager")
+def club_manager(window: int = 100):
+    return club_svc.manager_briefing(_active_syms(), window)
+
+
+@app.get("/club/board")
+def club_board():
+    return club_svc.board_report()
+
+
+@app.get("/club/news")
+def club_news(window: int = 100):
+    return club_svc.news_desk(_active_syms(), window)
+
+
+@app.get("/club/fans")
+def club_fans(window: int = 100):
+    return club_svc.fan_standing(_active_syms(), window)
+
+
+@app.get("/club/alerts")
+def club_alerts(window: int = 100):
+    return club_svc.market_alerts(_active_syms(), window)
 
 
 # ---------------- Portfolio ----------------

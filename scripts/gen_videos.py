@@ -8,6 +8,7 @@ macOS, and browsers). Also generates a JPEG thumbnail per video.
 Output: frontend/public/videos/<n>-<slug>.mp4, thumbnails/<n>-<slug>.jpg
 Writes: scripts/videos.json — the manifest consumed by the Video Hub page.
 """
+import asyncio
 import json
 import subprocess
 import sys
@@ -17,6 +18,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from videodata import VIDEOS  # noqa: E402
+
+# Narration voice: natural female neural voice at a moderate, readable pace.
+VOICE = "en-US-JennyNeural"
+RATE = "-5%"
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "frontend" / "public" / "videos"
@@ -115,9 +120,16 @@ def render_thumb(video: dict, out: Path) -> None:
     img.save(out, "JPEG", quality=88)
 
 
-def speak(text: str, wav: Path) -> None:
-    subprocess.run(["espeak-ng", "-s", "145", "-v", "en-us", "-w", str(wav), "--", text],
-                   check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def speak(text: str, out: Path) -> None:
+    async def _go() -> None:
+        import edge_tts
+        tts = edge_tts.Communicate(text, voice=VOICE, rate=RATE)
+        await tts.save(str(out.with_suffix(".mp3")))
+    asyncio.run(_go())
+    # Normalize to WAV 44.1k mono for stable downstream muxing.
+    mp3 = out.with_suffix(".mp3")
+    subprocess.run(["ffmpeg", "-y", "-i", str(mp3), "-ar", "44100", "-ac", "1",
+                    "-loglevel", "error", str(out)], check=True)
 
 
 def mux(slide: Path, wav: Path, out: Path) -> float:

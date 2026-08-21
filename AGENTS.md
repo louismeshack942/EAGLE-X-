@@ -25,15 +25,35 @@ deployment (proxy, cross-service URLs, renamed services, wrong health checks).
 execution). Gate: STRONG signal + data quality >= 70 + confidence >= 60 +
 supportive evidence. A second contract joins only if its confidence reaches
 75% of the top's (`FLUID_PAIR_RATIO`). Max 2 simultaneous plays (`FLUID_MAX_PLAYS`).
+Coach's recovery rule: after any loss, fluid play is benched (single strike)
+until he scores again.
 The 10%-of-balance stake is recomputed from the CURRENT balance on every
 trade and split evenly across the plays; if a split share would fall below
-Deriv's 0.35 minimum, only the top play runs. Tests: `TestFluidPlay` in
-`backend/tests/test_intel_and_trading.py`.
+Deriv's 0.35 minimum, only the top play runs. Scouting ties break by data
+quality. Tests: `TestFluidPlay` in `backend/tests/test_intel_and_trading.py`.
+Status exposes `phase` ("matchday"/"training") and a training-ground log line
+when no market passes the gate.
+
+## Club (communications hub)
+
+`backend/app/services/club.py` — Team Manager briefing, Board/Sponsors
+report, News Desk headlines, Fans chants, and market-trend Alerts, all
+derived from live analytics. Routes: `/club`, `/club/manager`, `/club/board`,
+`/club/news`, `/club/fans`, `/club/alerts`. Frontend panel:
+`frontend/components/panels/ClubPanel.tsx` (tab-based, on the dashboard).
+Tests: `test_club_endpoints` in `backend/tests/test_api.py`.
+
+## Videos
+
+`scripts/gen_videos.py` — Pillow slides + edge-tts narration (`JennyNeural`,
+rate -5%) + ffmpeg into MP4. Never espeak. `/videos/*.mp4` served statically;
+`videos.json` manifest drives the Video Hub UI list (elided titles, no
+"THE CLUB" naming).
 
 ## Commands
 
 - Frontend build: `cd frontend && npm run build` → `out/`
-- Backend tests: `cd backend && ../backend/.venv/bin/python -m pytest tests/ -q` (50 tests)
+- Backend tests: `cd backend && ../backend/.venv/bin/python -m pytest tests/ -q` (51 tests)
 - Run unified locally: `cd backend && FRONTEND_DIR=$PWD/../frontend/out ../backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 12000`
 
 ## Render traps (learned the hard way)

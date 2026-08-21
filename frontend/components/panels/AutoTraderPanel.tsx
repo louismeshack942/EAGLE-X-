@@ -37,7 +37,9 @@ export default function AutoTraderPanel({ refreshMs = 3000 }: { refreshMs?: numb
     >
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Status" value={status?.status ?? "stopped"} />
+      <Row label="Phase" value={status?.phase ?? "matchday"} accent={status?.phase === "matchday" ? "#3fb950" : "#d29922"} />
       <Row label="Balance" value={fmtUsd(status?.balance)} />
+      <Row label="W / L today" value={`${status?.wins_today ?? 0} / ${status?.losses_today ?? 0}`} />
       <Row label="Current Stake (10%)" value={fmtUsd(status?.current_stake)} accent="#d29922" />
       <Row label="Daily P&L" value={fmtUsd(status?.daily_pnl)} accent={status?.daily_pnl >= 0 ? "#3fb950" : "#f85149"} />
       <Row label="Trades" value={status?.trades_today ?? 0} />

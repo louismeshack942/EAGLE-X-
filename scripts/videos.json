@@ -6,7 +6,7 @@
     "title": "How to Open EAGLE-X and Log In",
     "src": "/videos/01-open-eaglex-and-log-in.mp4",
     "thumb": "/videos/thumbnails/01-open-eaglex-and-log-in.jpg",
-    "duration": 44
+    "duration": 47
   },
   {
     "n": 2,
@@ -15,7 +15,7 @@
     "title": "Understanding the Dashboard Layout",
     "src": "/videos/02-dashboard-layout.mp4",
     "thumb": "/videos/thumbnails/02-dashboard-layout.jpg",
-    "duration": 36
+    "duration": 38
   },
   {
     "n": 3,
@@ -24,7 +24,7 @@
     "title": "How to Read the Header",
     "src": "/videos/03-read-the-header.mp4",
     "thumb": "/videos/thumbnails/03-read-the-header.jpg",
-    "duration": 23
+    "duration": 22
   },
   {
     "n": 4,
@@ -33,7 +33,7 @@
     "title": "How to Check the Intelligence Engine",
     "src": "/videos/04-check-intelligence-engine.mp4",
     "thumb": "/videos/thumbnails/04-check-intelligence-engine.jpg",
-    "duration": 25
+    "duration": 27
   },
   {
     "n": 5,
@@ -60,7 +60,7 @@
     "title": "How to Place a DIFFERS Trade",
     "src": "/videos/07-place-differs-trade.mp4",
     "thumb": "/videos/thumbnails/07-place-differs-trade.jpg",
-    "duration": 18
+    "duration": 19
   },
   {
     "n": 8,
@@ -78,7 +78,7 @@
     "title": "How to Place an EVEN Trade",
     "src": "/videos/09-place-even-trade.mp4",
     "thumb": "/videos/thumbnails/09-place-even-trade.jpg",
-    "duration": 12
+    "duration": 13
   },
   {
     "n": 10,
@@ -87,7 +87,7 @@
     "title": "How to Place OVER and UNDER Trades",
     "src": "/videos/10-place-over-under-trades.mp4",
     "thumb": "/videos/thumbnails/10-place-over-under-trades.jpg",
-    "duration": 19
+    "duration": 20
   },
   {
     "n": 11,
@@ -96,7 +96,7 @@
     "title": "How to Use the Tick Timer",
     "src": "/videos/11-use-the-tick-timer.mp4",
     "thumb": "/videos/thumbnails/11-use-the-tick-timer.jpg",
-    "duration": 22
+    "duration": 23
   },
   {
     "n": 12,
@@ -105,7 +105,7 @@
     "title": "How to Read Market Master",
     "src": "/videos/12-read-market-master.mp4",
     "thumb": "/videos/thumbnails/12-read-market-master.jpg",
-    "duration": 22
+    "duration": 21
   },
   {
     "n": 13,
@@ -123,7 +123,7 @@
     "title": "Digit Hacker \u2013 Psychology Tab",
     "src": "/videos/14-digit-hacker-psychology.mp4",
     "thumb": "/videos/thumbnails/14-digit-hacker-psychology.jpg",
-    "duration": 24
+    "duration": 26
   },
   {
     "n": 15,
@@ -132,7 +132,7 @@
     "title": "Digit Hacker \u2013 Contract Tab",
     "src": "/videos/15-digit-hacker-contract.mp4",
     "thumb": "/videos/thumbnails/15-digit-hacker-contract.jpg",
-    "duration": 13
+    "duration": 12
   },
   {
     "n": 16,
@@ -150,7 +150,7 @@
     "title": "Digit Hacker \u2013 Gaps Tab",
     "src": "/videos/17-digit-hacker-gaps.mp4",
     "thumb": "/videos/thumbnails/17-digit-hacker-gaps.jpg",
-    "duration": 13
+    "duration": 12
   },
   {
     "n": 18,
@@ -159,7 +159,7 @@
     "title": "How to Use Paper Mode",
     "src": "/videos/18-use-paper-mode.mp4",
     "thumb": "/videos/thumbnails/18-use-paper-mode.jpg",
-    "duration": 18
+    "duration": 17
   },
   {
     "n": 19,
@@ -168,7 +168,7 @@
     "title": "How to Start and Stop Auto Trader",
     "src": "/videos/19-start-stop-auto-trader.mp4",
     "thumb": "/videos/thumbnails/19-start-stop-auto-trader.jpg",
-    "duration": 20
+    "duration": 19
   },
   {
     "n": 20,
@@ -186,7 +186,7 @@
     "title": "Strategy Builder \u2013 Load a Template",
     "src": "/videos/21-strategy-builder-load-template.mp4",
     "thumb": "/videos/thumbnails/21-strategy-builder-load-template.jpg",
-    "duration": 12
+    "duration": 11
   },
   {
     "n": 22,
@@ -195,7 +195,7 @@
     "title": "Strategy Builder \u2013 Build a Custom Strategy",
     "src": "/videos/22-strategy-builder-custom.mp4",
     "thumb": "/videos/thumbnails/22-strategy-builder-custom.jpg",
-    "duration": 12
+    "duration": 11
   },
   {
     "n": 23,
@@ -204,7 +204,7 @@
     "title": "Strategy Builder \u2013 Save, Export, and Import",
     "src": "/videos/23-strategy-builder-save-export.mp4",
     "thumb": "/videos/thumbnails/23-strategy-builder-save-export.jpg",
-    "duration": 11
+    "duration": 10
   },
   {
     "n": 24,
@@ -213,7 +213,7 @@
     "title": "How to Run a Backtest",
     "src": "/videos/24-run-a-backtest.mp4",
     "thumb": "/videos/thumbnails/24-run-a-backtest.jpg",
-    "duration": 19
+    "duration": 18
   },
   {
     "n": 25,
@@ -222,7 +222,7 @@
     "title": "Backtest Optimization and Walk-Forward",
     "src": "/videos/25-backtest-optimization.mp4",
     "thumb": "/videos/thumbnails/25-backtest-optimization.jpg",
-    "duration": 8
+    "duration": 9
   },
   {
     "n": 26,

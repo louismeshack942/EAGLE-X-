@@ -23,6 +23,7 @@ import TradingRooms from "@/components/panels/TradingRooms";
 import PortfolioManager from "@/components/panels/PortfolioManager";
 import RiskDashboard from "@/components/panels/RiskDashboard";
 import PerformanceAnalytics, { DiversificationAnalyzer } from "@/components/panels/PerformanceAnalytics";
+import ClubPanel from "@/components/panels/ClubPanel";
 
 const SYMBOLS = ["R_10", "R_25", "R_50", "R_75", "R_100"];
 
@@ -119,6 +120,11 @@ export default function Dashboard() {
           <DerivConnect />
           <TradePlanner />
           <AutoTraderPanel />
+        </div>
+
+        <SectionHeader emoji="📣" title="The Club" sub="Manager · Board · News · Fans · Alerts" />
+        <div className="main-grid">
+          <ClubPanel />
         </div>
 
         <SectionHeader emoji="🔄" title="Second XI" sub="Bench" />
