@@ -2,11 +2,13 @@ services:
   - type: web
     name: eaglex-backend
     env: docker
+    region: frankfurt
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
+    plan: free
     envVars:
       - key: DERIV_WS_URL
-        value: wss://ws.derivws.com/v3/
+        value: wss://ws.derivws.com/websockets/v3
       - key: DERIV_APP_ID
         value: 1089
       - key: DERIV_API_TOKEN
@@ -20,8 +22,10 @@ services:
   - type: web
     name: eaglex-frontend
     env: docker
+    region: frankfurt
     dockerfilePath: ./frontend/Dockerfile
     dockerContext: ./frontend
+    plan: free
     envVars:
       - key: NEXT_PUBLIC_BACKEND_URL
         value: https://eaglex-backend.onrender.com
