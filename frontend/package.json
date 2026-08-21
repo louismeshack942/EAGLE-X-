@@ -6,9 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "postbuild": "node scripts/copy-standalone-assets.js",
-    "start:standalone": "node .next/standalone/server.js"
+    "lint": "next lint"
   },
   "dependencies": {
     "next": "14.2.25",

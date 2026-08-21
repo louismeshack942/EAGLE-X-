@@ -1,20 +1,21 @@
 /**
  * EAGLE-X API client.
  *
- * In the browser we go through the same-origin runtime proxy (/api/proxy/*)
- * — resolved by the server at request time, so builds never freeze a bad URL.
- * NEXT_PUBLIC_BACKEND_URL, when set, still wins (direct connection, e.g. for
- * debugging; Deriv OAuth endpoints are fine through the proxy too).
+ * The backend serves this frontend from the SAME origin (single service),
+ * so every request is a plain relative fetch: /health, /status, /intelligence/...
+ * No proxy, no build-time URL, nothing to misconfigure.
+ *
+ * NEXT_PUBLIC_BACKEND_URL, if set at build time, overrides the base — useful
+ * only if the frontend is ever hosted separately from the backend.
  */
 
-/** Browser: same-origin proxy. Server-side: BACKEND_URL or production default. */
-export const API_BASE =
-  typeof window !== "undefined"
-    ? (process.env.NEXT_PUBLIC_BACKEND_URL?.replace(/\/$/, "") || "/api/proxy")
-    : (process.env.BACKEND_URL?.replace(/\/$/, "") || "https://eaglex-backend.onrender.com");
+const BASE = (process.env.NEXT_PUBLIC_BACKEND_URL || "").replace(/\/$/, "");
+
+/** Same-origin base for full-page navigations (OAuth login, downloads). */
+export const API_BASE = BASE;
 
 function join(path: string) {
-  return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;
+  return `${BASE}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 export async function apiGet<T = unknown>(path: string, init?: RequestInit): Promise<T> {

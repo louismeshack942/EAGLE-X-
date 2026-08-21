@@ -24,3 +24,4 @@ frontend/.next/
 
 # OS
 .DS_Store
+frontend/out/

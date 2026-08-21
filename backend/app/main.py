@@ -1,12 +1,15 @@
 """EAGLE-X backend application entrypoint."""
 import asyncio
 import logging
+import mimetypes
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Callable, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -160,8 +163,18 @@ class ContractSettleBody(BaseModel):
 
 
 # ---------------- Root / health / status ----------------
+def _frontend_dir() -> Optional[Path]:
+    if not settings.frontend_dir:
+        return None
+    p = Path(settings.frontend_dir)
+    return p if (p / "index.html").is_file() else None
+
+
 @app.get("/")
 def root():
+    fd = _frontend_dir()
+    if fd is not None:
+        return FileResponse(fd / "index.html")
     return {
         "service": "EAGLE-X Backend",
         "version": "1.0.0",
@@ -727,3 +740,43 @@ def risk_drawdown():
 @app.get("/performance")
 def performance_analytics_route():
     return risk_svc.performance_analytics()
+
+
+# ---------------- Frontend (static SPA, same origin) ----------------
+# The backend serves the statically-exported Next.js frontend from the same
+# origin — one service, one port, no proxy. Specific API routes above win;
+# this middleware only converts 404s for non-API GET requests into SPA pages
+# or static files.
+_HTML_PAGES = ("index", "dashboard", "learn", "splash", "videos")
+
+
+def _resolve_frontend(path: str) -> Optional[Path]:
+    fd = _frontend_dir()
+    if fd is None:
+        return None
+    clean = path.strip("/")
+    if not clean:
+        return fd / "index.html"
+    p = (fd / clean).resolve()
+    if p.is_file() and p.is_relative_to(fd.resolve()):
+        return p
+    base = clean.split("/")[0].split("?")[0]
+    if base in _HTML_PAGES:
+        return fd / f"{base}.html"
+    if (fd / "404.html").is_file():
+        return fd / "404.html"
+    return fd / "index.html"
+
+
+@app.middleware("http")
+async def serve_frontend(request, call_next):
+    response = await call_next(request)
+    if request.method != "GET" or response.status_code != 404:
+        return response
+    if request.url.path.startswith("/api/"):
+        return response
+    target = _resolve_frontend(request.url.path)
+    if target is None:
+        return response
+    media_type, _ = mimetypes.guess_type(str(target))
+    return FileResponse(target, media_type=media_type or "application/octet-stream")

@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     # and set DERIV_APP_ID for a branded OAuth screen.
     deriv_oauth_url: str = "https://oauth.deriv.com/oauth2/authorize"
     frontend_url: str = ""
+    # Directory of the statically-exported frontend, served by this same app.
+    frontend_dir: str = ""
 
     # PostgreSQL
     postgres_host: str = "localhost"

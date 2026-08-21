@@ -1,36 +1,30 @@
+# EAGLE-X — ONE service. The FastAPI backend serves the static frontend
+# from the same origin. Single port, single health check, no proxy.
+# Root Dockerfile builds the frontend export and the Python runtime together.
 services:
   - type: web
-    name: eaglex-backend
+    name: eaglex
     env: docker
     region: frankfurt
-    dockerfilePath: ./backend/Dockerfile
-    dockerContext: ./backend
     plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
     envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: FRONTEND_DIR
+        value: /app/frontend_static
       - key: DERIV_WS_URL
         value: wss://ws.derivws.com/websockets/v3
       - key: DERIV_APP_ID
         value: 1089
+      # Set this in the Render dashboard (never in the repo):
       - key: DERIV_API_TOKEN
         sync: false
       - key: DERIV_ACTIVE_SYMBOLS
         value: R_10,R_25,R_50,R_75,R_100
       - key: SECRET_KEY
         generateValue: true
-    healthCheckPath: /health
-
-  - type: web
-    name: eaglex-frontend
-    env: docker
-    region: frankfurt
-    dockerfilePath: ./frontend/Dockerfile
-    dockerContext: ./frontend
-    plan: free
-    envVars:
-      # Runtime proxy target (read at request time by /api/proxy)
-      # Render renamed the backend service to eaglex-backend-excn on blueprint redeploy
-      - key: BACKEND_URL
-        value: https://eaglex-backend-excn.onrender.com
-      # Client-side fallback (build-time)
-      - key: NEXT_PUBLIC_BACKEND_URL
-        value: https://eaglex-backend-excn.onrender.com
