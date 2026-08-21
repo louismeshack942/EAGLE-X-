@@ -13,6 +13,7 @@ import TradeJournal from "@/components/panels/TradeJournal";
 import TickTimerPanel from "@/components/panels/TickTimer";
 import DataQuality from "@/components/panels/DataQuality";
 import AICopilot from "@/components/panels/AICopilot";
+import DerivConnect from "@/components/panels/DerivConnect";
 import StrategyBuilder from "@/components/panels/StrategyBuilder";
 import Backtesting from "@/components/panels/Backtesting";
 import SocialFeed from "@/components/panels/SocialFeed";
@@ -77,6 +78,12 @@ export default function Dashboard() {
         Disconnected — {error}. The dashboard will retry automatically.
       </div>}
 
+      {!error && status?.last_error && (
+        <div style={{ margin: 12, padding: 12, background: "#161b22", border: "1px solid #d29922", borderRadius: 8, color: "#d29922", fontSize: "0.8rem" }}>
+          ⚠️ {status.last_error}
+        </div>
+      )}
+
       <main style={{ padding: "1rem" }}>
         {/* STARTING XI */}
         <h2 style={{ fontSize: "0.85rem", color: "#8b949e", marginBottom: 8 }}>STARTING XI (4-3-3)</h2>
@@ -88,6 +95,7 @@ export default function Dashboard() {
           <MostLikelyNumber symbol={symbol} />
           <MarketMaster symbol={symbol} />
           <AICopilot />
+          <DerivConnect />
           <TradePlanner />
           <AutoTraderPanel />
         </div>

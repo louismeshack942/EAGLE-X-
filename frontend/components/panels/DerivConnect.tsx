@@ -1,0 +1,137 @@
+"use client";
+import { useEffect, useState } from "react";
+import { apiGet, apiPost, apiDel, API_BASE } from "@/lib/api";
+import { Card, Row, Btn, Pill } from "@/components/ui";
+
+/**
+ * Connect the owner's personal Deriv account — WITHOUT pasting a token
+ * into chat. Two paths:
+ *   1. OAuth: "CONNECT WITH DERIV" opens Deriv's own login in a new tab;
+ *      Deriv redirects back through the backend which stores the token.
+ *   2. Manual: paste a token into the form (over HTTPS); it goes straight
+ *      to the backend, gets validated, and is never displayed.
+ */
+export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number }) {
+  const [acct, setAcct] = useState<any>(null);
+  const [token, setToken] = useState("");
+  const [showTokenForm, setShowTokenForm] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = async () => {
+    try {
+      const s = await apiGet<any>("/status");
+      setAcct(s.deriv_account ?? null);
+      setError(null);
+    } catch (e: any) {
+      setError(String(e.message ?? e));
+    }
+  };
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, refreshMs);
+    return () => clearInterval(t);
+  }, [refreshMs]);
+
+  const connectManual = async () => {
+    if (!token.trim()) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await apiPost<any>("/auth/token", { token: token.trim() });
+      if (r.connected) {
+        setMsg(`Connected: ${r.loginid} (${r.currency})`);
+        setToken("");
+        setShowTokenForm(false);
+      } else {
+        setMsg(`Failed: ${r.error}`);
+      }
+      await load();
+    } catch (e: any) {
+      setMsg(`Failed: ${e.message ?? e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disconnect = async () => {
+    setBusy(true);
+    try {
+      await apiDel("/auth/token");
+      setMsg("Disconnected");
+      await load();
+    } catch (e: any) {
+      setError(String(e.message ?? e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connected = Boolean(acct?.connected);
+
+  return (
+    <Card
+      title="🔐 CONNECT DERIV"
+      actions={<Pill label={connected ? "CONNECTED" : "NOT CONNECTED"} color={connected ? "#3fb950" : "#8b949e"} />}
+    >
+      {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
+      {connected ? (
+        <>
+          <Row label="Account" value={acct?.loginid ?? "—"} accent="#3fb950" />
+          <Row label="Currency" value={acct?.currency ?? "—"} />
+          <Row label="Balance" value={acct?.balance != null ? String(acct.balance) : "—"} />
+          <div style={{ marginTop: 8 }}>
+            <Btn small variant="danger" disabled={busy} onClick={disconnect}>DISCONNECT</Btn>
+          </div>
+        </>
+      ) : (
+        <>
+          <p style={{ color: "#8b949e", fontSize: "0.75rem", marginBottom: 8, lineHeight: 1.4 }}>
+            Link your Deriv account to enable live trading. Your token is never
+            shown or sent to chat — it goes straight to Deriv and your server.
+          </p>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Btn
+              small
+              variant="primary"
+              onClick={() => window.open(`${API_BASE}/auth/deriv/login`, "_blank", "noopener,width=520,height=640")}
+            >
+              CONNECT WITH DERIV
+            </Btn>
+            <Btn small variant="secondary" onClick={() => setShowTokenForm((v) => !v)}>
+              {showTokenForm ? "HIDE" : "PASTE TOKEN"}
+            </Btn>
+          </div>
+          {showTokenForm && (
+            <div style={{ marginTop: 8 }}>
+              <input
+                type="password"
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="Deriv API token (api.deriv.com → Settings)"
+                autoComplete="off"
+                style={{
+                  width: "100%",
+                  background: "#010409",
+                  color: "#c9d1d9",
+                  border: "1px solid #30363d",
+                  borderRadius: 6,
+                  padding: "8px 10px",
+                  fontFamily: "monospace",
+                }}
+              />
+              <div style={{ marginTop: 6 }}>
+                <Btn small variant="success" disabled={busy || !token.trim()} onClick={connectManual}>
+                  {busy ? "VALIDATING…" : "CONNECT"}
+                </Btn>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {msg && <div style={{ marginTop: 6, fontSize: "0.75rem", color: "#8b949e" }}>{msg}</div>}
+    </Card>
+  );
+}

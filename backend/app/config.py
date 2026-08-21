@@ -14,10 +14,14 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-change-me"
 
     # Deriv
-    deriv_ws_url: str = "wss://ws.derivws.com/v3/"
+    deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"
     deriv_app_id: int = 1089
     deriv_api_token: str = ""
     deriv_active_symbols: str = "R_10,R_25,R_50,R_75,R_100"
+    # OAuth: public client, no secret. Register your own app at api.deriv.com
+    # and set DERIV_APP_ID for a branded OAuth screen.
+    deriv_oauth_url: str = "https://oauth.deriv.com/oauth2/authorize"
+    frontend_url: str = ""
 
     # PostgreSQL
     postgres_host: str = "localhost"

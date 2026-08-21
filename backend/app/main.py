@@ -41,12 +41,20 @@ from app.services.persistence import (
 )
 from app.services.strategy_engine import StrategyConfig, strategy_engine
 from app.services.technical import technical_engine
+from app.services.token_vault import VAULT
+from app.api.auth import router as auth_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=get_settings().log_level)
 
 settings = get_settings()
 _ingestion_task: Optional[asyncio.Task] = None
+_account_snapshot: dict = {"connected": False, "loginid": None, "currency": None, "balance": None}
+
+
+async def _refresh_account_snapshot() -> None:
+    global _account_snapshot
+    _account_snapshot = await VAULT.status()
 
 
 def _on_tick(tick: Tick) -> None:
@@ -86,6 +94,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_router)
 
 
 # ---------------- Request bodies ----------------
@@ -174,7 +183,8 @@ def health():
 
 
 @app.get("/status")
-def status():
+async def status():
+    await _refresh_account_snapshot()
     state = LIVE_STATE.to_dict()
     active = []
     for sym in settings.active_symbols:
@@ -192,6 +202,7 @@ def status():
         "last_tick": latest,
         "active_symbols": active,
         "counts": {sym: tick_queue.count(sym) for sym in settings.active_symbols},
+        "deriv_account": _account_snapshot,
     }
 
 
@@ -371,11 +382,11 @@ def auto_trader_status():
 # ---------------- Trade ----------------
 @app.post("/trade")
 async def trade(body: TradeBody):
-    token = body.api_token or settings.deriv_api_token
+    token = body.api_token or await VAULT.get() or settings.deriv_api_token
     if not token:
         return {
             "status": "error",
-            "error": "No Deriv API token supplied. Provide api_token or set DERIV_API_TOKEN.",
+            "error": "No Deriv account connected. Use POST /auth/token or the OAuth connect flow.",
         }
     return await deriv_trader.place_trade(
         symbol=body.symbol,

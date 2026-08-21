@@ -1,0 +1,83 @@
+"""Runtime Deriv token vault.
+
+The user's personal Deriv API token arrives either via the OAuth callback or
+via the secure POST /auth/token endpoint. It is held in memory and persisted
+to a 0600-permission JSON file so a restart does not disconnect the account.
+It is never logged and never returned by any endpoint — only masked metadata
+(loginid, currency, balance) leaves the vault.
+"""
+import asyncio
+import json
+import os
+from pathlib import Path
+from typing import Optional
+
+_VAULT_PATH = Path(os.environ.get("EAGLEX_VAULT_PATH", "data/vault.json"))
+
+
+class TokenVault:
+    def __init__(self, path: Path = _VAULT_PATH) -> None:
+        self._path = path
+        self._lock = asyncio.Lock()
+        self._token: Optional[str] = None
+        self._loginid: Optional[str] = None
+        self._currency: Optional[str] = None
+        self._balance: Optional[float] = None
+        self._load()
+
+    def _load(self) -> None:
+        try:
+            if self._path.exists():
+                data = json.loads(self._path.read_text())
+                self._token = data.get("token")
+                self._loginid = data.get("loginid")
+                self._currency = data.get("currency")
+        except Exception:
+            self._token = None
+
+    def _persist(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({
+            "token": self._token,
+            "loginid": self._loginid,
+            "currency": self._currency,
+        }))
+        os.chmod(tmp, 0o600)
+        tmp.replace(self._path)
+
+    async def set(self, token: str, loginid: Optional[str] = None, currency: Optional[str] = None) -> None:
+        async with self._lock:
+            self._token = token.strip()
+            self._loginid = loginid
+            self._currency = currency
+            self._balance = None
+            self._persist()
+
+    async def clear(self) -> None:
+        async with self._lock:
+            self._token = None
+            self._loginid = None
+            self._currency = None
+            self._balance = None
+            self._persist()
+
+    async def get(self) -> Optional[str]:
+        async with self._lock:
+            return self._token
+
+    async def set_balance(self, balance: float) -> None:
+        async with self._lock:
+            self._balance = balance
+
+    async def status(self) -> dict:
+        async with self._lock:
+            return {
+                "connected": bool(self._token),
+                "loginid": self._loginid,
+                "currency": self._currency,
+                "balance": self._balance,
+            }
+
+
+VAULT = TokenVault()

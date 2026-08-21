@@ -15,6 +15,7 @@ from app.services.market_master import market_master
 from app.services.money_management import check_hard_stops, compute_stake, cooldown_for
 from app.services.persistence import journal_engine
 from app.services.telegram import telegram_notifier
+from app.services.token_vault import VAULT
 
 
 class AutoTrader:
@@ -100,8 +101,9 @@ class AutoTrader:
         return win, payout
 
     async def place_trade(self, contract: dict, stake: float, api_token: str | None = None) -> dict:
-        if self.mode == "live" and (api_token or self.settings.deriv_api_token):
-            token = api_token or self.settings.deriv_api_token
+        vault_token = await VAULT.get()
+        if self.mode == "live" and (api_token or vault_token or self.settings.deriv_api_token):
+            token = api_token or vault_token or self.settings.deriv_api_token
             result = await deriv_trader.place_trade(
                 symbol=contract.get("symbol", self.settings.active_symbols[0]),
                 contract_type=contract["type"],
