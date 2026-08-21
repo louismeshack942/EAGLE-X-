@@ -28,10 +28,9 @@ services:
     plan: free
     envVars:
       # Runtime proxy target (read at request time by /api/proxy)
-      # NOTE: backend-38co is the live EAGLE-X backend service;
-      # "eaglex-backend.onrender.com" belongs to the legacy eagle-ai project.
+      # Render renamed the backend service to eaglex-backend-excn on blueprint redeploy
       - key: BACKEND_URL
-        value: https://backend-38co.onrender.com
+        value: https://eaglex-backend-excn.onrender.com
       # Client-side fallback (build-time)
       - key: NEXT_PUBLIC_BACKEND_URL
-        value: https://backend-38co.onrender.com
+        value: https://eaglex-backend-excn.onrender.com
