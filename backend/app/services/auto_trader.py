@@ -17,6 +17,38 @@ from app.services.persistence import journal_engine
 from app.services.telegram import telegram_notifier
 from app.services.token_vault import VAULT
 
+FLUID_MAX_PLAYS = 2          # at most two simultaneous positions
+FLUID_MIN_CONFIDENCE = 60    # absolute floor for any play
+FLUID_PAIR_RATIO = 0.75      # second play must reach 75% of the top's confidence
+
+
+def select_plays(mm: dict, symbol: str) -> list[dict]:
+    """The team feeds SS: pick up to FLUID_MAX_PLAYS contracts on one market.
+
+    Gate: STRONG signal + data quality >= 70, then every contract with
+    supportive evidence above the confidence floor. A second play only joins
+    when its confidence is within FLUID_PAIR_RATIO of the top — when ODD says
+    100 and MATCHES says 100, we play both and split the stake.
+    """
+    dq = mm.get("data_quality", 0) or 0
+    sig = mm.get("signal", "") or ""
+    if "STRONG" not in sig or dq < 70:
+        return []
+    contracts = sorted(
+        mm.get("contracts") or [], key=lambda c: c.get("score", 0), reverse=True
+    )
+    plays: list[dict] = []
+    for c in contracts:
+        conf = c.get("confidence", 0) or 0
+        if conf < FLUID_MIN_CONFIDENCE or "SUPPORT" not in (c.get("evidence") or ""):
+            continue
+        if plays and conf < plays[0]["confidence"] * FLUID_PAIR_RATIO:
+            continue
+        plays.append({**c, "symbol": symbol, "data_quality": dq, "signal": sig})
+        if len(plays) >= FLUID_MAX_PLAYS:
+            break
+    return plays
+
 
 class AutoTrader:
     def __init__(self) -> None:
@@ -161,33 +193,31 @@ class AutoTrader:
             while self.running:
                 symbols = self.settings.active_symbols
                 best_symbol = None
-                best_contract = None
+                best_plays: list[dict] = []
+                best_team: dict = {}
                 best_score = -1
                 for sym in symbols:
                     try:
                         mm = market_master.analyze(sym, window=100)
                     except Exception:  # noqa: BLE001
                         continue
-                    top = mm.get("top_recommendation")
-                    dq = mm.get("data_quality", 0)
-                    sig = mm.get("signal", "")
-                    if not top:
+                    plays = select_plays(mm, sym)
+                    if not plays:
                         continue
-                    candidate = {
-                        **top,
-                        "symbol": sym,
-                        "data_quality": dq,
-                        "signal": sig,
-                    }
-                    if top["confidence"] < 60 or "STRONG" not in sig or (dq or 0) < 70:
-                        continue
-                    if top["score"] > best_score:
-                        best_score = top["score"]
+                    if plays[0]["score"] > best_score:
+                        best_score = plays[0]["score"]
                         best_symbol = sym
-                        best_contract = candidate
+                        best_plays = plays
+                        best_team = {
+                            "signal": mm.get("signal"),
+                            "data_quality": mm.get("data_quality"),
+                            "volatility": (mm.get("volatility") or {}).get("regime"),
+                            "movement": (mm.get("movement") or {}).get("regime"),
+                            "anomaly_count": mm.get("anomaly_count"),
+                        }
 
-                if best_contract:
-                    key = f"{best_symbol}:{best_contract['name']}"
+                if best_plays:
+                    key = best_symbol + ":" + "|".join(sorted(p["name"] for p in best_plays))
                     if key == self._last_conf_key:
                         self.confirmation_ticks += 1
                     else:
@@ -195,9 +225,18 @@ class AutoTrader:
                         self.confirmation_ticks = 1
                     self.current_recommendation = {
                         "symbol": best_symbol,
-                        "contract": best_contract["name"],
-                        "confidence": best_contract["confidence"],
-                        "digit": best_contract.get("digit"),
+                        "contract": best_plays[0]["name"],
+                        "confidence": best_plays[0]["confidence"],
+                        "digit": best_plays[0].get("digit"),
+                        "plays": [
+                            {
+                                "contract": p["name"],
+                                "confidence": p["confidence"],
+                                "digit": p.get("digit"),
+                            }
+                            for p in best_plays
+                        ],
+                        "team": best_team,
                     }
                 else:
                     self.confirmation_ticks = 0
@@ -217,12 +256,35 @@ class AutoTrader:
                     self.running = False
                     break
 
-                if best_contract and self.confirmation_ticks >= 2:
-                    stake = compute_stake(self.balance)
-                    telegram_notifier.send_trade_alert(best_symbol, best_contract["name"], stake, best_contract.get("duration_seconds", 60))
-                    self._log(f"Placing trade: {best_symbol} {best_contract['name']} stake={stake} (conf {best_contract['confidence']}%)")
-                    outcome = await self.place_trade(best_contract, stake, api_token)
-                    await asyncio.sleep(cooldown_for("win" if outcome["won"] else "loss"))
+                if best_plays and self.confirmation_ticks >= 2:
+                    # Stake is 10% of the CURRENT balance, every trade — as the
+                    # account grows, the stake grows with it. Same percentage.
+                    total_stake = compute_stake(self.balance)
+                    plays = best_plays
+                    per = round(total_stake / len(plays), 2)
+                    if len(plays) > 1 and per < 0.35:
+                        # Deriv minimum stake: fall back to the single top play.
+                        plays = plays[:1]
+                        per = total_stake
+                    if len(plays) > 1:
+                        names = " + ".join(p["name"] for p in plays)
+                        self._log(
+                            f"FLUID PLAY: splitting stake ${total_stake} into "
+                            f"{len(plays)} x ${per} — {best_symbol} {names}"
+                        )
+                    telegram_notifier.send_trade_alert(
+                        best_symbol, plays[0]["name"], per,
+                        plays[0].get("duration_seconds", 60),
+                    )
+                    self._log(
+                        f"Placing trade: {best_symbol} {plays[0]['name']} "
+                        f"stake={per} (conf {plays[0]['confidence']}%)"
+                    )
+                    outcomes = await asyncio.gather(
+                        *(self.place_trade(p, per, api_token) for p in plays)
+                    )
+                    worst = "loss" if any(not o["won"] for o in outcomes) else "win"
+                    await asyncio.sleep(cooldown_for(worst))
                 else:
                     await asyncio.sleep(1.0)
         except asyncio.CancelledError:  # normal shutdown path
@@ -237,6 +299,7 @@ class AutoTrader:
             "running": self.running,
             "mode": self.mode,
             "balance": round(self.balance, 2),
+            "current_stake": compute_stake(self.balance),
             "daily_pnl": round(self.daily_pnl, 2),
             "trades_today": self.trades_today,
             "consecutive_losses": self.consecutive_losses,

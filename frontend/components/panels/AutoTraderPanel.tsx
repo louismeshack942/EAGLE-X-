@@ -38,10 +38,23 @@ export default function AutoTraderPanel({ refreshMs = 3000 }: { refreshMs?: numb
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Status" value={status?.status ?? "stopped"} />
       <Row label="Balance" value={fmtUsd(status?.balance)} />
+      <Row label="Current Stake (10%)" value={fmtUsd(status?.current_stake)} accent="#d29922" />
       <Row label="Daily P&L" value={fmtUsd(status?.daily_pnl)} accent={status?.daily_pnl >= 0 ? "#3fb950" : "#f85149"} />
       <Row label="Trades" value={status?.trades_today ?? 0} />
-      {rec && (
+      {rec?.plays?.length > 1 ? (
+        <Row
+          label="FLUID PLAY"
+          value={rec.plays.map((p: any) => `${p.contract} (${p.confidence}%)`).join(" + ")}
+          accent="#3fb950"
+        />
+      ) : rec && (
         <Row label="Recommendation" value={`${rec.contract} (${rec.confidence}%)`} accent="#58a6ff" />
+      )}
+      {rec?.team && (
+        <Row
+          label="Team Feed"
+          value={`${rec.team.signal} · DQ ${rec.team.data_quality} · anomalies ${rec.team.anomaly_count ?? 0}`}
+        />
       )}
       <Row label="Confirmation Ticks" value={status?.confirmation_ticks ?? 0} />
       <div style={{ display: "flex", gap: 6, marginTop: 8 }}>

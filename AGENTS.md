@@ -19,10 +19,21 @@ deployment (proxy, cross-service URLs, renamed services, wrong health checks).
   `FRONTEND_DIR=/app/frontend_static`. Port comes from `$PORT` (default 8000).
 - `render.yaml` — single service `eaglex`, frankfurt, free, healthCheckPath `/health`.
 
+## Fluid play (Auto Trader)
+
+`select_plays()` in `backend/app/services/auto_trader.py` feeds SS (trade
+execution). Gate: STRONG signal + data quality >= 70 + confidence >= 60 +
+supportive evidence. A second contract joins only if its confidence reaches
+75% of the top's (`FLUID_PAIR_RATIO`). Max 2 simultaneous plays (`FLUID_MAX_PLAYS`).
+The 10%-of-balance stake is recomputed from the CURRENT balance on every
+trade and split evenly across the plays; if a split share would fall below
+Deriv's 0.35 minimum, only the top play runs. Tests: `TestFluidPlay` in
+`backend/tests/test_intel_and_trading.py`.
+
 ## Commands
 
 - Frontend build: `cd frontend && npm run build` → `out/`
-- Backend tests: `cd backend && ../backend/.venv/bin/python -m pytest tests/ -q` (43 tests)
+- Backend tests: `cd backend && ../backend/.venv/bin/python -m pytest tests/ -q` (50 tests)
 - Run unified locally: `cd backend && FRONTEND_DIR=$PWD/../frontend/out ../backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 12000`
 
 ## Render traps (learned the hard way)
