@@ -27,5 +27,11 @@ services:
     dockerContext: ./frontend
     plan: free
     envVars:
+      # Runtime proxy target (read at request time by /api/proxy)
+      # NOTE: backend-38co is the live EAGLE-X backend service;
+      # "eaglex-backend.onrender.com" belongs to the legacy eagle-ai project.
+      - key: BACKEND_URL
+        value: https://backend-38co.onrender.com
+      # Client-side fallback (build-time)
       - key: NEXT_PUBLIC_BACKEND_URL
-        value: https://eaglex-backend.onrender.com
+        value: https://backend-38co.onrender.com
