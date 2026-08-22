@@ -16,6 +16,8 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
   const [accounts, setAccounts] = useState<any[]>([]);
   const [token, setToken] = useState("");
   const [appId, setAppId] = useState("");
+  const [oauthAppId, setOauthAppId] = useState("");
+  const [oauthCustom, setOauthCustom] = useState(false);
   const [showTokenForm, setShowTokenForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -32,9 +34,32 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
       } else {
         setAccounts([]);
       }
+      const o = await apiGet<any>("/auth/oauth-app");
+      setOauthCustom(o.custom);
+      if (o.custom) setOauthAppId(String(o.app_id));
       setError(null);
     } catch (e: any) {
       setError(String(e.message ?? e));
+    }
+  };
+
+  const saveOauthApp = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await apiPost<any>("/auth/oauth-app", { app_id: oauthAppId.trim() });
+      if (r.saved) {
+        setOauthCustom(r.custom);
+        setMsg(r.custom
+          ? `OAuth app id ${r.app_id} saved — CONNECT WITH DERIV now redirects to Deriv's real login.`
+          : "OAuth app id cleared — button shows setup instructions again.");
+      } else {
+        setMsg(`Not saved: ${r.error}`);
+      }
+    } catch (e: any) {
+      setMsg(`Not saved: ${e.message ?? e}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -162,6 +187,31 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
             <Btn small variant="secondary" onClick={() => setShowTokenForm((v) => !v)}>
               {showTokenForm ? "HIDE" : "PASTE TOKEN"}
             </Btn>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <div style={{ color: "#8b949e", fontSize: "0.7rem", marginBottom: 4 }}>
+              OAUTH APP ID {oauthCustom ? "(saved — button now redirects to Deriv login)" : "(activates the button — register an OAuth app on developers.deriv.com)"}
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                type="text"
+                value={oauthAppId}
+                onChange={(e) => setOauthAppId(e.target.value)}
+                placeholder="e.g. 77777"
+                autoComplete="off"
+                style={{
+                  flex: 1,
+                  background: "#010409",
+                  color: "#c9d1d9",
+                  border: "1px solid #30363d",
+                  borderRadius: 6,
+                  padding: "6px 8px",
+                  fontFamily: "monospace",
+                  fontSize: "0.75rem",
+                }}
+              />
+              <Btn small disabled={busy} onClick={saveOauthApp}>SAVE</Btn>
+            </div>
           </div>
           {showTokenForm && (
             <div style={{ marginTop: 8 }}>

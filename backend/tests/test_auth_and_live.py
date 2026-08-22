@@ -395,3 +395,33 @@ def test_switch_endpoint_validates_target():
             assert "not visible" in r.json()["error"]
     finally:
         _asyncio.run(VAULT.clear())
+
+
+def test_oauth_app_id_ui_override_activates_button():
+    """Saving an OAuth app id through the endpoint must flip the button from
+    the setup page to the real Deriv redirect — no restart needed."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.services.persistence import settings_store
+    try:
+        with TestClient(app) as c:
+            r = c.get("/auth/oauth-app")
+            assert r.json()["custom"] is False
+
+            r = c.post("/auth/oauth-app", json={"app_id": "abc"})
+            assert r.json()["saved"] is False
+
+            r = c.post("/auth/oauth-app", json={"app_id": "77777"})
+            assert r.json()["saved"] is True
+            assert r.json()["custom"] is True
+
+            r = c.get("/auth/deriv/login", follow_redirects=False)
+            assert r.status_code in (302, 307)
+            assert "client_id=77777" in r.headers["location"]
+
+            r = c.post("/auth/oauth-app", json={"app_id": ""})
+            assert r.json()["custom"] is False
+            r = c.get("/auth/deriv/login")
+            assert r.status_code == 200  # back to setup page
+    finally:
+        settings_store.set("deriv_oauth_app_id", None)
