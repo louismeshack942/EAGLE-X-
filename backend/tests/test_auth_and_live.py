@@ -408,16 +408,16 @@ def test_oauth_app_id_ui_override_activates_button():
             r = c.get("/auth/oauth-app")
             assert r.json()["custom"] is False
 
-            r = c.post("/auth/oauth-app", json={"app_id": "abc"})
+            r = c.post("/auth/oauth-app", json={"app_id": "abc-123!"})
             assert r.json()["saved"] is False
 
-            r = c.post("/auth/oauth-app", json={"app_id": "77777"})
+            r = c.post("/auth/oauth-app", json={"app_id": "abc123XYZ"})
             assert r.json()["saved"] is True
             assert r.json()["custom"] is True
 
             r = c.get("/auth/deriv/login", follow_redirects=False)
             assert r.status_code in (302, 307)
-            assert "client_id=77777" in r.headers["location"]
+            assert "client_id=abc123XYZ" in r.headers["location"]
 
             r = c.post("/auth/oauth-app", json={"app_id": ""})
             assert r.json()["custom"] is False

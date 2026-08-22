@@ -226,15 +226,13 @@ class OAuthAppBody(BaseModel):
     app_id: str
 
 
-def _oauth_app_id() -> int:
+def _oauth_app_id():
     """OAuth app id: UI-configured value wins, then env, then the retired
-    shared default 1089 (which Deriv no longer accepts)."""
+    shared default 1089 (which Deriv no longer accepts). Accepts
+    alphanumeric ids — Deriv's newer app ids may be strings."""
     ui_id = settings_store.get("deriv_oauth_app_id")
     if ui_id:
-        try:
-            return int(ui_id)
-        except (TypeError, ValueError):
-            pass
+        return ui_id
     return get_settings().deriv_app_id
 
 
@@ -242,7 +240,7 @@ def _oauth_app_id() -> int:
 def get_oauth_app():
     """Current OAuth app id powering the CONNECT WITH DERIV button."""
     app_id = _oauth_app_id()
-    return {"app_id": app_id, "custom": app_id != 1089}
+    return {"app_id": app_id, "custom": str(app_id) != "1089"}
 
 
 @router.post("/oauth-app")
@@ -253,10 +251,10 @@ def set_oauth_app(body: OAuthAppBody):
     if not cleaned:
         settings_store.set("deriv_oauth_app_id", None)
         return {"saved": True, "app_id": get_settings().deriv_app_id, "custom": False}
-    if not cleaned.isdigit():
-        return {"saved": False, "error": "app id must be a number (e.g. 77777)"}
+    if not cleaned.isalnum():
+        return {"saved": False, "error": "app id must contain only letters and digits"}
     settings_store.set("deriv_oauth_app_id", cleaned)
-    return {"saved": True, "app_id": int(cleaned), "custom": True}
+    return {"saved": True, "app_id": cleaned, "custom": True}
 
 
 @router.get("/deriv/login", response_class=HTMLResponse)
