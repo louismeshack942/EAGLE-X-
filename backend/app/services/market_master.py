@@ -226,7 +226,9 @@ class MarketMaster:
             recommendation = f"Trade {top['name']} (EV +{top['ev']:.2f})"
 
         if top:
-            top = {**top, "stake": compute_stake(10.0), "duration_seconds": 60}
+            # 5s: shortest clean digit contract — possession kept short so the
+            # CF is back scanning fast instead of holding decade-long trades.
+            top = {**top, "stake": compute_stake(10.0), "duration_seconds": 5}
 
         evidence_summary = []
         if top:

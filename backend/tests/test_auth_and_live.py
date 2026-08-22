@@ -437,3 +437,13 @@ def test_is_virtual_detection():
     assert _is_virtual({"account_id": "CR123"}) is False
     assert _is_virtual({"account_id": "X", "is_virtual": True}) is True
     assert _is_virtual({"account_id": "UNKNOWN9"}) is False
+
+
+def test_auto_play_duration_is_short():
+    """The CF must hold possession briefly — regression for the 'decades'
+    complaint. Auto-trader plays are capped at 5 seconds."""
+    from app.services import market_master
+    import inspect
+    src = inspect.getsource(market_master)
+    assert '"duration_seconds": 5' in src
+    assert '"duration_seconds": 60' not in src
