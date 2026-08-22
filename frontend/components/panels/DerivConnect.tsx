@@ -140,28 +140,34 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
           <Row label="Balance" value={acct?.balance != null ? String(acct.balance) : "—"} />
           {accounts.length > 0 && (
             <div style={{ marginTop: 8 }}>
-              <div style={{ color: "#8b949e", fontSize: "0.7rem", marginBottom: 4 }}>ACCOUNT (DEMO = VRTC, REAL = CR)</div>
-              <select
-                value={acct?.account_id ?? ""}
-                disabled={switching}
-                onChange={(e) => switchAccount(e.target.value)}
-                style={{
-                  width: "100%",
-                  background: "#010409",
-                  color: "#c9d1d9",
-                  border: "1px solid #30363d",
-                  borderRadius: 6,
-                  padding: "6px 8px",
-                  fontFamily: "monospace",
-                  fontSize: "0.75rem",
-                }}
-              >
-                {accounts.map((a) => (
-                  <option key={a.account_id} value={a.account_id}>
-                    {(a.is_virtual ? "DEMO" : "REAL") + " — " + a.loginid + (a.balance != null ? ` (${a.balance} ${a.currency ?? ""})` : "")}
-                  </option>
-                ))}
-              </select>
+              <div style={{ color: "#8b949e", fontSize: "0.7rem", marginBottom: 4 }}>SWITCH ACCOUNT</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {accounts.map((a) => {
+                  const active = a.account_id === acct?.account_id;
+                  return (
+                    <button
+                      key={a.account_id}
+                      disabled={switching || active}
+                      onClick={() => switchAccount(a.account_id)}
+                      style={{
+                        textAlign: "left",
+                        background: active ? "#0d2818" : "#010409",
+                        color: active ? "#3fb950" : "#c9d1d9",
+                        border: `1px solid ${active ? "#3fb950" : "#30363d"}`,
+                        borderRadius: 6,
+                        padding: "6px 8px",
+                        fontFamily: "monospace",
+                        fontSize: "0.75rem",
+                        cursor: active ? "default" : "pointer",
+                      }}
+                    >
+                      <b style={{ color: a.is_virtual ? "#d29922" : "#58a6ff" }}>{a.is_virtual ? "DEMO" : "REAL"}</b>
+                      {" — "}{a.loginid}{a.balance != null ? ` (${a.balance} ${a.currency ?? ""})` : ""}
+                      {active ? "  ✓ ACTIVE" : ""}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
           <div style={{ marginTop: 8 }}>

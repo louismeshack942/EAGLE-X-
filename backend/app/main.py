@@ -822,4 +822,9 @@ async def serve_frontend(request, call_next):
     if target is None:
         return response
     media_type, _ = mimetypes.guess_type(str(target))
-    return FileResponse(target, media_type=media_type or "application/octet-stream")
+    resp = FileResponse(target, media_type=media_type or "application/octet-stream")
+    # HTML entry points must never be cached — a stale dashboard hid UI
+    # updates before. Hashed _next assets stay cacheable.
+    if target.suffix == ".html":
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
