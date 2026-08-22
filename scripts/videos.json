@@ -268,5 +268,14 @@
     "src": "/videos/30-full-day-session.mp4",
     "thumb": "/videos/thumbnails/30-full-day-session.jpg",
     "duration": 18
+  },
+  {
+    "n": 31,
+    "slug": "connect-deriv-api",
+    "cat": "Intermediate",
+    "title": "How to Connect Your Deriv API (Go Live)",
+    "src": "/videos/31-connect-deriv-api.mp4",
+    "thumb": "/videos/thumbnails/31-connect-deriv-api.jpg",
+    "duration": 116
   }
 ]

@@ -6,9 +6,14 @@ from dataclasses import dataclass, field
 class RiskRules:
     stake_pct: float = 0.10          # 10% of balance per trade (cap)
     stop_loss_pct: float = 0.20      # 20% HARD STOP
-    profit_target_pct: float = 1.20  # 120% regular target
-    max_profit_pct: float = 5.00     # 500% HARD STOP
-    max_consecutive_losses: int = 3
+    # Manager's ruling: the daily profit target is 500% of the CURRENT
+    # balance — not the opening balance. Every time the balance grows, the
+    # target grows with it. Not less, not more. This makes the target a
+    # moving horizon: the GK never blows the whistle on a winning run; he
+    # only defends the loss side.
+    profit_target_pct: float = 5.00  # 500% of CURRENT balance (trailing)
+    max_profit_pct: float = 5.00     # alias kept for the hard-stop check
+    max_consecutive_losses: int = 3  # season wall (benching fires earlier, at 2)
     max_trades_per_day: int = 50
     max_session_seconds: int = 4 * 3600
     cooldown_after_loss_s: float = 30.0
@@ -19,6 +24,16 @@ class RiskRules:
     max_kelly_pct: float = 0.10      # Kelly can never exceed the 10% cap
     drawdown_derisk_at: float = 0.10 # start cutting stake at 10% drawdown
     drawdown_floor: float = 0.35     # stake multiplier at the stop-loss wall
+
+
+def profit_target(current_balance: float, rules: RiskRules | None = None) -> float:
+    """Daily profit target: 500% of the CURRENT balance, always.
+
+    Start at $10 → target $50. Balance grows to $25 → target becomes $125.
+    The number you see is always 500% of what is in the account right now.
+    """
+    rules = rules or DEFAULT_RULES
+    return round(current_balance * rules.profit_target_pct, 2)
 
 
 DEFAULT_RULES = RiskRules()
@@ -95,6 +110,8 @@ def risk_state(
         "stake_multiplier": mult,
         "posture": posture,
         "rating": rating,
+        "profit_target": profit_target(balance, rules),   # 500% of CURRENT balance
+        "daily_profit": round(balance - initial_balance, 2),
     }
 
 
@@ -111,11 +128,18 @@ def check_hard_stops(
     violations: list[str] = []
     balance = max(current_balance, 0.00001)
     drawdown = (initial_balance - balance) / max(initial_balance, 0.00001)
-    growth = (balance - initial_balance) / max(initial_balance, 0.00001)
+    daily_profit = balance - initial_balance
     if drawdown >= rules.stop_loss_pct:
         violations.append(f"STOP_LOSS hit: down {drawdown * 100:.1f}% (limit {rules.stop_loss_pct * 100:.0f}%)")
-    if growth >= rules.max_profit_pct:
-        violations.append(f"MAX_PROFIT reached: up {growth * 100:.1f}% (limit {rules.max_profit_pct * 100:.0f}%)")
+    # Manager's ruling: the cap is 500% of the CURRENT balance, so it rises
+    # with every win. (Because the target always sits 5x ahead of the live
+    # balance, this stop effectively never fires — the GK defends the loss
+    # side and lets winning runs play out, exactly as ordered.)
+    target = profit_target(balance, rules)
+    if daily_profit >= target:
+        violations.append(
+            f"MAX_PROFIT reached: +${daily_profit:.2f} (target 500% of current balance = ${target:.2f})"
+        )
     if consecutive_losses >= rules.max_consecutive_losses:
         violations.append(f"CONSECUTIVE_LOSSES: {consecutive_losses} (limit {rules.max_consecutive_losses})")
     if trades_today >= rules.max_trades_per_day:

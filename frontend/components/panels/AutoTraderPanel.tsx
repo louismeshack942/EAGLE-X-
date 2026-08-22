@@ -38,7 +38,10 @@ export default function AutoTraderPanel({ refreshMs = 3000 }: { refreshMs?: numb
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Status" value={status?.status ?? "stopped"} />
       {status?.benched && (
-        <Row label="⚠ MANAGER" value="CF BENCHED — poor form" accent="#f85149" />
+        <Row label="⚠ PEP'S RULE" value="CF BENCHED — 2 straight misses, regrouping (no chasing)" accent="#f85149" />
+      )}
+      {status?.tight_marking && !status?.benched && (
+        <Row label="⚠ PEP'S RULE" value="TIGHT MARKING — single proven strikes only until he scores" accent="#d29922" />
       )}
       <Row label="Phase" value={status?.phase ?? "matchday"} accent={status?.phase === "matchday" ? "#3fb950" : "#d29922"} />
       <Row label="Balance" value={fmtUsd(status?.balance)} />

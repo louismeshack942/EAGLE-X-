@@ -25,6 +25,9 @@ export default function RiskEngine({ refreshMs = 3000 }: { refreshMs?: number })
   const balance = status?.balance ?? 0;
   const stake = balance * 0.1;
   const stopLoss = balance * 0.2;
+  // Manager's ruling: the daily profit target is ALWAYS 500% of the current
+  // balance — it rises the moment the balance rises. Not less, not more.
+  const profitTarget = status?.gk?.profit_target ?? balance * 5;
 
   return (
     <Card pos="GK" emoji="🛡️" title="RISK ENGINE" actions={<Pill label={status?.running ? "ACTIVE" : "IDLE"} status={status?.running ? "running" : "neutral"} pulse={Boolean(status?.running)} />}>
@@ -32,9 +35,13 @@ export default function RiskEngine({ refreshMs = 3000 }: { refreshMs?: number })
       <Row label="Balance" value={fmtUsd(balance)} />
       <Row label="Stake (10%)" value={fmtUsd(stake)} />
       <Row label="Stop-Loss (20%)" value={fmtUsd(stopLoss)} accent="#f85149" />
+      <Row label="Daily Profit Target (500% of current balance)" value={fmtUsd(profitTarget)} accent="#3fb950" />
       <Row label="P&L Today" value={fmtUsd(status?.daily_pnl)} accent={status?.daily_pnl >= 0 ? "#3fb950" : "#f85149"} />
       <Row label="Trades Today" value={status?.trades_today ?? 0} />
-      <Row label="Consecutive Losses" value={status?.consecutive_losses ?? 0} accent={status?.consecutive_losses >= 3 ? "#f85149" : undefined} />
+      <Row label="Consecutive Losses" value={status?.consecutive_losses ?? 0} accent={status?.consecutive_losses >= 2 ? "#f85149" : undefined} />
+      {status?.tight_marking && (
+        <Row label="⚠ PEP'S RULE" value="TIGHT MARKING — waiting for a proven strike" accent="#d29922" />
+      )}
     </Card>
   );
 }

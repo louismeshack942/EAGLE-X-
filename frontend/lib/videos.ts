@@ -31,4 +31,5 @@ export const VIDEOS: Vid[] = [
   { n: 28, slug: "copy-trading-leader", cat: "Advanced", title: "Copy Trading – Register as a Leader", src: "/videos/28-copy-trading-leader.mp4", thumb: "/videos/thumbnails/28-copy-trading-leader.jpg", dur: "0:09" },
   { n: 29, slug: "portfolio-manager-track", cat: "Advanced", title: "Portfolio Manager – Track Assets", src: "/videos/29-portfolio-manager-track.mp4", thumb: "/videos/thumbnails/29-portfolio-manager-track.jpg", dur: "0:10" },
   { n: 30, slug: "full-day-session", cat: "Advanced", title: "Full Day Trading Session (Live)", src: "/videos/30-full-day-session.mp4", thumb: "/videos/thumbnails/30-full-day-session.jpg", dur: "0:18" },
+  { n: 31, slug: "connect-deriv-api", cat: "Intermediate", title: "How to Connect Your Deriv API (Go Live)", src: "/videos/31-connect-deriv-api.mp4", thumb: "/videos/thumbnails/31-connect-deriv-api.jpg", dur: "1:56" },
 ];

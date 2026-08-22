@@ -34,8 +34,10 @@ from app.services.token_vault import VAULT
 
 FLUID_MAX_PLAYS = 2          # at most two simultaneous positions
 FLUID_PAIR_RATIO = 0.75      # second play must reach 75% of the top's EV
-MAX_GAMES_WITHOUT_GOAL = 3   # bench the CF after this many consecutive losses
-BENCH_GAMES = 2              # scans he must sit out before returning
+MAX_GAMES_WITHOUT_GOAL = 2   # Pep's rule: lose 2 straight → pause, don't chase
+BENCH_GAMES = 3              # scans he must sit out while the team regroups
+TIGHT_CONFIRM_TICKS = 3      # after a benching: one extra confirmation tick
+TIGHT_MIN_Z = 2.5            # after a benching: stronger proof than the 1.96 floor
 MAX_ANOMALIES = 3            # physio room: too many anomalies, nobody plays
 DECISION_HISTORY_LEN = 20    # recent team decisions surfaced in status
 
@@ -100,6 +102,7 @@ class AutoTrader:
         self._last_scan_log = 0.0
         self.benched_until = 0
         self.benched = False
+        self.tight_marking = False  # Pep's regroup: higher bar after a benching
         self._scan_count = 0
         self.decision_history: list[dict] = []
 
@@ -249,6 +252,9 @@ class AutoTrader:
         if won:
             self.wins_today += 1
             self.consecutive_losses = 0
+            if self.tight_marking:
+                self.tight_marking = False
+                self._log("GOAL — tight marking released, CF back to normal pressing")
             result_label = "WIN"
             telegram_notifier.send_result_alert(True, pnl, contract.get("symbol"), contract["name"])
         else:
@@ -256,16 +262,19 @@ class AutoTrader:
             self.consecutive_losses += 1
             result_label = "LOSS"
             telegram_notifier.send_result_alert(False, pnl, contract.get("symbol"), contract["name"])
-            # Manager's decision: a striker who keeps missing gets benched.
+            # Pep's rule: lose possession twice and you do NOT chase the game.
+            # Pause, adjust the positioning, tight-mark, and wait for the
+            # right strike. The CF sits out and returns under a higher bar.
             if self.consecutive_losses >= MAX_GAMES_WITHOUT_GOAL and not self.benched:
                 self.benched = True
                 self.benched_until = self._scan_count + BENCH_GAMES
                 self._log(
-                    f"MANAGER BENCHES CF: {self.consecutive_losses} straight misses — "
-                    f"he sits {BENCH_GAMES} scans, watches, and resets"
+                    f"PEP'S RULE: {self.consecutive_losses} straight misses — stop, regroup, "
+                    f"tight marking. No chasing. CF sits {BENCH_GAMES} scans; returns only "
+                    f"for a proven strike (z>={TIGHT_MIN_Z}, {TIGHT_CONFIRM_TICKS} confirmations)"
                 )
                 telegram_notifier.send_risk_alert(
-                    f"CF benched: {self.consecutive_losses} consecutive losses"
+                    f"CF benched: {self.consecutive_losses} consecutive losses — regrouping, no chasing"
                 )
 
         self.last_trade = {
@@ -299,7 +308,12 @@ class AutoTrader:
                     if self._scan_count >= self.benched_until:
                         self.benched = False
                         self.consecutive_losses = 0
-                        self._log("CF returns from the bench — fresh, watched, hungry")
+                        self.tight_marking = True
+                        self._log(
+                            "CF returns — TIGHT MARKING: no rushing the counter, "
+                            f"only a proven strike (z>={TIGHT_MIN_Z}, "
+                            f"{TIGHT_CONFIRM_TICKS} confirmations) until he scores"
+                        )
                     else:
                         await asyncio.sleep(1.0)
                         continue
@@ -391,7 +405,16 @@ class AutoTrader:
                     self.running = False
                     break
 
-                if best_plays and self.confirmation_ticks >= 2:
+                # The strike gate. Normal pressing: 2 confirmations is enough.
+                # Under Pep's tight marking (after a benching): one extra
+                # confirmation AND the analysts must show stronger proof —
+                # we wait for the right strike, we never chase the last one.
+                required_ticks = TIGHT_CONFIRM_TICKS if self.tight_marking else 2
+                if self.tight_marking and best_plays:
+                    proven = [p for p in best_plays if abs(p.get("z") or 0.0) >= TIGHT_MIN_Z]
+                    if len(proven) < len(best_plays):
+                        best_plays = proven
+                if best_plays and self.confirmation_ticks >= required_ticks:
                     # GK sizes the stake: quarter-Kelly per play, capped at 10%
                     # of balance, scaled down as drawdown deepens.
                     dd_mult = drawdown_multiplier(self.initial_balance, self.balance)
@@ -408,9 +431,10 @@ class AutoTrader:
                         self._log("GK refuses: Kelly says no stake justifies these plays")
                         await asyncio.sleep(5.0)
                         continue
-                    if len(plays) > 1 and self.consecutive_losses > 0:
-                        # Coach's recovery rule: after a miss, no fluid gambles.
-                        self._log("Coach benches fluid play after a miss — single strike until he scores")
+                    if len(plays) > 1 and (self.consecutive_losses > 0 or self.tight_marking):
+                        # Coach's recovery rule: after a miss (and throughout
+                        # tight marking) no fluid gambles — single strike only.
+                        self._log("Coach benches fluid play — single strike until he scores")
                         plays = plays[:1]
                         stakes = stakes[:1]
                     if len(plays) > 1:
@@ -471,6 +495,7 @@ class AutoTrader:
             "losses_today": self.losses_today,
             "win_rate": win_rate,
             "benched": self.benched,
+            "tight_marking": self.tight_marking,
             "cf_rating": cf_rating,
             "gk": gk,
             "phase": self.phase,

@@ -93,9 +93,20 @@ class TestMoneyManagement:
         violations = check_hard_stops(100, 79, 0, 0, 0)
         assert any("STOP_LOSS" in v for v in violations)
 
-    def test_hard_stops_include_max_profit(self):
+    def test_max_profit_tracks_current_balance(self):
+        """Manager's ruling: the profit cap is 500% of the CURRENT balance,
+        not the opening one. Up 5x on the opening $100 (balance $600) is NOT
+        a violation — the target is now 500% of $600 = $3000, so the run
+        continues. Not less, not more."""
+        from app.services.money_management import profit_target
+        assert profit_target(10.0) == 50.0
+        assert profit_target(25.0) == 125.0   # grew with the balance
+        assert profit_target(600.0) == 3000.0
         violations = check_hard_stops(100, 600, 0, 0, 0)
-        assert any("MAX_PROFIT" in v for v in violations)
+        assert not any("MAX_PROFIT" in v for v in violations)
+        # Risk state surfaces the live target for the GK panel.
+        from app.services.money_management import risk_state
+        assert risk_state(100, 600, 0)["profit_target"] == 3000.0
 
     def test_cooldowns(self):
         assert cooldown_for("loss") == 30.0
@@ -261,6 +272,30 @@ class TestTeamDecision:
         at.consecutive_losses = 0
         assert at.benched is False
         assert at.consecutive_losses == 0
+
+    def test_pep_rule_benches_at_two_and_tightens_the_return(self):
+        """Pep: lose possession twice → pause, regroup, tight marking. No
+        chasing. The CF returns only for a proven strike (higher z, extra
+        confirmation), and a goal releases the marking."""
+        from app.services.auto_trader import (
+            AutoTrader, MAX_GAMES_WITHOUT_GOAL, TIGHT_CONFIRM_TICKS, TIGHT_MIN_Z,
+        )
+        assert MAX_GAMES_WITHOUT_GOAL == 2  # Pep's number, not three
+        at = AutoTrader()
+        assert at.tight_marking is False
+        # Two straight losses → benched.
+        at.consecutive_losses = 2
+        assert at.consecutive_losses >= MAX_GAMES_WITHOUT_GOAL
+        # Returning from the bench engages tight marking.
+        at.benched = False
+        at.tight_marking = True
+        assert at.tight_marking is True
+        # The bar is provably higher than normal pressing.
+        assert TIGHT_CONFIRM_TICKS > 2
+        assert TIGHT_MIN_Z > 1.96
+        # A win releases the marking (mirrors place_trade's win path).
+        at.tight_marking = False
+        assert at.tight_marking is False
 
 
 class TestWorldClassGK:

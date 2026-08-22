@@ -167,7 +167,7 @@ def main() -> None:
         seg_files = []
         total = 0.0
         for idx, (heading, bullets, narration) in enumerate(v["segments"]):
-            st = fmt = f"({idx + 1}/{len(v['segments'])}) EAGLE-X · Tutorial {v['n']} of 30 · {v['cat']}"
+            st = fmt = f"({idx + 1}/{len(v['segments'])}) EAGLE-X · Tutorial {v['n']} of {len(VIDEOS)} · {v['cat']}"
             slide = TMP_DIR / f"{stem}-{idx}.png"
             wav = TMP_DIR / f"{stem}-{idx}.wav"
             seg = TMP_DIR / f"{stem}-{idx}.mp4"
