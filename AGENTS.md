@@ -19,20 +19,30 @@ deployment (proxy, cross-service URLs, renamed services, wrong health checks).
   `FRONTEND_DIR=/app/frontend_static`. Port comes from `$PORT` (default 8000).
 - `render.yaml` — single service `eaglex`, frankfurt, free, healthCheckPath `/health`.
 
-## Fluid play (Auto Trader)
+## Fluid play + CF discipline (Auto Trader)
 
-`select_plays()` in `backend/app/services/auto_trader.py` feeds SS (trade
-execution). Gate: STRONG signal + data quality >= 70 + confidence >= 60 +
-supportive evidence. A second contract joins only if its confidence reaches
-75% of the top's (`FLUID_PAIR_RATIO`). Max 2 simultaneous plays (`FLUID_MAX_PLAYS`).
-Coach's recovery rule: after any loss, fluid play is benched (single strike)
-until he scores again.
-The 10%-of-balance stake is recomputed from the CURRENT balance on every
-trade and split evenly across the plays; if a split share would fall below
-Deriv's 0.35 minimum, only the top play runs. Scouting ties break by data
-quality. Tests: `TestFluidPlay` in `backend/tests/test_intel_and_trading.py`.
-Status exposes `phase` ("matchday"/"training") and a training-ground log line
-when no market passes the gate.
+`select_plays()` in `backend/app/services/auto_trader.py` feeds SS. Honest
+rules, learned from the CF's losing streak:
+
+- **EV, not confidence.** Each contract gets a real expected value
+  (`ev = p_win * payout - 1`) in `market_master.py`. Confidence is now the
+  observed-vs-fair edge, not a feel-good number.
+- **DIFFERS only.** ODD/EVEN/OVER/UNDER are fair coin flips the house always
+  wins long-term; MATCHES is a 10% lottery. Only DIFFERS (90% true base rate)
+  carries a sustainable edge. The CF is benched off everything else.
+- **Bayesian shrinkage.** `analytics_advanced.get_digit_analysis` adds an
+  `estimate` per digit shrunk toward the 10% prior by a pseudo-count — small
+  windows can no longer manufacture fake "100%" edges.
+- **Scout the full board.** Market Master returns `contracts[:6]` for the UI
+  and `all_contracts` for the CF, so edge plays aren't truncated away.
+- **Positive-EV gate.** A contract must have `ev > 0` and a real edge
+  (`MIN_EDGE_PCT`). On a fair market that means *no trades* — which is the
+  correct, capital-preserving behaviour.
+- **Benching.** `MAX_GAMES_WITHOUT_GOAL` consecutive losses → the manager
+  benches the CF for `BENCH_GAMES` scans (log + Telegram alert), then he
+  returns with a clean slate. Status exposes `win_rate` + `benched`.
+
+Tests: `TestFluidPlay` in `backend/tests/test_intel_and_trading.py` (13 tests; 55 total).
 
 ## Club (communications hub)
 

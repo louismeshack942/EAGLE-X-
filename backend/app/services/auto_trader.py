@@ -18,31 +18,43 @@ from app.services.telegram import telegram_notifier
 from app.services.token_vault import VAULT
 
 FLUID_MAX_PLAYS = 2          # at most two simultaneous positions
-FLUID_MIN_CONFIDENCE = 60    # absolute floor for any play
+FLUID_MIN_CONFIDENCE = 60    # absolute floor for any play (fallback if ev missing)
 FLUID_PAIR_RATIO = 0.75      # second play must reach 75% of the top's confidence
+MIN_EV = 0.0                 # minimum positive expected value per 1.0 staked
+MIN_EDGE_PCT = 1.0           # minimum observed-vs-fair edge (percentage points)
+MAX_GAMES_WITHOUT_GOAL = 3   # bench the CF after this many consecutive losses
+BENCH_GAMES = 2              # scans he must sit out before returning
 
 
 def select_plays(mm: dict, symbol: str) -> list[dict]:
     """The team feeds SS: pick up to FLUID_MAX_PLAYS contracts on one market.
 
-    Gate: STRONG signal + data quality >= 70, then every contract with
-    supportive evidence above the confidence floor. A second play only joins
-    when its confidence is within FLUID_PAIR_RATIO of the top — when ODD says
-    100 and MATCHES says 100, we play both and split the stake.
+    Manager's directive: only play DIFFERS. It is the only contract whose true
+    base rate (90%) beats the payout — a genuine, sustainable edge. ODD/EVEN/
+    OVER/UNDER are 50/50 coin flips the house always wins long-term; MATCHES
+    is a 10% lottery. The CF was bleeding because he kept firing at those.
+
+    Gate: STRONG signal + data quality >= 70 + positive EV + minimum edge.
     """
     dq = mm.get("data_quality", 0) or 0
     sig = mm.get("signal", "") or ""
     if "STRONG" not in sig or dq < 70:
         return []
     contracts = sorted(
-        mm.get("contracts") or [], key=lambda c: c.get("score", 0), reverse=True
+        mm.get("all_contracts") or mm.get("contracts") or [],
+        key=lambda c: c.get("ev", -1), reverse=True,
     )
     plays: list[dict] = []
     for c in contracts:
-        conf = c.get("confidence", 0) or 0
-        if conf < FLUID_MIN_CONFIDENCE or "SUPPORT" not in (c.get("evidence") or ""):
+        if c.get("type") != "DIFFERS":
+            continue  # bench the coin flips and the lottery — play the edge
+        ev = c.get("ev", -1)
+        edge = c.get("observed_edge", 0.0) or 0.0
+        if ev <= MIN_EV or edge < MIN_EDGE_PCT:
             continue
-        if plays and conf < plays[0]["confidence"] * FLUID_PAIR_RATIO:
+        if "SUPPORT" not in (c.get("evidence") or ""):
+            continue
+        if plays and c.get("ev", 0) < plays[0].get("ev", 0) * FLUID_PAIR_RATIO:
             continue
         plays.append({**c, "symbol": symbol, "data_quality": dq, "signal": sig})
         if len(plays) >= FLUID_MAX_PLAYS:
@@ -72,6 +84,9 @@ class AutoTrader:
         self._paper_rng = random.Random(20240821)
         self.phase = "matchday"
         self._last_scan_log = 0.0
+        self.benched_until = 0
+        self.benched = False
+        self._scan_count = 0
 
     def _log(self, msg: str) -> None:
         stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -113,22 +128,31 @@ class AutoTrader:
         return self.balance
 
     async def _simulate_contract_outcome(self, contract: dict, rng) -> tuple[bool, float]:
-        """Paper-mode contract resolution, statistically-faithful-ish."""
+        """Paper-mode resolution against the FAIR odds, not our confidence.
+
+        The CF was losing because paper mode treated displayed confidence as
+        truth. It isn't — confidence is a heuristic. Here each contract plays
+        out at its true base rate (what Deriv prices against), so a strategy
+        with no real edge shows a real loss in paper too.
+        """
         t = contract["type"]
-        conf = contract.get("confidence", 50.0)
-        p = conf / 100.0
         if t == "MATCHES":
+            # fair base rate ~10%; observed edge nudges it but capped honestly
             payout = 9.0
-            win = rng.random() < min(0.15, p * 0.15)
+            p_win = 0.10 + (contract.get("observed_edge", 0.0) / 100.0)
+            p_win = max(0.05, min(0.22, p_win))
+            win = rng.random() < p_win
         elif t == "DIFFERS":
             payout = 1.1
-            win = rng.random() < min(0.95, p * 1.05)
+            p_win = 0.90 - (contract.get("observed_edge", 0.0) / 100.0)
+            p_win = max(0.78, min(0.95, p_win))
+            win = rng.random() < p_win
         elif t in ("ODD", "EVEN"):
             payout = 1.9
-            win = rng.random() < min(0.55, max(0.45, p))
+            win = rng.random() < 0.5  # fair — house edge lives in the payout
         elif t in ("OVER", "UNDER"):
             payout = 1.9
-            win = rng.random() < min(0.6, max(0.4, p))
+            win = rng.random() < 0.5  # fair — same story
         else:
             payout = 1.9
             win = rng.random() < 0.5
@@ -167,6 +191,17 @@ class AutoTrader:
             self.consecutive_losses += 1
             result_label = "LOSS"
             telegram_notifier.send_result_alert(False, pnl, contract.get("symbol"), contract["name"])
+            # Manager's decision: a striker who keeps missing gets benched.
+            if self.consecutive_losses >= MAX_GAMES_WITHOUT_GOAL and not self.benched:
+                self.benched = True
+                self.benched_until = self._scan_count + BENCH_GAMES
+                self._log(
+                    f"MANAGER BENCHES CF: {self.consecutive_losses} straight misses — "
+                    f"he sits {BENCH_GAMES} scans, watches, and resets"
+                )
+                telegram_notifier.send_risk_alert(
+                    f"CF benched: {self.consecutive_losses} consecutive losses"
+                )
 
         self.last_trade = {
             "symbol": contract.get("symbol", ""),
@@ -193,11 +228,21 @@ class AutoTrader:
     async def _main_loop(self, api_token: str | None) -> None:
         try:
             while self.running:
+                self._scan_count += 1
+                # Manager's bench: the CF sits out a few scans after a bad run.
+                if self.benched:
+                    if self._scan_count >= self.benched_until:
+                        self.benched = False
+                        self.consecutive_losses = 0
+                        self._log("CF returns from the bench — fresh, watched, hungry")
+                    else:
+                        await asyncio.sleep(1.0)
+                        continue
                 symbols = self.settings.active_symbols
                 best_symbol = None
                 best_plays: list[dict] = []
                 best_team: dict = {}
-                best_rank = (-1, -1.0)  # (top score, data quality) — better DQ wins ties
+                best_rank = (-1, -1.0)  # (top ev, data quality) — better DQ wins ties
                 for sym in symbols:
                     try:
                         mm = market_master.analyze(sym, window=100)
@@ -206,7 +251,7 @@ class AutoTrader:
                     plays = select_plays(mm, sym)
                     if not plays:
                         continue
-                    rank = (plays[0]["score"], mm.get("data_quality", 0) or 0)
+                    rank = (plays[0].get("ev", 0), mm.get("data_quality", 0) or 0)
                     if rank > best_rank:
                         best_rank = rank
                         best_symbol = sym
@@ -231,11 +276,13 @@ class AutoTrader:
                         "symbol": best_symbol,
                         "contract": best_plays[0]["name"],
                         "confidence": best_plays[0]["confidence"],
+                        "ev": best_plays[0].get("ev"),
                         "digit": best_plays[0].get("digit"),
                         "plays": [
                             {
                                 "contract": p["name"],
                                 "confidence": p["confidence"],
+                                "ev": p.get("ev"),
                                 "digit": p.get("digit"),
                             }
                             for p in best_plays
@@ -311,6 +358,7 @@ class AutoTrader:
             self.running = False
 
     def status(self) -> dict:
+        total = self.wins_today + self.losses_today
         return {
             "running": self.running,
             "mode": self.mode,
@@ -321,6 +369,8 @@ class AutoTrader:
             "consecutive_losses": self.consecutive_losses,
             "wins_today": self.wins_today,
             "losses_today": self.losses_today,
+            "win_rate": round(self.wins_today / total * 100, 1) if total else 0.0,
+            "benched": self.benched,
             "phase": self.phase,
             "status": "running" if self.running else "stopped",
             "last_trade": self.last_trade,

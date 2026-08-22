@@ -24,10 +24,21 @@ class AdvancedAnalytics:
         digits = _digits(ticks)
         n = len(digits)
         counts = Counter(digits)
-        frequency = {
-            str(d): {"count": counts.get(d, 0), "percent": round(counts.get(d, 0) / n * 100, 1)}
-            for d in range(10)
-        }
+        # Bayesian shrinkage: pull each digit's observed share toward the fair
+        # 10% prior with a strength proportional to how little data we have.
+        # A "100%" on 20 ticks collapses toward fair; on 2000 ticks it barely moves.
+        PRIOR = 0.10
+        PRIOR_STRENGTH = 25.0  # pseudo-count
+        frequency = {}
+        for d in range(10):
+            c = counts.get(d, 0)
+            raw = c / n
+            shrunk = (c + PRIOR_STRENGTH * PRIOR) / (n + PRIOR_STRENGTH)
+            frequency[str(d)] = {
+                "count": c,
+                "percent": round(raw * 100, 1),
+                "estimate": round(shrunk * 100, 2),  # trustworthy estimate
+            }
         sorted_counts = sorted(((counts.get(d, 0), d) for d in range(10)), reverse=True)
         most_freq_d = sorted_counts[0][1]
         least_freq_d = sorted_counts[-1][1]
@@ -44,6 +55,7 @@ class AdvancedAnalytics:
         return {
             "symbol": symbol,
             "window": window,
+            "n": n,
             "frequency": frequency,
             "most_frequent": most_freq_d,
             "least_frequent": least_freq_d,

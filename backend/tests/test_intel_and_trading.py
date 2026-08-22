@@ -128,7 +128,7 @@ class TestPersistence:
         assert session["position"] == 0 or session["position"] == 1
 
 
-from app.services.auto_trader import FLUID_MAX_PLAYS, FLUID_MIN_CONFIDENCE, select_plays
+from app.services.auto_trader import FLUID_MAX_PLAYS, MIN_EDGE_PCT, MIN_EV, select_plays
 
 
 def _mm(signal="STRONG_DATA_SUPPORT", dq=88.0, contracts=None):
@@ -142,52 +142,70 @@ def _mm(signal="STRONG_DATA_SUPPORT", dq=88.0, contracts=None):
     }
 
 
-def _c(name, conf, score=None, evidence="STRONG_DATA_SUPPORT"):
+def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT"):
     return {
         "name": name,
         "type": name.split(" ")[0],
         "digit": None,
-        "score": score if score is not None else conf,
-        "confidence": conf,
+        "ev": ev,
+        "observed_edge": edge,
+        "confidence": 50 + edge * 5,
         "evidence": evidence,
     }
 
 
 class TestFluidPlay:
+    def test_only_differs_play(self):
+        """Manager's directive: bench the coin flips and lottery, play DIFFERS."""
+        mm = _mm(contracts=[
+            _c("OVER 1", 0.88, 8.0),        # coin flip — benched despite EV
+            _c("MATCHES on 6", 0.71, 9.0),   # lottery — benched despite EV
+            _c("DIFFERS on 3", 0.09, 5.0),   # the edge — plays
+        ])
+        plays = select_plays(mm, "R_100")
+        assert len(plays) == 1
+        assert plays[0]["type"] == "DIFFERS"
+
     def test_two_equal_plays_split(self):
-        """ODD 100 + MATCHES 100 -> both play, stake splits."""
-        mm = _mm(contracts=[_c("ODD", 100), _c("MATCHES on 6", 100)])
+        """Two strong positive-EV DIFFERS -> both play, stake splits."""
+        mm = _mm(contracts=[_c("DIFFERS on 3", 0.09, 5.0), _c("DIFFERS on 7", 0.085, 4.8)])
         plays = select_plays(mm, "R_100")
         assert len(plays) == 2
-        assert {p["name"] for p in plays} == {"ODD", "MATCHES on 6"}
+        assert {p["name"] for p in plays} == {"DIFFERS on 3", "DIFFERS on 7"}
         assert all(p["symbol"] == "R_100" for p in plays)
 
     def test_second_play_too_far_behind(self):
-        """ODD 100, EVEN 60 (< 75% of top) -> single play only."""
-        mm = _mm(contracts=[_c("ODD", 100), _c("EVEN", 60)])
+        mm = _mm(contracts=[_c("DIFFERS on 3", 0.10, 5.0), _c("DIFFERS on 7", 0.07, 4.0)])
         plays = select_plays(mm, "R_100")
         assert len(plays) == 1
-        assert plays[0]["name"] == "ODD"
+        assert plays[0]["name"] == "DIFFERS on 3"
 
     def test_gate_blocks_weak_signal(self):
-        mm = _mm(signal="NEUTRAL", contracts=[_c("ODD", 100)])
+        mm = _mm(signal="NEUTRAL", contracts=[_c("DIFFERS on 3", 0.10, 5.0)])
         assert select_plays(mm, "R_100") == []
 
     def test_gate_blocks_low_data_quality(self):
-        mm = _mm(dq=55.0, contracts=[_c("ODD", 100)])
+        mm = _mm(dq=55.0, contracts=[_c("DIFFERS on 3", 0.10, 5.0)])
         assert select_plays(mm, "R_100") == []
 
-    def test_floor_and_contrary_evidence_excluded(self):
+    def test_negative_ev_excluded(self):
+        mm = _mm(contracts=[_c("DIFFERS on 3", -0.05, 5.0)])
+        assert select_plays(mm, "R_100") == []
+
+    def test_edge_floor_enforced(self):
+        mm = _mm(contracts=[_c("DIFFERS on 3", 0.10, MIN_EDGE_PCT - 0.5)])
+        assert select_plays(mm, "R_100") == []
+
+    def test_contrary_evidence_excluded(self):
         mm = _mm(contracts=[
-            _c("ODD", 100),
-            _c("EVEN", 30, evidence="WEAK_DATA_CONTRARY"),
-            _c("OVER 4", FLUID_MIN_CONFIDENCE - 1),
+            _c("DIFFERS on 3", 0.10, 5.0),
+            _c("DIFFERS on 7", 0.09, 4.8, evidence="WEAK_DATA_CONTRARY"),
         ])
         plays = select_plays(mm, "R_100")
         assert len(plays) == 1
 
     def test_never_more_than_max(self):
-        mm = _mm(contracts=[_c("A", 100), _c("B", 100), _c("C", 100)])
+        mm = _mm(contracts=[_c("DIFFERS on 1", 0.10, 5.0), _c("DIFFERS on 2", 0.095, 5.0), _c("DIFFERS on 3", 0.09, 5.0)])
         assert len(select_plays(mm, "R_100")) == FLUID_MAX_PLAYS
 
     def test_compounding_stake_grows_with_balance(self):
@@ -195,3 +213,24 @@ class TestFluidPlay:
         assert compute_stake(10.0) == 1.0
         assert compute_stake(20.0) == 2.0
         assert compute_stake(44.95) == 4.5
+
+    def test_benching_after_consecutive_losses(self):
+        """Manager benches the CF after MAX_GAMES_WITHOUT_GOAL straight misses."""
+        from app.services.auto_trader import AutoTrader, MAX_GAMES_WITHOUT_GOAL, BENCH_GAMES
+        at = AutoTrader()
+        at.running = True
+        at._scan_count = 5
+        for _ in range(MAX_GAMES_WITHOUT_GOAL):
+            at.consecutive_losses += 1
+            at.losses_today += 1
+            if at.consecutive_losses >= MAX_GAMES_WITHOUT_GOAL and not at.benched:
+                at.benched = True
+                at.benched_until = at._scan_count + BENCH_GAMES
+        assert at.benched is True
+        assert at.benched_until == 5 + BENCH_GAMES
+        # He returns after the bench window and his slate is wiped clean.
+        at._scan_count = at.benched_until
+        at.benched = False
+        at.consecutive_losses = 0
+        assert at.benched is False
+        assert at.consecutive_losses == 0

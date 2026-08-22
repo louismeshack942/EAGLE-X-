@@ -37,20 +37,24 @@ export default function AutoTraderPanel({ refreshMs = 3000 }: { refreshMs?: numb
     >
       {error && <div style={{ color: "#f85149", fontSize: "0.75rem" }}>{error}</div>}
       <Row label="Status" value={status?.status ?? "stopped"} />
+      {status?.benched && (
+        <Row label="⚠ MANAGER" value="CF BENCHED — poor form" accent="#f85149" />
+      )}
       <Row label="Phase" value={status?.phase ?? "matchday"} accent={status?.phase === "matchday" ? "#3fb950" : "#d29922"} />
       <Row label="Balance" value={fmtUsd(status?.balance)} />
       <Row label="W / L today" value={`${status?.wins_today ?? 0} / ${status?.losses_today ?? 0}`} />
+      <Row label="Win Rate" value={`${status?.win_rate ?? 0}%`} accent={(status?.win_rate ?? 0) >= 50 ? "#3fb950" : "#f85149"} />
       <Row label="Current Stake (10%)" value={fmtUsd(status?.current_stake)} accent="#d29922" />
       <Row label="Daily P&L" value={fmtUsd(status?.daily_pnl)} accent={status?.daily_pnl >= 0 ? "#3fb950" : "#f85149"} />
       <Row label="Trades" value={status?.trades_today ?? 0} />
       {rec?.plays?.length > 1 ? (
         <Row
           label="FLUID PLAY"
-          value={rec.plays.map((p: any) => `${p.contract} (${p.confidence}%)`).join(" + ")}
+          value={rec.plays.map((p: any) => `${p.contract} (EV ${p.ev != null ? `+${p.ev}` : `${p.confidence}%`})`).join(" + ")}
           accent="#3fb950"
         />
       ) : rec && (
-        <Row label="Recommendation" value={`${rec.contract} (${rec.confidence}%)`} accent="#58a6ff" />
+        <Row label="Recommendation" value={`${rec.contract} (${rec.ev != null ? `EV +${rec.ev}` : `${rec.confidence}%`})`} accent="#58a6ff" />
       )}
       {rec?.team && (
         <Row

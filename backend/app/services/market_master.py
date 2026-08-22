@@ -1,4 +1,10 @@
-"""Market Master — full decision matrix across the 6 digit contracts."""
+"""Market Master — full decision matrix across the digit contracts.
+
+Every contract is priced against its fair base rate. We only surface a
+positive expected value (EV). "Confidence" becomes an honest number: the
+distance of observed frequency from fair, expressed as an edge — not a
+feel-good score.
+"""
 from typing import Optional
 
 from app.services.analytics_advanced import digit_engine
@@ -8,9 +14,18 @@ from app.services.money_management import compute_stake
 
 MAX_SCORE = 100.0
 
+# Fair payout multipliers Deriv offers (approx; used for EV honesty, not display).
+PAYOUTS = {"MATCHES": 9.0, "DIFFERS": 1.1, "ODD": 1.9, "EVEN": 1.9, "OVER": 1.9, "UNDER": 1.9}
 
-def _score_to_confidence(score: float) -> float:
-    return round(min(100.0, max(0.0, 50 + (score / MAX_SCORE) * 50)), 1)
+
+def _edge_confidence(edge_pct: float) -> float:
+    """Honest confidence: 50 at zero edge, scaling with observed deviation."""
+    return round(min(100.0, max(0.0, 50.0 + edge_pct * 5.0)), 1)
+
+
+def _ev(p_win: float, payout: float) -> float:
+    """Expected value per 1.0 staked."""
+    return round(p_win * payout - 1.0, 4)
 
 
 class MarketMaster:
@@ -23,70 +38,109 @@ class MarketMaster:
         contracts: list[dict] = []
 
         if freq:
-            odd_pct = sum(freq[str(d)]["count"] for d in range(1, 10, 2))
-            even_pct = sum(freq[str(d)]["count"] for d in range(0, 10, 2))
-            total = odd_pct + even_pct
-            odd_freq = odd_pct / total * 100 if total else 50.0
-            even_freq = even_pct / total * 100 if total else 50.0
+            # Use the shrunk (Bayesian) estimate, not the raw percent, so small
+            # windows don't manufacture fake edges.
+            est = {d: (freq[str(d)].get("estimate", freq[str(d)]["percent"])) for d in range(10)}
+            odd_freq = sum(est[d] for d in range(1, 10, 2))
+            even_freq = 100.0 - odd_freq
 
             for d in range(10):
-                obs = freq[str(d)]["percent"]
+                obs = est[d]
+                # MATCHES: fair 10%. Edge = observed - fair.
+                m_edge = obs - 10.0
+                p_match = max(0.01, min(0.99, obs / 100.0))
                 contracts.append({
                     "name": f"MATCHES on {d}",
                     "type": "MATCHES",
                     "digit": d,
-                    "score": round((obs - 10) * 5 + weight, 1),
-                    "confidence": _score_to_confidence((obs - 10) * 5 + weight),
+                    "score": round(m_edge * 5 + weight, 1),
+                    "confidence": _edge_confidence(m_edge),
                     "evidence": signal,
+                    "observed_pct": round(obs, 2),
+                    "fair_pct": 10.0,
+                    "observed_edge": round(m_edge, 2),
+                    "ev": _ev(p_match, PAYOUTS["MATCHES"]),
                 })
+                # DIFFERS: fair 90%. Edge = fair observed - fair.
+                d_edge = (100.0 - obs) - 90.0
+                p_diff = max(0.01, min(0.99, (100.0 - obs) / 100.0))
                 contracts.append({
                     "name": f"DIFFERS on {d}",
                     "type": "DIFFERS",
                     "digit": d,
-                    "score": round((10 - obs) * 5 + weight, 1),
-                    "confidence": _score_to_confidence((10 - obs) * 5 + weight),
+                    "score": round(d_edge * 5 + weight, 1),
+                    "confidence": _edge_confidence(d_edge),
                     "evidence": signal,
+                    "observed_pct": round(100.0 - obs, 2),
+                    "fair_pct": 90.0,
+                    "observed_edge": round(d_edge, 2),
+                    "ev": _ev(p_diff, PAYOUTS["DIFFERS"]),
                 })
 
+            # ODD/EVEN: fair 50%.
+            o_edge = odd_freq - 50.0
             contracts.append({
                 "name": "ODD",
                 "type": "ODD",
                 "digit": None,
-                "score": round((odd_freq - 50) * 10 + weight, 1),
-                "confidence": _score_to_confidence((odd_freq - 50) * 10 + weight),
+                "score": round(o_edge * 10 + weight, 1),
+                "confidence": _edge_confidence(o_edge),
                 "evidence": signal,
+                "observed_pct": round(odd_freq, 2),
+                "fair_pct": 50.0,
+                "observed_edge": round(o_edge, 2),
+                "ev": _ev(max(0.01, min(0.99, odd_freq / 100.0)), PAYOUTS["ODD"]),
             })
+            e_edge = even_freq - 50.0
             contracts.append({
                 "name": "EVEN",
                 "type": "EVEN",
                 "digit": None,
-                "score": round((even_freq - 50) * 10 + weight, 1),
-                "confidence": _score_to_confidence((even_freq - 50) * 10 + weight),
+                "score": round(e_edge * 10 + weight, 1),
+                "confidence": _edge_confidence(e_edge),
                 "evidence": signal,
+                "observed_pct": round(even_freq, 2),
+                "fair_pct": 50.0,
+                "observed_edge": round(e_edge, 2),
+                "ev": _ev(max(0.01, min(0.99, even_freq / 100.0)), PAYOUTS["EVEN"]),
             })
 
             for d in range(1, 10):
-                high_freq = sum(freq[str(x)]["percent"] for x in range(d, 10))
-                low_freq = sum(freq[str(x)]["percent"] for x in range(0, d))
+                high_freq = sum(est[x] for x in range(d, 10))
+                low_freq = sum(est[x] for x in range(0, d))
+                # OVER d: fair = (10-d)*10%. UNDER d: fair = d*10%.
+                fair_over = (10 - d) * 10.0
+                fair_under = d * 10.0
+                ov_edge = high_freq - fair_over
                 contracts.append({
                     "name": f"OVER {d}",
                     "type": "OVER",
                     "digit": d,
-                    "score": round((high_freq - (10 - d) * 10) * 10 + weight, 1),
-                    "confidence": _score_to_confidence((high_freq - (10 - d) * 10) * 10 + weight),
+                    "score": round(ov_edge * 10 + weight, 1),
+                    "confidence": _edge_confidence(ov_edge),
                     "evidence": signal,
+                    "observed_pct": round(high_freq, 2),
+                    "fair_pct": round(fair_over, 1),
+                    "observed_edge": round(ov_edge, 2),
+                    "ev": _ev(max(0.01, min(0.99, high_freq / 100.0)), PAYOUTS["OVER"]),
                 })
+                un_edge = low_freq - fair_under
                 contracts.append({
                     "name": f"UNDER {d}",
                     "type": "UNDER",
                     "digit": d,
-                    "score": round((low_freq - d * 10) * 10 + weight, 1),
-                    "confidence": _score_to_confidence((low_freq - d * 10) * 10 + weight),
+                    "score": round(un_edge * 10 + weight, 1),
+                    "confidence": _edge_confidence(un_edge),
                     "evidence": signal,
+                    "observed_pct": round(low_freq, 2),
+                    "fair_pct": round(fair_under, 1),
+                    "observed_edge": round(un_edge, 2),
+                    "ev": _ev(max(0.01, min(0.99, low_freq / 100.0)), PAYOUTS["UNDER"]),
                 })
 
-        contracts.sort(key=lambda c: c["score"], reverse=True)
-        contracts = contracts[:6]
+        # Keep the full board for scouting; the UI shows the top 6 by name order
+        # but the CF evaluates every contract, so honest DIFFERS edges are seen.
+        contracts.sort(key=lambda c: c["ev"], reverse=True)
         top = contracts[0] if contracts else None
 
         data_quality = intel["data_quality"]
@@ -95,10 +149,10 @@ class MarketMaster:
             recommendation = "Wait — Poor Data"
         elif anomaly_count > 3:
             recommendation = "Wait — Anomalies Detected"
-        elif top is None or top["score"] < 0:
-            recommendation = "Wait — No Clear Edge"
+        elif top is None or top["ev"] <= 0:
+            recommendation = "Wait — No Positive Edge"
         else:
-            recommendation = f"Trade {top['name']}"
+            recommendation = f"Trade {top['name']} (EV +{top['ev']:.2f})"
 
         if top:
             top = {**top, "stake": compute_stake(10.0), "duration_seconds": 60}
@@ -122,7 +176,8 @@ class MarketMaster:
             "symbol": symbol,
             "window": window,
             "top_recommendation": top,
-            "contracts": contracts,
+            "contracts": contracts[:6],   # UI top board
+            "all_contracts": contracts,   # full scouting board for the CF
             "recommendation": recommendation,
             "evidence_summary": evidence_summary,
             "signal": signal,
