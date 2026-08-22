@@ -10,6 +10,7 @@ import asyncio
 import json
 from typing import Optional
 
+import httpx
 import websockets
 
 from app.config import get_settings
@@ -57,11 +58,46 @@ class DerivTrader:
     def __init__(self) -> None:
         self.settings = get_settings()
 
+    async def _mint_fresh_otp(self, token: str) -> Optional[str]:
+        """Mint a fresh OTP-authenticated websocket URL for a PAT token.
+
+        OTP URLs are single-use and short-lived, so a new one is required for
+        every connection; reusing the stored one makes trades flaky. Returns
+        None when it can't be minted (caller falls back)."""
+        account_id = await VAULT.get_account_id()
+        if not account_id:
+            return None
+        stored_app_id = await VAULT.get_app_id()
+        base = self.settings.deriv_rest_base.rstrip("/")
+        variants = []
+        if stored_app_id:
+            variants.append({"Authorization": f"Bearer {token}", "Deriv-App-ID": str(stored_app_id)})
+        variants.append({"Authorization": f"Bearer {token}"})
+        async with httpx.AsyncClient(timeout=15) as client:
+            for headers in variants:
+                for attempt in range(3):
+                    try:
+                        resp = await client.post(f"{base}/options/accounts/{account_id}/otp", headers=headers)
+                    except httpx.HTTPError:
+                        continue
+                    if resp.status_code == 200:
+                        url = (resp.json().get("data") or {}).get("url")
+                        if url:
+                            return url
+                    if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                        await asyncio.sleep(0.5 * (2 ** attempt))
+                        continue
+                    break
+        return None
+
     async def _url(self, token: Optional[str] = None) -> str:
-        """Pick the websocket endpoint. A PAT token stored in the vault has an
-        OTP-authenticated URL minted at connect time — use it directly. Legacy
-        tokens fall back to the classic websockets/v3 endpoint."""
+        """Pick the websocket endpoint. For a PAT token vaulted at connect
+        time, mint a FRESH OTP URL per connection (the stored one is a
+        fallback). Legacy tokens use the classic websockets/v3 endpoint."""
         if token and await VAULT.get() == token:
+            fresh = await self._mint_fresh_otp(token)
+            if fresh:
+                return fresh
             ws_url = await VAULT.get_ws_url()
             if ws_url:
                 return ws_url

@@ -36,23 +36,60 @@ class TokenBody(BaseModel):
     app_id: Optional[str] = None   # required for pat_ tokens
 
 
+_RETRYABLE = {429, 500, 502, 503, 504}
+
+
+async def _request(client: httpx.AsyncClient, method: str, url: str, headers: dict,
+                   attempts: int = 4) -> httpx.Response:
+    """HTTP call resilient to flaky API/network behaviour: retries with
+    exponential backoff on transport errors and retryable status codes."""
+    last_error: Optional[Exception] = None
+    for i in range(attempts):
+        try:
+            resp = await client.request(method, url, headers=headers)
+            if resp.status_code in _RETRYABLE and i < attempts - 1:
+                await asyncio.sleep(0.5 * (2 ** i))
+                continue
+            return resp
+        except httpx.HTTPError as exc:
+            last_error = exc
+            if i < attempts - 1:
+                await asyncio.sleep(0.5 * (2 ** i))
+    raise ValueError(f"Deriv API unreachable after {attempts} attempts: {last_error}")
+
+
 async def _pat_validate(token: str, app_id: Optional[str]) -> dict:
     """Validate a modern PAT token via Deriv's REST trading API.
 
     Finds the primary trading account, then mints a one-time authenticated
-    websocket URL from the OTP endpoint. Raises on any failure."""
+    websocket URL from the OTP endpoint. Tries with and without the
+    Deriv-App-ID header so a wrong/missing app id doesn't block an otherwise
+    valid token. Raises on any failure."""
     settings = get_settings()
-    headers = {"Authorization": f"Bearer {token}"}
-    if app_id:
-        headers["Deriv-App-ID"] = str(app_id)
     base = settings.deriv_rest_base.rstrip("/")
-    async with httpx.AsyncClient(timeout=10) as client:
-        accounts_resp = await client.get(f"{base}/options/accounts", headers=headers)
-        if accounts_resp.status_code == 401:
+    header_variants = []
+    if app_id:
+        header_variants.append({"Authorization": f"Bearer {token}", "Deriv-App-ID": str(app_id)})
+    header_variants.append({"Authorization": f"Bearer {token}"})
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        accounts = None
+        used_headers = header_variants[0]
+        rejected = False
+        for headers in header_variants:
+            resp = await _request(client, "GET", f"{base}/options/accounts", headers)
+            if resp.status_code == 200:
+                accounts = (resp.json().get("data") or {}).get("accounts", [])
+                used_headers = headers
+                break
+            if resp.status_code in (401, 403):
+                rejected = True
+                continue
+            raise ValueError(f"accounts lookup failed ({resp.status_code})")
+        if accounts is None:
+            if rejected and not app_id:
+                raise ValueError("Deriv rejected this token (401) — pat_ tokens usually need your registered app id too")
             raise ValueError("Deriv rejected this token")
-        if accounts_resp.status_code != 200:
-            raise ValueError(f"accounts lookup failed ({accounts_resp.status_code})")
-        accounts = (accounts_resp.json().get("data") or {}).get("accounts", [])
         if not accounts:
             raise ValueError("no Deriv accounts visible to this token")
         accounts.sort(key=lambda a: a.get("account_id", ""))
@@ -60,9 +97,9 @@ async def _pat_validate(token: str, app_id: Optional[str]) -> dict:
         account_id = primary.get("account_id")
         if not account_id:
             raise ValueError("accounts entry has no account_id")
-        otp_resp = await client.post(f"{base}/options/accounts/{account_id}/otp", headers=headers)
-        if otp_resp.status_code == 401:
-            raise ValueError("Deriv rejected this token on OTP")
+        otp_resp = await _request(client, "POST", f"{base}/options/accounts/{account_id}/otp", used_headers)
+        if otp_resp.status_code in (401, 403):
+            raise ValueError("Deriv rejected this token on OTP — enable the trading scope for your token")
         if otp_resp.status_code != 200:
             raise ValueError(f"otp generation failed ({otp_resp.status_code})")
         ws_url = (otp_resp.json().get("data") or {}).get("url")
@@ -78,16 +115,14 @@ async def _pat_validate(token: str, app_id: Optional[str]) -> dict:
     }
 
 
-async def _validate_token(token: str, app_id: Optional[str] = None) -> dict:
-    """Validate a token. PAT tokens go through the REST flow; everything
-    else uses the legacy websocket authorize call. Raises on failure."""
-    if token.startswith("pat_"):
-        return await _pat_validate(token, app_id)
+async def _ws_validate(token: str, app_id: Optional[int] = None) -> dict:
+    """Legacy websocket authorize flow. Raises on failure."""
     settings = get_settings()
-    url = f"{settings.deriv_ws_url}?app_id={settings.deriv_app_id}&l=EN"
-    async with websockets.connect(url, open_timeout=10) as ws:
+    ws_app_id = app_id or settings.deriv_app_id
+    url = f"{settings.deriv_ws_url}?app_id={ws_app_id}&l=EN"
+    async with websockets.connect(url, open_timeout=15) as ws:
         await ws.send(json.dumps({"authorize": token}))
-        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=10))
+        msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=15))
     if "error" in msg:
         raise ValueError(msg["error"].get("message", "Deriv rejected the token"))
     auth = msg.get("authorize") or {}
@@ -96,6 +131,24 @@ async def _validate_token(token: str, app_id: Optional[str] = None) -> dict:
         "currency": auth.get("currency"),
         "balance": auth.get("balance"),
     }
+
+
+async def _validate_token(token: str, app_id: Optional[str] = None) -> dict:
+    """Validate a token. PAT tokens go through the REST flow first; if that
+    fails we fall back to the legacy websocket authorize before giving up.
+    Everything else uses the websocket flow directly. Raises on failure."""
+    if token.startswith("pat_"):
+        rest_error: Optional[Exception] = None
+        try:
+            return await _pat_validate(token, app_id)
+        except Exception as exc:
+            rest_error = exc
+        numeric_app_id = int(app_id) if app_id and app_id.isdigit() else None
+        try:
+            return await _ws_validate(token, numeric_app_id)
+        except Exception:
+            raise ValueError(f"REST flow failed: {rest_error}") from rest_error
+    return await _ws_validate(token)
 
 
 @router.get("/status")

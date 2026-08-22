@@ -69,8 +69,8 @@ async def test_vault_stores_pat_fields(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_trader_url_prefers_pat_and_falls_back_legacy():
-    """Trader picks the stored OTP URL for the vault token; otherwise legacy."""
+async def test_trader_url_prefers_pat_and_falls_back_legacy(monkeypatch):
+    """Trader picks the stored OTP URL when minting fails; otherwise legacy."""
     trader = DerivTrader()
     try:
         await VAULT.set(
@@ -79,6 +79,9 @@ async def test_trader_url_prefers_pat_and_falls_back_legacy():
             ws_url="wss://api.derivws.com/trading/v1/options/ws/real?otp=xyz",
             app_id="4521",
         )
+        async def no_mint(self, token):
+            return None
+        monkeypatch.setattr(DerivTrader, "_mint_fresh_otp", no_mint)
         url = await trader._url("pat_abc123")
         assert url == "wss://api.derivws.com/trading/v1/options/ws/real?otp=xyz"
         await VAULT.set("legacy123")
@@ -87,6 +90,96 @@ async def test_trader_url_prefers_pat_and_falls_back_legacy():
         await VAULT.set("legacy123")
         other = await trader._url("another-token")
         assert "websockets/v3/websocket" in other
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_trader_url_prefers_fresh_otp(monkeypatch):
+    """A freshly minted OTP URL wins over the stale stored one."""
+    trader = DerivTrader()
+    try:
+        await VAULT.set(
+            "pat_abc123",
+            account_id="CR999",
+            ws_url="wss://api.derivws.com/trading/v1/options/ws/real?otp=STALE",
+            app_id="4521",
+        )
+        async def fresh_mint(self, token):
+            return "wss://api.derivws.com/trading/v1/options/ws/real?otp=FRESH"
+        monkeypatch.setattr(DerivTrader, "_mint_fresh_otp", fresh_mint)
+        url = await trader._url("pat_abc123")
+        assert "otp=FRESH" in url
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_mint_fresh_otp_uses_stored_account(monkeypatch):
+    """OTP minting posts to the account endpoint with Bearer + app id headers."""
+    trader = DerivTrader()
+    calls = []
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"data": {"url": "wss://api.derivws.com/trading/v1/options/ws/real?otp=NEW"}}
+
+    class FakeClient:
+        def __init__(self, timeout=None):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, url, headers=None):
+            calls.append((url, headers))
+            return FakeResp()
+
+    monkeypatch.setattr("app.services.deriv_trader.httpx.AsyncClient", FakeClient)
+    try:
+        await VAULT.set("pat_abc123", account_id="CR999", app_id="4521")
+        url = await trader._mint_fresh_otp("pat_abc123")
+        assert url == "wss://api.derivws.com/trading/v1/options/ws/real?otp=NEW"
+        assert calls[0][0].endswith("/options/accounts/CR999/otp")
+        assert calls[0][1]["Authorization"] == "Bearer pat_abc123"
+        assert calls[0][1]["Deriv-App-ID"] == "4521"
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_mint_fresh_otp_retries_then_gives_up(monkeypatch):
+    """Retryable statuses are retried; persistent failure returns None."""
+    trader = DerivTrader()
+    attempts = []
+
+    class FakeResp:
+        status_code = 503
+        def json(self):
+            return {}
+
+    class FakeClient:
+        def __init__(self, timeout=None):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def post(self, url, headers=None):
+            attempts.append(url)
+            return FakeResp()
+
+    async def no_sleep(*args):
+        return None
+
+    monkeypatch.setattr("app.services.deriv_trader.httpx.AsyncClient", FakeClient)
+    monkeypatch.setattr("app.services.deriv_trader.asyncio.sleep", no_sleep)
+    try:
+        await VAULT.set("pat_abc123", account_id="CR999")
+        url = await trader._mint_fresh_otp("pat_abc123")
+        assert url is None
+        assert len(attempts) == 3
     finally:
         await VAULT.clear()
 
