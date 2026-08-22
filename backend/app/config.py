@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     deriv_active_symbols: str = "R_10,R_25,R_50,R_75,R_100"
     # OAuth: public client, no secret. Register your own app at api.deriv.com
     # and set DERIV_APP_ID for a branded OAuth screen.
-    deriv_oauth_url: str = "https://oauth.deriv.com/oauth2/authorize"
+    deriv_oauth_url: str = "https://auth.deriv.com/oauth2/auth"
+    deriv_client_secret: str = ""   # needed for modern OAuth code exchange
+    deriv_rest_base: str = "https://api.derivws.com/trading/v1"  # modern REST base (PAT flow)
     frontend_url: str = ""
     # Directory of the statically-exported frontend, served by this same app.
     frontend_dir: str = ""

@@ -14,6 +14,7 @@ import { Card, Row, Btn, Pill } from "@/components/ui";
 export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number }) {
   const [acct, setAcct] = useState<any>(null);
   const [token, setToken] = useState("");
+  const [appId, setAppId] = useState("");
   const [showTokenForm, setShowTokenForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -40,10 +41,14 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
     setBusy(true);
     setMsg(null);
     try {
-      const r = await apiPost<any>("/auth/token", { token: token.trim() });
+      const r = await apiPost<any>("/auth/token", {
+        token: token.trim(),
+        ...(appId.trim() ? { app_id: appId.trim() } : {}),
+      });
       if (r.connected) {
         setMsg(`Connected: ${r.loginid} (${r.currency})`);
         setToken("");
+        setAppId("");
         setShowTokenForm(false);
       } else {
         setMsg(`Failed: ${r.error}`);
@@ -109,7 +114,7 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
                 type="password"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
-                placeholder="Deriv API token (api.deriv.com → Settings)"
+                placeholder="Deriv token (developers.deriv.com)"
                 autoComplete="off"
                 style={{
                   width: "100%",
@@ -121,6 +126,28 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
                   fontFamily: "monospace",
                 }}
               />
+              <input
+                type="text"
+                value={appId}
+                onChange={(e) => setAppId(e.target.value)}
+                placeholder="App id (only for pat_ tokens)"
+                autoComplete="off"
+                style={{
+                  width: "100%",
+                  background: "#010409",
+                  color: "#c9d1d9",
+                  border: "1px solid #30363d",
+                  borderRadius: 6,
+                  padding: "8px 10px",
+                  fontFamily: "monospace",
+                  marginTop: 6,
+                }}
+              />
+              <p style={{ color: "#8b949e", fontSize: "0.7rem", marginTop: 4, lineHeight: 1.3 }}>
+                Modern pat_ tokens need your registered app id — register one
+                free app on developers.deriv.com to get it. Old tokens work
+                with the field empty.
+              </p>
               <div style={{ marginTop: 6 }}>
                 <Btn small variant="success" disabled={busy || !token.trim()} onClick={connectManual}>
                   {busy ? "VALIDATING…" : "CONNECT"}

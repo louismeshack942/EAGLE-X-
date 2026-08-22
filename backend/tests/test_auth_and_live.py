@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.services.token_vault import TokenVault
+from app.services.token_vault import TokenVault, VAULT
 from app.services.deriv_client import DerivClient, GeoRestrictedError, LiveState
+from app.services.deriv_trader import DerivTrader
 from app.models.tick import Tick
 
 
@@ -36,6 +37,58 @@ async def test_vault_set_get_clear(tmp_path):
 
     await vault2.clear()
     assert await vault2.get() is None
+
+
+@pytest.mark.asyncio
+async def test_vault_stores_pat_fields(tmp_path):
+    """Vault keeps token + app_id + account_id + ws_url for PAT tokens."""
+    vault = TokenVault(path=tmp_path / "vault.json")
+    await vault.set(
+        "pat_abc123",
+        loginid="CR999",
+        currency="USD",
+        account_id="CR999",
+        ws_url="wss://api.derivws.com/trading/v1/options/ws/real?otp=xyz",
+        app_id="4521",
+    )
+    assert await vault.get() == "pat_abc123"
+    assert await vault.get_ws_url() == "wss://api.derivws.com/trading/v1/options/ws/real?otp=xyz"
+    assert await vault.get_app_id() == "4521"
+    assert await vault.get_account_id() == "CR999"
+    st = await vault.status()
+    assert st["account_id"] == "CR999"
+    assert "pat_abc123" not in json.dumps(st)  # token never exposed
+
+    vault2 = TokenVault(path=tmp_path / "vault.json")
+    assert await vault2.get_ws_url() == "wss://api.derivws.com/trading/v1/options/ws/real?otp=xyz"
+
+    await vault2.clear()
+    assert await vault2.get() is None
+    assert await vault2.get_ws_url() is None
+    assert await vault2.get_app_id() is None
+
+
+@pytest.mark.asyncio
+async def test_trader_url_prefers_pat_and_falls_back_legacy():
+    """Trader picks the stored OTP URL for the vault token; otherwise legacy."""
+    trader = DerivTrader()
+    try:
+        await VAULT.set(
+            "pat_abc123",
+            account_id="CR999",
+            ws_url="wss://api.derivws.com/trading/v1/options/ws/real?otp=xyz",
+            app_id="4521",
+        )
+        url = await trader._url("pat_abc123")
+        assert url == "wss://api.derivws.com/trading/v1/options/ws/real?otp=xyz"
+        await VAULT.set("legacy123")
+        url = await trader._url("legacy123")
+        assert "websockets/v3/websocket" in url
+        await VAULT.set("legacy123")
+        other = await trader._url("another-token")
+        assert "websockets/v3/websocket" in other
+    finally:
+        await VAULT.clear()
 
 
 @pytest.mark.asyncio

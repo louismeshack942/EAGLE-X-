@@ -13,6 +13,7 @@ from typing import Optional
 import websockets
 
 from app.config import get_settings
+from app.services.token_vault import VAULT
 
 # Internal name -> Deriv API contract_type.
 DERIV_CONTRACT_TYPES = {
@@ -56,8 +57,20 @@ class DerivTrader:
     def __init__(self) -> None:
         self.settings = get_settings()
 
-    def _url(self) -> str:
+    async def _url(self, token: Optional[str] = None) -> str:
+        """Pick the websocket endpoint. A PAT token stored in the vault has an
+        OTP-authenticated URL minted at connect time — use it directly. Legacy
+        tokens fall back to the classic websockets/v3 endpoint."""
+        if token and await VAULT.get() == token:
+            ws_url = await VAULT.get_ws_url()
+            if ws_url:
+                return ws_url
         return f"{self.settings.deriv_ws_url.rstrip('/')}/websocket?app_id={self.settings.deriv_app_id}&l=EN"
+
+    @staticmethod
+    def _needs_authorize(url: str) -> bool:
+        """OTP URLs are pre-authenticated; only legacy ones need authorize."""
+        return "otp=" not in url
 
     @staticmethod
     async def _send_recv(ws, payload: dict, timeout: float = 10.0) -> dict:
@@ -66,20 +79,30 @@ class DerivTrader:
         return json.loads(raw)
 
     async def authorize(self, api_token: str) -> dict:
-        async with websockets.connect(self._url(), ping_interval=20, open_timeout=10) as ws:
+        url = await self._url(api_token)
+        async with websockets.connect(url, ping_interval=20, open_timeout=10) as ws:
+            if not self._needs_authorize(url):
+                return {"status": "ok", "account": {}}
             msg = await self._send_recv(ws, {"authorize": api_token})
             if "error" in msg:
                 return {"status": "error", "error": msg["error"].get("message", "authorize failed")}
             return {"status": "ok", "account": msg.get("authorize", {})}
 
     async def get_balance(self, api_token: str) -> Optional[float]:
-        """Authorize and read the account's current balance."""
+        """Authorize (or reuse the OTP session) and read the account balance."""
         try:
-            async with websockets.connect(self._url(), ping_interval=20, open_timeout=10) as ws:
-                msg = await self._send_recv(ws, {"authorize": api_token})
-                if "error" in msg:
+            url = await self._url(api_token)
+            async with websockets.connect(url, ping_interval=20, open_timeout=10) as ws:
+                if self._needs_authorize(url):
+                    msg = await self._send_recv(ws, {"authorize": api_token})
+                    if "error" in msg:
+                        return None
+                    bal = (msg.get("authorize") or {}).get("balance")
+                    return float(bal) if bal is not None else None
+                bal_msg = await self._send_recv(ws, {"balance": 1})
+                if "error" in bal_msg:
                     return None
-                bal = (msg.get("authorize") or {}).get("balance")
+                bal = (bal_msg.get("balance") or {}).get("balance")
                 return float(bal) if bal is not None else None
         except Exception:
             return None
@@ -135,17 +158,21 @@ class DerivTrader:
         except ValueError as exc:
             return {"status": "error", "step": "validate", "error": str(exc)}
 
-        async with websockets.connect(self._url(), ping_interval=20, open_timeout=10) as ws:
-            auth_msg = await self._send_recv(ws, {"authorize": api_token})
-            if "error" in auth_msg:
-                return {"status": "error", "step": "authorize", "error": auth_msg["error"].get("message")}
-            account = auth_msg.get("authorize") or {}
+        url = await self._url(api_token)
+        async with websockets.connect(url, ping_interval=20, open_timeout=10) as ws:
+            if self._needs_authorize(url):
+                auth_msg = await self._send_recv(ws, {"authorize": api_token})
+                if "error" in auth_msg:
+                    return {"status": "error", "step": "authorize", "error": auth_msg["error"].get("message")}
+                account = auth_msg.get("authorize") or {}
+            else:
+                account = {}
 
             proposal_req = {
                 "proposal": 1,
                 "amount": float(amount),
                 "basis": "stake",
-                "currency": account.get("currency") or "USD",
+                "currency": (account or {}).get("currency") or "USD",
                 "duration": int(duration),
                 "duration_unit": duration_unit,
                 "symbol": symbol,

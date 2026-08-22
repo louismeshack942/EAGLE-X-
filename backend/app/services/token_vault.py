@@ -23,6 +23,9 @@ class TokenVault:
         self._loginid: Optional[str] = None
         self._currency: Optional[str] = None
         self._balance: Optional[float] = None
+        self._account_id: Optional[str] = None
+        self._ws_url: Optional[str] = None
+        self._app_id: Optional[str] = None
         self._load()
 
     def _load(self) -> None:
@@ -32,6 +35,9 @@ class TokenVault:
                 self._token = data.get("token")
                 self._loginid = data.get("loginid")
                 self._currency = data.get("currency")
+                self._account_id = data.get("account_id")
+                self._ws_url = data.get("ws_url")
+                self._app_id = data.get("app_id")
         except Exception:
             self._token = None
 
@@ -42,16 +48,24 @@ class TokenVault:
             "token": self._token,
             "loginid": self._loginid,
             "currency": self._currency,
+            "account_id": self._account_id,
+            "ws_url": self._ws_url,
+            "app_id": self._app_id,
         }))
         os.chmod(tmp, 0o600)
         tmp.replace(self._path)
 
-    async def set(self, token: str, loginid: Optional[str] = None, currency: Optional[str] = None) -> None:
+    async def set(self, token: str, loginid: Optional[str] = None, currency: Optional[str] = None,
+                  account_id: Optional[str] = None, ws_url: Optional[str] = None,
+                  app_id: Optional[str] = None) -> None:
         async with self._lock:
             self._token = token.strip()
             self._loginid = loginid
             self._currency = currency
             self._balance = None
+            self._account_id = account_id
+            self._ws_url = ws_url
+            self._app_id = app_id
             self._persist()
 
     async def clear(self) -> None:
@@ -60,11 +74,26 @@ class TokenVault:
             self._loginid = None
             self._currency = None
             self._balance = None
+            self._account_id = None
+            self._ws_url = None
+            self._app_id = None
             self._persist()
 
     async def get(self) -> Optional[str]:
         async with self._lock:
             return self._token
+
+    async def get_ws_url(self) -> Optional[str]:
+        async with self._lock:
+            return self._ws_url
+
+    async def get_app_id(self) -> Optional[str]:
+        async with self._lock:
+            return self._app_id
+
+    async def get_account_id(self) -> Optional[str]:
+        async with self._lock:
+            return self._account_id
 
     async def set_balance(self, balance: float) -> None:
         async with self._lock:
@@ -77,6 +106,7 @@ class TokenVault:
                 "loginid": self._loginid,
                 "currency": self._currency,
                 "balance": self._balance,
+                "account_id": self._account_id,
             }
 
 

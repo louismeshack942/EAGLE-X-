@@ -65,6 +65,35 @@ rules, learned from the CF's losing streak:
 
 Tests: `TestFluidPlay` in `backend/tests/test_intel_and_trading.py` (13 tests; 55 total).
 
+## Deriv connection (2026-08-22 fix: PAT tokens)
+
+Deriv now issues **PAT tokens** (`pat_...`) on `developers.deriv.com`. The
+older `api.deriv.com` redirects there today. The REST flow must be used to
+connect them:
+
+- POST `/auth/token` with `{token, app_id}` (backend `app/api/auth.py`):
+  validate against `DERIV_REST_BASE + /options/accounts` (headers
+  `Authorization: Bearer`, `Deriv-App-ID`) to find the account id, then
+  `POST .../{acct}/otp` to mint an authenticated WS URL. All-or-nothing —
+  on failure, the token is never stored.
+- The vault stores `token + app_id + account_id + ws_url` (0600-file).
+  `DerivTrader._url(token)` prefers `VAULT.get_ws_url()` (OTP URL, no
+  authorize call needed); legacy tokens fall back to the classic
+  `wss://ws.derivws.com/websockets/v3?app_id=...` endpoint with the old
+  authorize call inside `place_trade`/`get_balance`.
+- OAuth `/auth/deriv/login` uses the modern `client_id` + PKCE-style flow
+  once `DERIV_APP_ID` (env) holds a registered app id; the legacy app_id
+  1089 fallback keeps the older screen available. `/auth/deriv/callback`
+  understands both `code` (asks for DERIV_CLIENT_SECRET when missing) and
+  the old tokenN params.
+- Frontend panel accepts an optional **App id** field; only needed for
+  `pat_` tokens. Without one, legacy tokens still succeed.
+
+`DERIV_REST_BASE` default is `https://api.derivws.com/trading/v1` in
+`backend/app/config.py`; env override kept. Tests
+`test_vault_stores_pat_fields` and `test_trader_url_prefers_pat_and_falls_back_legacy`
+live in `tests/test_auth_and_live.py` (74 tests).
+
 ## Club (communications hub)
 
 `backend/app/services/club.py` — Team Manager briefing, Board/Sponsors
