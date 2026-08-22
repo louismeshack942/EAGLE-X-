@@ -139,6 +139,16 @@ async def _pat_validate(token: str, app_id: Optional[str]) -> dict:
         ws_url = _extract_ws_url(otp_resp.json())
         if not ws_url:
             raise ValueError("no OTP URL returned by Deriv")
+    account_list = [
+        {
+            "account_id": _account_key(a),
+            "loginid": a.get("loginid") or _account_key(a),
+            "currency": a.get("currency"),
+            "balance": a.get("balance"),
+            "is_virtual": bool(a.get("is_virtual")) or str(a.get("loginid") or _account_key(a)).startswith("VRTC"),
+        }
+        for a in accounts
+    ]
     return {
         "loginid": primary.get("loginid") or account_id,
         "currency": primary.get("currency"),
@@ -146,6 +156,7 @@ async def _pat_validate(token: str, app_id: Optional[str]) -> dict:
         "account_id": account_id,
         "ws_url": ws_url,
         "app_id": app_id,
+        "accounts": account_list,
     }
 
 
@@ -295,7 +306,8 @@ async def deriv_callback(
                 status_code=400,
             )
         await VAULT.set(info.get("token") or code, loginid=info.get("loginid"), currency=info.get("currency"),
-                        account_id=info.get("account_id"), ws_url=info.get("ws_url"), app_id=info.get("app_id"))
+                        account_id=info.get("account_id"), ws_url=info.get("ws_url"), app_id=info.get("app_id"),
+                        accounts=info.get("accounts"))
         if info.get("balance") is not None:
             await VAULT.set_balance(float(info["balance"]))
         return RedirectResponse(f"{dashboard}?deriv=connected")
@@ -317,7 +329,8 @@ async def deriv_callback(
         )
 
     await VAULT.set(token1, loginid=info.get("loginid") or acct1, currency=info.get("currency") or cur1,
-                    account_id=info.get("account_id"), ws_url=info.get("ws_url"), app_id=info.get("app_id"))
+                    account_id=info.get("account_id"), ws_url=info.get("ws_url"), app_id=info.get("app_id"),
+                    accounts=info.get("accounts"))
     if info.get("balance") is not None:
         await VAULT.set_balance(float(info["balance"]))
 
@@ -332,10 +345,55 @@ async def connect_token(body: TokenBody):
     except Exception as exc:
         return {"connected": False, "error": str(exc)}
     await VAULT.set(body.token, loginid=info.get("loginid"), currency=info.get("currency"),
-                    account_id=info.get("account_id"), ws_url=info.get("ws_url"), app_id=info.get("app_id"))
+                    account_id=info.get("account_id"), ws_url=info.get("ws_url"), app_id=info.get("app_id"),
+                    accounts=info.get("accounts"))
     if info.get("balance") is not None:
         await VAULT.set_balance(float(info["balance"]))
     return {"connected": True, "loginid": info.get("loginid"), "currency": info.get("currency"), "balance": info.get("balance")}
+
+
+class SwitchBody(BaseModel):
+    account_id: str
+
+
+@router.get("/accounts")
+async def list_accounts():
+    """All Deriv accounts the connected token can see, with the active one."""
+    status = await VAULT.status()
+    accounts = await VAULT.get_accounts()
+    return {
+        "connected": status["connected"],
+        "active_account_id": status.get("account_id"),
+        "accounts": accounts,
+    }
+
+
+@router.post("/account/switch")
+async def switch_account(body: SwitchBody):
+    """Switch between demo (VRTC*) and real (CR*) accounts on the same token."""
+    if not await VAULT.get():
+        return {"switched": False, "error": "no Deriv account connected"}
+    accounts = await VAULT.get_accounts()
+    target = None
+    for a in accounts:
+        if a.get("account_id") == body.account_id or a.get("loginid") == body.account_id:
+            target = a
+            break
+    if target is None and accounts:
+        return {"switched": False, "error": f"account {body.account_id} not visible to this token"}
+    account_id = (target or {}).get("account_id") or body.account_id
+    await VAULT.switch_account(
+        account_id,
+        loginid=(target or {}).get("loginid") or account_id,
+        currency=(target or {}).get("currency"),
+    )
+    return {
+        "switched": True,
+        "account_id": account_id,
+        "loginid": (target or {}).get("loginid") or account_id,
+        "currency": (target or {}).get("currency"),
+        "is_virtual": (target or {}).get("is_virtual"),
+    }
 
 
 @router.delete("/token")

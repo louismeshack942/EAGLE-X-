@@ -332,3 +332,66 @@ async def test_pat_validate_requires_app_id():
     from app.api.auth import _pat_validate
     with pytest.raises(ValueError, match="app id is required"):
         await _pat_validate("pat_x", None)
+
+
+@pytest.mark.asyncio
+async def test_switch_account_flow(tmp_path):
+    """Switching moves the active account, clears the stale OTP URL, and
+    persists across vault instances."""
+    vault = TokenVault(path=tmp_path / "vault.json")
+    await vault.set(
+        "pat_abc123",
+        loginid="CR999",
+        currency="USD",
+        account_id="CR999",
+        ws_url="wss://x?otp=old",
+        app_id="4521",
+        accounts=[
+            {"account_id": "CR999", "loginid": "CR999", "currency": "USD", "balance": 50.0, "is_virtual": False},
+            {"account_id": "VRTC111", "loginid": "VRTC111", "currency": "USD", "balance": 10000.0, "is_virtual": True},
+        ],
+    )
+    assert [a["account_id"] for a in await vault.get_accounts()] == ["CR999", "VRTC111"]
+    await vault.switch_account("VRTC111", loginid="VRTC111", currency="USD")
+    assert await vault.get_account_id() == "VRTC111"
+    assert await vault.get_ws_url() is None  # stale OTP discarded
+    st = await vault.status()
+    assert st["loginid"] == "VRTC111"
+    vault2 = TokenVault(path=tmp_path / "vault.json")
+    assert await vault2.get_account_id() == "VRTC111"
+    assert len(await vault2.get_accounts()) == 2
+
+
+def test_switch_endpoint_validates_target():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    import asyncio as _asyncio
+
+    async def setup():
+        await VAULT.set(
+            "pat_abc123", account_id="CR999", app_id="4521",
+            accounts=[
+                {"account_id": "CR999", "loginid": "CR999", "currency": "USD", "is_virtual": False},
+                {"account_id": "VRTC111", "loginid": "VRTC111", "currency": "USD", "is_virtual": True},
+            ],
+        )
+    _asyncio.run(setup())
+    try:
+        with TestClient(app) as c:
+            r = c.get("/auth/accounts")
+            assert r.status_code == 200
+            body = r.json()
+            assert body["connected"] is True
+            assert body["active_account_id"] == "CR999"
+            assert len(body["accounts"]) == 2
+            assert "pat_abc123" not in str(body)  # token never exposed
+
+            r = c.post("/auth/account/switch", json={"account_id": "VRTC111"})
+            assert r.json()["switched"] is True
+            assert r.json()["is_virtual"] is True
+
+            r = c.post("/auth/account/switch", json={"account_id": "NOPE1"})
+            assert r.json()["switched"] is False
+            assert "not visible" in r.json()["error"]
+    finally:
+        _asyncio.run(VAULT.clear())

@@ -13,10 +13,12 @@ import { Card, Row, Btn, Pill } from "@/components/ui";
  */
 export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number }) {
   const [acct, setAcct] = useState<any>(null);
+  const [accounts, setAccounts] = useState<any[]>([]);
   const [token, setToken] = useState("");
   const [appId, setAppId] = useState("");
   const [showTokenForm, setShowTokenForm] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,9 +26,34 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
     try {
       const s = await apiGet<any>("/status");
       setAcct(s.deriv_account ?? null);
+      if (s.deriv_account?.connected) {
+        const a = await apiGet<any>("/auth/accounts");
+        setAccounts(a.accounts ?? []);
+      } else {
+        setAccounts([]);
+      }
       setError(null);
     } catch (e: any) {
       setError(String(e.message ?? e));
+    }
+  };
+
+  const switchAccount = async (accountId: string) => {
+    if (!accountId || accountId === acct?.account_id) return;
+    setSwitching(true);
+    setMsg(null);
+    try {
+      const r = await apiPost<any>("/auth/account/switch", { account_id: accountId });
+      if (r.switched) {
+        setMsg(`Switched to ${r.loginid} (${r.is_virtual ? "DEMO" : "REAL"})`);
+      } else {
+        setMsg(`Switch failed: ${r.error}`);
+      }
+      await load();
+    } catch (e: any) {
+      setMsg(`Switch failed: ${e.message ?? e}`);
+    } finally {
+      setSwitching(false);
     }
   };
 
@@ -86,6 +113,32 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
           <Row label="Account" value={acct?.loginid ?? "—"} accent="#3fb950" />
           <Row label="Currency" value={acct?.currency ?? "—"} />
           <Row label="Balance" value={acct?.balance != null ? String(acct.balance) : "—"} />
+          {accounts.length > 0 && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ color: "#8b949e", fontSize: "0.7rem", marginBottom: 4 }}>ACCOUNT (DEMO = VRTC, REAL = CR)</div>
+              <select
+                value={acct?.account_id ?? ""}
+                disabled={switching}
+                onChange={(e) => switchAccount(e.target.value)}
+                style={{
+                  width: "100%",
+                  background: "#010409",
+                  color: "#c9d1d9",
+                  border: "1px solid #30363d",
+                  borderRadius: 6,
+                  padding: "6px 8px",
+                  fontFamily: "monospace",
+                  fontSize: "0.75rem",
+                }}
+              >
+                {accounts.map((a) => (
+                  <option key={a.account_id} value={a.account_id}>
+                    {(a.is_virtual ? "DEMO" : "REAL") + " — " + a.loginid + (a.balance != null ? ` (${a.balance} ${a.currency ?? ""})` : "")}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div style={{ marginTop: 8 }}>
             <Btn small variant="danger" disabled={busy} onClick={disconnect}>DISCONNECT</Btn>
           </div>

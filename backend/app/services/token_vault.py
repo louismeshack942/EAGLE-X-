@@ -26,6 +26,7 @@ class TokenVault:
         self._account_id: Optional[str] = None
         self._ws_url: Optional[str] = None
         self._app_id: Optional[str] = None
+        self._accounts: list = []
         self._load()
 
     def _load(self) -> None:
@@ -38,6 +39,7 @@ class TokenVault:
                 self._account_id = data.get("account_id")
                 self._ws_url = data.get("ws_url")
                 self._app_id = data.get("app_id")
+                self._accounts = data.get("accounts") or []
         except Exception:
             self._token = None
 
@@ -51,13 +53,14 @@ class TokenVault:
             "account_id": self._account_id,
             "ws_url": self._ws_url,
             "app_id": self._app_id,
+            "accounts": self._accounts,
         }))
         os.chmod(tmp, 0o600)
         tmp.replace(self._path)
 
     async def set(self, token: str, loginid: Optional[str] = None, currency: Optional[str] = None,
                   account_id: Optional[str] = None, ws_url: Optional[str] = None,
-                  app_id: Optional[str] = None) -> None:
+                  app_id: Optional[str] = None, accounts: Optional[list] = None) -> None:
         async with self._lock:
             self._token = token.strip()
             self._loginid = loginid
@@ -66,6 +69,8 @@ class TokenVault:
             self._account_id = account_id
             self._ws_url = ws_url
             self._app_id = app_id
+            if accounts is not None:
+                self._accounts = accounts
             self._persist()
 
     async def clear(self) -> None:
@@ -77,6 +82,24 @@ class TokenVault:
             self._account_id = None
             self._ws_url = None
             self._app_id = None
+            self._accounts = []
+            self._persist()
+
+    async def get_accounts(self) -> list:
+        async with self._lock:
+            return list(self._accounts)
+
+    async def switch_account(self, account_id: str, loginid: Optional[str] = None,
+                             currency: Optional[str] = None) -> None:
+        """Point the connection at a different account of the same token.
+        Clears the cached OTP URL — the trader mints a fresh one per
+        connection against the new account."""
+        async with self._lock:
+            self._account_id = account_id
+            self._loginid = loginid or account_id
+            self._currency = currency
+            self._balance = None
+            self._ws_url = None
             self._persist()
 
     async def get(self) -> Optional[str]:
