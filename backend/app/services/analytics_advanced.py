@@ -29,15 +29,20 @@ class AdvancedAnalytics:
         # A "100%" on 20 ticks collapses toward fair; on 2000 ticks it barely moves.
         PRIOR = 0.10
         PRIOR_STRENGTH = 25.0  # pseudo-count
+        # Binomial z-score denominator for the fair 10% hypothesis.
+        z_den = math.sqrt(n * PRIOR * (1 - PRIOR)) if n else 1.0
         frequency = {}
         for d in range(10):
             c = counts.get(d, 0)
             raw = c / n
             shrunk = (c + PRIOR_STRENGTH * PRIOR) / (n + PRIOR_STRENGTH)
+            z = (c - n * PRIOR) / z_den if z_den else 0.0
             frequency[str(d)] = {
                 "count": c,
                 "percent": round(raw * 100, 1),
                 "estimate": round(shrunk * 100, 2),  # trustworthy estimate
+                "z": round(z, 2),                     # statistical significance
+                "significant": abs(z) >= 1.96,        # 95% confidence level
             }
         sorted_counts = sorted(((counts.get(d, 0), d) for d in range(10)), reverse=True)
         most_freq_d = sorted_counts[0][1]

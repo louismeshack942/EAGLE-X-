@@ -19,6 +19,27 @@ deployment (proxy, cross-service URLs, renamed services, wrong health checks).
   `FRONTEND_DIR=/app/frontend_static`. Port comes from `$PORT` (default 8000).
 - `render.yaml` — single service `eaglex`, frankfurt, free, healthCheckPath `/health`.
 
+## Squad upgrades (world-class team)
+
+Every position was raised to elite level; ratings are computed live and shown
+in the Club panel's Squad tab (`/club/squad`):
+
+- **GK (Risk)** — Kelly-criterion sizing (`kelly_fraction`, `kelly_stake` at
+  quarter-Kelly capped at 10%), drawdown-scaled stakes (`drawdown_multiplier`),
+  and a live form card (`risk_state`: posture FULL_ATTACK/BALANCED/CAUTIOUS/
+  DEFEND). Kelly returns 0 on negative-EV — the GK refuses them.
+- **CB (Intelligence)** — numeric conviction 0-100 alongside the decision.
+- **RB (Tick Timer)** — jitter, p25/p75 arrival window, and a stability score.
+- **DMF (Most Likely)** — binomial z-scores per digit; confidence and pick are
+  driven by significance (|z|>=1.96), with `significant` + `z` fields.
+- **RMF/LMF (Market Master)** — per contract `z` and `significant`; the CF
+  gate requires significance. EV stays the ordering key.
+- **AMF (Copilot)** — answers grounded in EV, z, Kelly and live squad status.
+- **CF (Auto Trader)** — significance gate + Kelly stakes + form rating
+  (`cf_rating`), GK posture surfaced in status.
+- **GM (Club)** — `squad_ratings()`: 10 players rated 40-99 from live metrics;
+  overall + tier (WORLD CLASS 85+, ELITE 75+, PROFESSIONAL 65+).
+
 ## Fluid play + CF discipline (Auto Trader)
 
 `select_plays()` in `backend/app/services/auto_trader.py` feeds SS. Honest

@@ -39,14 +39,18 @@ class MarketMaster:
 
         if freq:
             # Use the shrunk (Bayesian) estimate, not the raw percent, so small
-            # windows don't manufacture fake edges.
+            # windows don't manufacture fake edges. z is the binomial z-score of
+            # each digit vs the fair 10% hypothesis (95% significance at |z|>=1.96).
             est = {d: (freq[str(d)].get("estimate", freq[str(d)]["percent"])) for d in range(10)}
+            zscores = {d: float(freq[str(d)].get("z", 0.0) or 0.0) for d in range(10)}
             odd_freq = sum(est[d] for d in range(1, 10, 2))
             even_freq = 100.0 - odd_freq
 
             for d in range(10):
                 obs = est[d]
-                # MATCHES: fair 10%. Edge = observed - fair.
+                z_d = zscores[d]
+                # MATCHES: fair 10%. Significant only when the digit is OVERFED
+                # beyond the 95% level.
                 m_edge = obs - 10.0
                 p_match = max(0.01, min(0.99, obs / 100.0))
                 contracts.append({
@@ -59,9 +63,12 @@ class MarketMaster:
                     "observed_pct": round(obs, 2),
                     "fair_pct": 10.0,
                     "observed_edge": round(m_edge, 2),
+                    "z": round(z_d, 2),
+                    "significant": z_d >= 1.96,
                     "ev": _ev(p_match, PAYOUTS["MATCHES"]),
                 })
-                # DIFFERS: fair 90%. Edge = fair observed - fair.
+                # DIFFERS: fair 90%. Significant only when the digit is STARVING
+                # beyond the 95% level.
                 d_edge = (100.0 - obs) - 90.0
                 p_diff = max(0.01, min(0.99, (100.0 - obs) / 100.0))
                 contracts.append({
@@ -74,6 +81,8 @@ class MarketMaster:
                     "observed_pct": round(100.0 - obs, 2),
                     "fair_pct": 90.0,
                     "observed_edge": round(d_edge, 2),
+                    "z": round(-z_d, 2),
+                    "significant": z_d <= -1.96,
                     "ev": _ev(p_diff, PAYOUTS["DIFFERS"]),
                 })
 
@@ -181,6 +190,7 @@ class MarketMaster:
             "recommendation": recommendation,
             "evidence_summary": evidence_summary,
             "signal": signal,
+            "conviction": intel.get("conviction"),
             "data_quality": data_quality,
             "anomaly_count": anomaly_count,
             "volatility": intel["volatility"],

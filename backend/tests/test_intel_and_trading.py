@@ -1,7 +1,15 @@
 from app.services.intelligence import IntelligenceEngine
 from app.services.market_master import MarketMaster
 from app.services.engines import QualityEngine, VolatilityEngine, MovementEngine
-from app.services.money_management import check_hard_stops, compute_stake, cooldown_for
+from app.services.money_management import (
+    check_hard_stops,
+    compute_stake,
+    cooldown_for,
+    drawdown_multiplier,
+    kelly_fraction,
+    kelly_stake,
+    risk_state,
+)
 from app.services.persistence import journal_engine, backtest_engine, replay_engine, AlertsEngine
 from app.services.demo_generator import DemoGenerator
 from app.core.queue import BoundedTickQueue
@@ -142,7 +150,7 @@ def _mm(signal="STRONG_DATA_SUPPORT", dq=88.0, contracts=None):
     }
 
 
-def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT"):
+def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT", significant=True):
     return {
         "name": name,
         "type": name.split(" ")[0],
@@ -150,6 +158,8 @@ def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT"):
         "ev": ev,
         "observed_edge": edge,
         "confidence": 50 + edge * 5,
+        "z": -2.5 if significant else -0.5,
+        "significant": significant,
         "evidence": evidence,
     }
 
@@ -214,6 +224,11 @@ class TestFluidPlay:
         assert compute_stake(20.0) == 2.0
         assert compute_stake(44.95) == 4.5
 
+    def test_significance_gate_blocks_noise(self):
+        """A starving digit without 95% significance never makes the team."""
+        mm = _mm(contracts=[_c("DIFFERS on 3", 0.10, 5.0, significant=False)])
+        assert select_plays(mm, "R_100") == []
+
     def test_benching_after_consecutive_losses(self):
         """Manager benches the CF after MAX_GAMES_WITHOUT_GOAL straight misses."""
         from app.services.auto_trader import AutoTrader, MAX_GAMES_WITHOUT_GOAL, BENCH_GAMES
@@ -234,3 +249,55 @@ class TestFluidPlay:
         at.consecutive_losses = 0
         assert at.benched is False
         assert at.consecutive_losses == 0
+
+
+class TestWorldClassGK:
+    def test_kelly_refuses_negative_edge(self):
+        """Kelly says 0 for a fair coin flip at 1.9 payout — GK won't play it."""
+        assert kelly_fraction(0.5, 1.9) == 0.0
+        assert kelly_stake(0.5, 1.9, 100.0) == 0.0
+
+    def test_kelly_sizes_positive_edge(self):
+        """DIFFERS at 90% / 1.1 payout: quarter-Kelly, capped at 10%."""
+        f = kelly_fraction(0.92, 1.1)
+        assert f > 0  # genuine edge exists
+        s = kelly_stake(0.92, 1.1, 100.0)
+        assert 0.0 < s <= 10.0  # quarter-Kelly under the cap
+
+    def test_kelly_never_exceeds_cap(self):
+        s = kelly_stake(0.999, 9.0, 1000.0)
+        assert s <= 100.0  # max_kelly_pct * balance
+
+    def test_drawdown_multiplier_scales_down(self):
+        assert drawdown_multiplier(10.0, 10.0) == 1.0       # at par
+        mid = drawdown_multiplier(10.0, 8.5)                # 15% down
+        assert 0.35 < mid < 1.0
+        wall = drawdown_multiplier(10.0, 8.0)               # at the stop-loss wall
+        assert wall >= 0.35
+
+    def test_risk_state_posture(self):
+        s = risk_state(10.0, 10.0, 0)
+        assert s["posture"] == "FULL_ATTACK" and s["rating"] >= 90
+        s2 = risk_state(10.0, 8.2, 2)
+        assert s2["posture"] in ("CAUTIOUS", "DEFEND")
+        assert s2["rating"] < s["rating"]
+
+
+class TestZScoreAnalytics:
+    def test_digit_analysis_has_z_and_estimate(self):
+        from app.services.analytics_advanced import digit_engine
+        from app.models.tick import Tick
+        from datetime import datetime, timezone
+        from app.core.queue import tick_queue
+        # Feed a skewed sample: digit 7 appears 30% of the time.
+        for i in range(200):
+            quote = 100.0 + (7 if i % 10 < 3 else i % 10) * 0.01
+            tick_queue.push(Tick(symbol="Z_TEST", quote=quote, timestamp=datetime.now(timezone.utc), provider="demo"))
+        a = digit_engine.get_digit_analysis("Z_TEST", 200)
+        f7 = a["frequency"]["7"]
+        assert f7["estimate"] > 10.0
+        assert f7["z"] > 1.96          # statistically significant overfeed
+        assert f7["significant"] is True
+        # A fair digit is NOT significant.
+        f3 = a["frequency"]["3"]
+        assert f3["significant"] is False

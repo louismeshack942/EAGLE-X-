@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class RiskRules:
-    stake_pct: float = 0.10          # 10% of balance per trade
+    stake_pct: float = 0.10          # 10% of balance per trade (cap)
     stop_loss_pct: float = 0.20      # 20% HARD STOP
     profit_target_pct: float = 1.20  # 120% regular target
     max_profit_pct: float = 5.00     # 500% HARD STOP
@@ -15,6 +15,10 @@ class RiskRules:
     cooldown_after_win_s: float = 10.0
     min_pause_s: float = 30.0
     confirmation_ticks: int = 2
+    kelly_fraction: float = 0.25     # fractional Kelly (quarter-Kelly, conservative)
+    max_kelly_pct: float = 0.10      # Kelly can never exceed the 10% cap
+    drawdown_derisk_at: float = 0.10 # start cutting stake at 10% drawdown
+    drawdown_floor: float = 0.35     # stake multiplier at the stop-loss wall
 
 
 DEFAULT_RULES = RiskRules()
@@ -23,6 +27,75 @@ DEFAULT_RULES = RiskRules()
 def compute_stake(balance: float, rules: RiskRules | None = None) -> float:
     rules = rules or DEFAULT_RULES
     return round(max(0.35, balance * rules.stake_pct), 2)
+
+
+def kelly_fraction(p_win: float, payout: float) -> float:
+    """Full Kelly fraction for a bet with win prob p_win and payout multiplier.
+
+    f* = (p*(b+1) - 1) / b  where b = payout - 1 (net odds).
+    Returns 0.0 for negative-edge bets — Kelly says don't play.
+    """
+    b = max(payout - 1.0, 1e-9)
+    f = (p_win * (b + 1.0) - 1.0) / b
+    return max(0.0, f)
+
+
+def kelly_stake(
+    p_win: float,
+    payout: float,
+    balance: float,
+    rules: RiskRules | None = None,
+) -> float:
+    """World-class GK sizing: quarter-Kelly, capped at the 10% rule.
+
+    Returns 0.0 when Kelly says the bet has no edge — the GK refuses to
+    come off his line for a losing play.
+    """
+    rules = rules or DEFAULT_RULES
+    f = kelly_fraction(p_win, payout) * rules.kelly_fraction
+    f = min(f, rules.max_kelly_pct)
+    if f <= 0:
+        return 0.0
+    return round(max(0.35, balance * f), 2)
+
+
+def drawdown_multiplier(initial_balance: float, balance: float, rules: RiskRules | None = None) -> float:
+    """Scale stake down as drawdown deepens: 1.0 at par, floor near the wall."""
+    rules = rules or DEFAULT_RULES
+    if initial_balance <= 0:
+        return 1.0
+    dd = max(0.0, (initial_balance - balance) / initial_balance)
+    if dd <= rules.drawdown_derisk_at:
+        return 1.0
+    span = max(rules.stop_loss_pct - rules.drawdown_derisk_at, 1e-9)
+    depth = min(1.0, (dd - rules.drawdown_derisk_at) / span)
+    return round(1.0 - depth * (1.0 - rules.drawdown_floor), 3)
+
+
+def risk_state(
+    initial_balance: float,
+    balance: float,
+    consecutive_losses: int,
+    rules: RiskRules | None = None,
+) -> dict:
+    """GK's live form card: drawdown, exposure posture, and a 40-99 rating."""
+    rules = rules or DEFAULT_RULES
+    dd = max(0.0, (initial_balance - balance) / max(initial_balance, 1e-9))
+    mult = drawdown_multiplier(initial_balance, balance, rules)
+    posture = (
+        "FULL_ATTACK" if dd < 0.05 else
+        "BALANCED" if dd < rules.drawdown_derisk_at else
+        "CAUTIOUS" if dd < rules.stop_loss_pct * 0.75 else
+        "DEFEND"
+    )
+    rating = int(round(99 - dd * 120 - consecutive_losses * 3))
+    rating = max(40, min(99, rating))
+    return {
+        "drawdown_pct": round(dd * 100, 2),
+        "stake_multiplier": mult,
+        "posture": posture,
+        "rating": rating,
+    }
 
 
 def check_hard_stops(

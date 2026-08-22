@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 import { apiGet, fmtUsd } from "@/lib/api";
 import { Card, Row, Pill, Btn } from "@/components/ui";
 
-type ClubTab = "manager" | "news" | "fans" | "board" | "alerts";
-const TABS: ClubTab[] = ["manager", "news", "fans", "board", "alerts"];
+type ClubTab = "squad" | "manager" | "news" | "fans" | "board" | "alerts";
+const TABS: ClubTab[] = ["squad", "manager", "news", "fans", "board", "alerts"];
 
 export default function ClubPanel({ refreshMs = 5000 }: { refreshMs?: number }) {
-  const [tab, setTab] = useState<ClubTab>("manager");
+  const [tab, setTab] = useState<ClubTab>("squad");
   const [data, setData] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -45,6 +45,31 @@ export default function ClubPanel({ refreshMs = 5000 }: { refreshMs?: number }) 
         ))}
       </div>
       {err && <div style={{ color: "#f85149", fontSize: "0.7rem" }}>{err}</div>}
+
+      {tab === "squad" && data && (
+        <>
+          <Row label="Team Overall" value={`${data.overall}/99`} accent={data.overall >= 85 ? "#3fb950" : data.overall >= 75 ? "#58a6ff" : "#d29922"} />
+          <Row label="Tier" value={data.tier} accent={data.tier === "WORLD CLASS" ? "#3fb950" : "#58a6ff"} />
+          <div style={{ marginTop: 8, maxHeight: 190, overflow: "auto" }}>
+            {(data.players ?? []).map((p: any, i: number) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                <span style={{ width: 52, fontSize: "0.66rem", color: "#8b949e", fontWeight: 700 }}>{p.pos}</span>
+                <span style={{ width: 118, fontSize: "0.7rem", color: "#c9d1d9" }}>{p.name}</span>
+                <div style={{ flex: 1, height: 6, background: "#21262d", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{
+                    width: `${p.rating}%`,
+                    height: "100%",
+                    background: p.rating >= 85 ? "#3fb950" : p.rating >= 70 ? "#58a6ff" : p.rating >= 55 ? "#d29922" : "#f85149",
+                    borderRadius: 3,
+                    transition: "width 0.4s",
+                  }} />
+                </div>
+                <span style={{ width: 24, fontSize: "0.72rem", fontWeight: 700, textAlign: "right", color: p.rating >= 85 ? "#3fb950" : "#c9d1d9" }}>{p.rating}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       {tab === "manager" && data && (
         <>

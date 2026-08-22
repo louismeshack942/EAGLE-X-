@@ -12,7 +12,14 @@ from typing import Optional
 from app.config import get_settings
 from app.services.deriv_trader import deriv_trader
 from app.services.market_master import market_master
-from app.services.money_management import check_hard_stops, compute_stake, cooldown_for
+from app.services.money_management import (
+    check_hard_stops,
+    compute_stake,
+    cooldown_for,
+    drawdown_multiplier,
+    kelly_stake,
+    risk_state,
+)
 from app.services.persistence import journal_engine
 from app.services.telegram import telegram_notifier
 from app.services.token_vault import VAULT
@@ -52,6 +59,8 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         edge = c.get("observed_edge", 0.0) or 0.0
         if ev <= MIN_EV or edge < MIN_EDGE_PCT:
             continue
+        if not c.get("significant", False):
+            continue  # world-class: only statistically significant starvation
         if "SUPPORT" not in (c.get("evidence") or ""):
             continue
         if plays and c.get("ev", 0) < plays[0].get("ev", 0) * FLUID_PAIR_RATIO:
@@ -308,35 +317,43 @@ class AutoTrader:
                     break
 
                 if best_plays and self.confirmation_ticks >= 2:
-                    # Stake is 10% of the CURRENT balance, every trade — as the
-                    # account grows, the stake grows with it. Same percentage.
-                    total_stake = compute_stake(self.balance)
-                    plays = best_plays
+                    # GK sizes the stake: quarter-Kelly per play, capped at 10%
+                    # of balance, scaled down as drawdown deepens.
+                    dd_mult = drawdown_multiplier(self.initial_balance, self.balance)
+                    stakes = []
+                    for p in best_plays:
+                        p_win = max(0.01, min(0.99, (p.get("observed_pct", 90.0) or 90.0) / 100.0))
+                        payout = 1.1 if p["type"] == "DIFFERS" else 1.9
+                        ks = kelly_stake(p_win, payout, self.balance)
+                        cap = compute_stake(self.balance)
+                        stakes.append(round(min(ks, cap) * dd_mult, 2))
+                    plays = [p for p, s in zip(best_plays, stakes) if s >= 0.35]
+                    stakes = [s for s in stakes if s >= 0.35]
+                    if not plays:
+                        self._log("GK refuses: Kelly says no stake justifies these plays")
+                        await asyncio.sleep(5.0)
+                        continue
                     if len(plays) > 1 and self.consecutive_losses > 0:
                         # Coach's recovery rule: after a miss, no fluid gambles.
                         self._log("Coach benches fluid play after a miss — single strike until he scores")
                         plays = plays[:1]
-                    per = round(total_stake / len(plays), 2)
-                    if len(plays) > 1 and per < 0.35:
-                        # Deriv minimum stake: fall back to the single top play.
-                        plays = plays[:1]
-                        per = total_stake
+                        stakes = stakes[:1]
                     if len(plays) > 1:
                         names = " + ".join(p["name"] for p in plays)
+                        splits = " + ".join(f"${s}" for s in stakes)
                         self._log(
-                            f"FLUID PLAY: splitting stake ${total_stake} into "
-                            f"{len(plays)} x ${per} — {best_symbol} {names}"
+                            f"FLUID PLAY: Kelly stakes {splits} — {best_symbol} {names}"
                         )
                     telegram_notifier.send_trade_alert(
-                        best_symbol, plays[0]["name"], per,
+                        best_symbol, plays[0]["name"], stakes[0],
                         plays[0].get("duration_seconds", 60),
                     )
                     self._log(
                         f"Placing trade: {best_symbol} {plays[0]['name']} "
-                        f"stake={per} (conf {plays[0]['confidence']}%)"
+                        f"stake={stakes[0]} (z={plays[0].get('z')}, EV {plays[0].get('ev')})"
                     )
                     outcomes = await asyncio.gather(
-                        *(self.place_trade(p, per, api_token) for p in plays)
+                        *(self.place_trade(p, s, api_token) for p, s in zip(plays, stakes))
                     )
                     worst = "loss" if any(not o["won"] for o in outcomes) else "win"
                     await asyncio.sleep(cooldown_for(worst))
@@ -359,6 +376,14 @@ class AutoTrader:
 
     def status(self) -> dict:
         total = self.wins_today + self.losses_today
+        win_rate = round(self.wins_today / total * 100, 1) if total else 0.0
+        gk = risk_state(self.initial_balance, self.balance, self.consecutive_losses)
+        # CF form rating: win rate weighted, with a bonus for current streak.
+        if total:
+            cf_rating = int(round(40 + win_rate * 0.55 + min(self.consecutive_losses, 0)))
+        else:
+            cf_rating = 75  # unrated until he plays
+        cf_rating = max(40, min(99, cf_rating - (5 if self.benched else 0)))
         return {
             "running": self.running,
             "mode": self.mode,
@@ -369,8 +394,10 @@ class AutoTrader:
             "consecutive_losses": self.consecutive_losses,
             "wins_today": self.wins_today,
             "losses_today": self.losses_today,
-            "win_rate": round(self.wins_today / total * 100, 1) if total else 0.0,
+            "win_rate": win_rate,
             "benched": self.benched,
+            "cf_rating": cf_rating,
+            "gk": gk,
             "phase": self.phase,
             "status": "running" if self.running else "stopped",
             "last_trade": self.last_trade,

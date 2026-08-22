@@ -160,8 +160,15 @@ def test_club_endpoints(client):
     assert alerts.status_code == 200
     assert "count" in alerts.json()
 
+    squad = client.get("/club/squad")
+    assert squad.status_code == 200
+    s = squad.json()
+    assert len(s["players"]) == 10
+    assert all(40 <= p["rating"] <= 99 for p in s["players"])
+    assert s["tier"] in ("WORLD CLASS", "ELITE", "PROFESSIONAL", "DEVELOPING")
+
     overview = client.get("/club")
     assert overview.status_code == 200
     body = overview.json()
-    for k in ("manager", "board", "news", "fans", "alerts"):
+    for k in ("manager", "board", "news", "fans", "alerts", "squad"):
         assert k in body

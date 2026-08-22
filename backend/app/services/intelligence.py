@@ -79,10 +79,22 @@ class IntelligenceEngine:
             f"{anomaly['count']} anomalies detected",
         ]
 
+        # CB's conviction card: a single 0-100 number the manager can read at a
+        # glance — data quality and stability build it, anomalies erode it.
+        conviction = (
+            quality["score"] * 0.5
+            + digit_stability * 0.3
+            + (10 if vol["regime"] == "LOW" else 5 if vol["regime"] == "NORMAL" else 0)
+            + (10 if mov["regime"] == "RANGING" else 5)
+            - anomaly["count"] * 5
+        )
+        conviction = round(max(0.0, min(100.0, conviction)), 1)
+
         return {
             "symbol": symbol,
             "window": window,
             "decision": decision,
+            "conviction": conviction,
             "data_quality": quality["score"],
             "volatility": vol,
             "movement": mov,
@@ -124,27 +136,34 @@ class IntelligenceEngine:
         return {"window": window, "markets": markets}
 
     def most_likely(self, symbol: str, window: int = 100) -> dict:
-        psycho = digit_engine.get_psychology(symbol, window)
-        overfed = psycho.get("overfed")
-        starving = psycho.get("starving")
-        if not overfed:
+        """DMF's pick — backed by shrunk estimates and z-score significance."""
+        analysis = digit_engine.get_digit_analysis(symbol, window)
+        freq = analysis.get("frequency", {})
+        if not freq:
             return {"symbol": symbol, "digit": None, "confidence": 0.0, "evidence": "no data", "contract": None}
-        if overfed["deviation"] >= abs(starving["deviation"] if starving else 0):
-            digit = overfed["digit"]
-            deviation = overfed["deviation"]
+        # Rank by absolute z-score: the most statistically unusual digit wins.
+        ranked = sorted(
+            ((float(v.get("z", 0.0) or 0.0), int(d), float(v.get("estimate", 10.0))) for d, v in freq.items()),
+            key=lambda t: abs(t[0]),
+            reverse=True,
+        )
+        z, digit, est = ranked[0]
+        if z >= 0:
             contract = "MATCHES"
+            evidence = f"Digit {digit} overfed: est {est}% vs 10% fair (z={z:+.2f})"
         else:
-            digit = starving["digit"]
-            deviation = abs(starving["deviation"])
             contract = "DIFFERS"
-        confidence = min(100.0, 50 + deviation * 5)
-        evidence = f"Digit {digit} appears {overfed['percent'] if contract == 'MATCHES' else starving['percent']}% vs expected 10.0%"
+            evidence = f"Digit {digit} starving: est {est}% vs 10% fair (z={z:+.2f})"
+        significant = abs(z) >= 1.96
+        confidence = round(min(100.0, 50.0 + abs(z) * 15.0), 1)
         return {
             "symbol": symbol,
             "digit": digit,
-            "confidence": round(confidence, 1),
+            "confidence": confidence,
             "evidence": evidence,
             "contract": contract,
+            "z": round(z, 2),
+            "significant": significant,
         }
 
 

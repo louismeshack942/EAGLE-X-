@@ -44,7 +44,11 @@ export default function AutoTraderPanel({ refreshMs = 3000 }: { refreshMs?: numb
       <Row label="Balance" value={fmtUsd(status?.balance)} />
       <Row label="W / L today" value={`${status?.wins_today ?? 0} / ${status?.losses_today ?? 0}`} />
       <Row label="Win Rate" value={`${status?.win_rate ?? 0}%`} accent={(status?.win_rate ?? 0) >= 50 ? "#3fb950" : "#f85149"} />
-      <Row label="Current Stake (10%)" value={fmtUsd(status?.current_stake)} accent="#d29922" />
+      <Row label="CF Rating" value={`${status?.cf_rating ?? 75}/99`} accent={(status?.cf_rating ?? 75) >= 80 ? "#3fb950" : (status?.cf_rating ?? 75) >= 65 ? "#58a6ff" : "#d29922"} />
+      {status?.gk && (
+        <Row label="GK Posture" value={`${status.gk.posture} (x${status.gk.stake_multiplier})`} accent={status.gk.posture === "FULL_ATTACK" ? "#3fb950" : status.gk.posture === "DEFEND" ? "#f85149" : "#d29922"} />
+      )}
+      <Row label="Kelly Stake (cap 10%)" value={fmtUsd(status?.current_stake)} accent="#d29922" />
       <Row label="Daily P&L" value={fmtUsd(status?.daily_pnl)} accent={status?.daily_pnl >= 0 ? "#3fb950" : "#f85149"} />
       <Row label="Trades" value={status?.trades_today ?? 0} />
       {rec?.plays?.length > 1 ? (

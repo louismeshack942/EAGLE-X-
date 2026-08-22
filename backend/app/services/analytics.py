@@ -41,6 +41,12 @@ class AnalyticsEngine:
             for a, b in zip(ticks[:-1], ticks[1:])
         ]
         avg_interval = sum(intervals) / len(intervals)
+        # RB's distribution read: jitter and the p25/p75 window of tick arrivals.
+        srt = sorted(intervals)
+        p25 = srt[len(srt) // 4] if srt else 0.0
+        p75 = srt[(3 * len(srt)) // 4] if srt else 0.0
+        jitter = statistics.pstdev(intervals) if len(intervals) > 1 else 0.0
+        stability = max(0.0, min(100.0, 100.0 - (jitter / avg_interval * 100 if avg_interval else 100.0)))
         now = datetime.now(timezone.utc)
         since_last = (now - ticks[-1].timestamp).total_seconds()
         remaining = max(0.0, avg_interval - since_last)
@@ -58,6 +64,10 @@ class AnalyticsEngine:
             "avg_interval": round(avg_interval, 3),
             "since_last": round(since_last, 2),
             "status": status,
+            "jitter": round(jitter, 3),
+            "stability": round(stability, 1),
+            "p25": round(p25, 3),
+            "p75": round(p75, 3),
         }
 
 

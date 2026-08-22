@@ -704,6 +704,11 @@ def club_alerts(window: int = 100):
     return club_svc.market_alerts(_active_syms(), window)
 
 
+@app.get("/club/squad")
+def club_squad(window: int = 100):
+    return club_svc.squad_ratings(_active_syms(), window)
+
+
 # ---------------- Portfolio ----------------
 class AssetBody(BaseModel):
     symbol: str
