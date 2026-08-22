@@ -268,3 +268,40 @@ def test_live_state_to_dict_labels():
     d = state.to_dict()
     assert d["is_live"] is True
     assert d["trading_enabled"] is True
+
+
+def test_oauth_login_default_id_shows_setup_not_dead_redirect():
+    """With the retired shared id (1089) the button must NOT redirect to
+    Deriv's dead authorize page — it shows setup instructions instead."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    with TestClient(app) as c:
+        r = c.get("/auth/deriv/login")
+        assert r.status_code == 200
+        assert "developers.deriv.com" in r.text
+        assert "auth.deriv.com" not in r.text
+        assert "/auth/deriv/callback" in r.text
+
+
+def test_oauth_login_registered_id_redirects_with_pkce(monkeypatch):
+    """With a registered app id the login redirects to auth.deriv.com with
+    client_id, redirect_uri, state and a PKCE challenge."""
+    from fastapi.testclient import TestClient
+    from app.main import app
+    from app.config import get_settings
+    monkeypatch.setenv("DERIV_APP_ID", "77777")
+    get_settings.cache_clear()
+    try:
+        with TestClient(app) as c:
+            r = c.get("/auth/deriv/login", follow_redirects=False)
+            assert r.status_code in (302, 307)
+            loc = r.headers["location"]
+            assert loc.startswith("https://auth.deriv.com/oauth2/auth?")
+            assert "client_id=77777" in loc
+            assert "response_type=code" in loc
+            assert "redirect_uri=" in loc and "auth%2Fderiv%2Fcallback" in loc
+            assert "state=" in loc
+            assert "code_challenge=" in loc
+            assert "code_challenge_method=S256" in loc
+    finally:
+        get_settings.cache_clear()

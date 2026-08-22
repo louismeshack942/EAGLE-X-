@@ -95,6 +95,8 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
           <p style={{ color: "#8b949e", fontSize: "0.75rem", marginBottom: 8, lineHeight: 1.4 }}>
             Link your Deriv account to enable live trading. Your token is never
             shown or sent to chat — it goes straight to Deriv and your server.
+            (The OAuth button needs a registered app id — until then it shows
+            setup steps instead of a broken page.)
           </p>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <Btn

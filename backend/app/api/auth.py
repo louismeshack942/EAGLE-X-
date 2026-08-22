@@ -15,13 +15,17 @@ DELETE /auth/token disconnects. GET /auth/status reports masked metadata
 (loginid, currency, balance) — never the token itself.
 """
 import asyncio
+import base64
+import hashlib
 import json
+import secrets
+import time
 from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
 import websockets
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -29,6 +33,23 @@ from app.config import get_settings
 from app.services.token_vault import VAULT
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# state -> {verifier, redirect_uri, expires} for in-flight OAuth logins.
+# Single-process server; entries expire after 10 minutes.
+_PKCE_STATES: dict = {}
+
+
+def _pkce_pair() -> tuple:
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    return verifier, challenge
+
+
+def _oauth_token_url(settings) -> str:
+    """auth.deriv.com/oauth2/auth -> auth.deriv.com/oauth2/token"""
+    return settings.deriv_oauth_url.rstrip("/").rsplit("/", 1)[0] + "/token"
 
 
 class TokenBody(BaseModel):
@@ -156,25 +177,84 @@ async def auth_status():
     return await VAULT.status()
 
 
-@router.get("/deriv/login")
-def deriv_login():
-    """Redirect to Deriv's OAuth page.
+@router.get("/deriv/login", response_class=HTMLResponse)
+def deriv_login(request: Request):
+    """Start Deriv OAuth login.
 
-    With a registered app id (set DERIV_APP_ID in env) we use client_id
-    against the modern auth endpoint. With the legacy id 1089 (default) the
-    older authorize screen stays available until a real app is registered.
+    Deriv retired the shared app_id=1089 authorize screen — with the default
+    id there is nothing to redirect to, so we show setup instructions instead
+    of sending the user to a dead page. With a registered OAuth app id
+    (DERIV_APP_ID in env) we run the real Authorization Code + PKCE flow.
     """
     settings = get_settings()
-    if settings.deriv_app_id != 1089:
-        params = urlencode({
-            "client_id": str(settings.deriv_app_id),
-            "response_type": "code",
-            "scope": "trade account_manage",
-            "l": "EN",
-        })
-    else:
-        params = urlencode({"app_id": settings.deriv_app_id, "l": "EN"})
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = request.headers.get("host", request.url.netloc)
+    callback_url = f"{proto}://{host}/auth/deriv/callback"
+
+    if settings.deriv_app_id == 1089:
+        return HTMLResponse(
+            "<html><body style='font-family:sans-serif;background:#0d1117;color:#c9d1d9;padding:2rem;max-width:640px;margin:auto'>"
+            "<h3 style='color:#f0b72f'>One-time setup needed for the login button</h3>"
+            "<p>Deriv retired the shared login screen this button used. Two options:</p>"
+            "<p><b>Option A — fastest:</b> close this tab, click <b>PASTE TOKEN</b> on the "
+            "dashboard and paste a <b>pat_</b> token + your app id from "
+            "<a style='color:#58a6ff' href='https://developers.deriv.com' target='_blank'>developers.deriv.com</a>. "
+            "It connects instantly.</p>"
+            "<p><b>Option B — make this button work forever:</b> on developers.deriv.com register a free "
+            "<b>OAuth app</b> with this exact redirect URL:<br>"
+            f"<code style='color:#3fb950'>{callback_url}</code><br>"
+            "then set <code>DERIV_APP_ID</code> to that app's id in the server environment and restart.</p>"
+            "</body></html>",
+            status_code=200,
+        )
+
+    state = secrets.token_urlsafe(24)
+    verifier, challenge = _pkce_pair()
+    _PKCE_STATES[state] = {
+        "verifier": verifier,
+        "redirect_uri": callback_url,
+        "expires": time.time() + 600,
+    }
+    params = urlencode({
+        "response_type": "code",
+        "client_id": str(settings.deriv_app_id),
+        "redirect_uri": callback_url,
+        "scope": "trade account_manage",
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "l": "EN",
+    })
     return RedirectResponse(f"{settings.deriv_oauth_url}?{params}")
+
+
+async def _exchange_code(code: str, state: Optional[str]) -> dict:
+    """Swap the authorization code for an access token (PKCE), then validate
+    it against the REST API and mint the websocket OTP URL."""
+    settings = get_settings()
+    entry = _PKCE_STATES.pop(state or "", None)
+    if not entry or entry["expires"] < time.time():
+        raise ValueError("login session expired or unknown — start the login again")
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.post(
+            _oauth_token_url(settings),
+            data={
+                "grant_type": "authorization_code",
+                "client_id": str(settings.deriv_app_id),
+                "code": code,
+                "code_verifier": entry["verifier"],
+                "redirect_uri": entry["redirect_uri"],
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+    if resp.status_code != 200:
+        raise ValueError(f"code exchange failed ({resp.status_code})")
+    access_token = resp.json().get("access_token")
+    if not access_token:
+        raise ValueError("no access token returned by Deriv")
+    info = await _pat_validate(access_token, str(settings.deriv_app_id))
+    info["token"] = access_token
+    return info
 
 
 @router.get("/deriv/callback", response_class=HTMLResponse)
@@ -183,24 +263,27 @@ async def deriv_callback(
     token1: Optional[str] = None,
     cur1: Optional[str] = None,
     code: Optional[str] = None,
+    state: Optional[str] = None,
 ):
     """Deriv OAuth redirect target. Handles legacy tokenN params and the
-    modern Authorization Code flow (requires DERIV_CLIENT_SECRET to be
-    ready in env)."""
+    modern Authorization Code + PKCE flow."""
     settings = get_settings()
-    dashboard = (settings.frontend_url or "/").rstrip("/") + "/dashboard" if settings.frontend_url else "https://frontend-ob4u.onrender.com/dashboard"
+    dashboard = (settings.frontend_url or "").rstrip("/") + "/dashboard" if settings.frontend_url else "/dashboard"
 
     if code and not token1:
-        return HTMLResponse(
-            "<html><body style='font-family:sans-serif;background:#0d1117;color:#f85149;padding:2rem'>"
-            "<h3>OAuth needs DERIV_APP_ID &amp; DERIV_CLIENT_SECRET</h3>"
-            "<p>Deriv returned an authorization code, but code exchange "
-            "requires your own registered app credentials. Register an OAuth "
-            "app on developers.deriv.com, set DERIV_APP_ID and "
-            "DERIV_CLIENT_SECRET in env, then retry. Otherwise paste the "
-            "token manually (pat_ tokens are supported) via the form.</p></body>",
-            status_code=400,
-        )
+        try:
+            info = await _exchange_code(code, state)
+        except Exception as exc:
+            return HTMLResponse(
+                f"<html><body style='font-family:sans-serif;background:#0d1117;color:#f85149;padding:2rem'>"
+                f"<h3>Login failed</h3><p>{exc}</p></body></html>",
+                status_code=400,
+            )
+        await VAULT.set(info.get("token") or code, loginid=info.get("loginid"), currency=info.get("currency"),
+                        account_id=info.get("account_id"), ws_url=info.get("ws_url"), app_id=info.get("app_id"))
+        if info.get("balance") is not None:
+            await VAULT.set_balance(float(info["balance"]))
+        return RedirectResponse(f"{dashboard}?deriv=connected")
 
     if not token1:
         return HTMLResponse(
