@@ -425,3 +425,15 @@ def test_oauth_app_id_ui_override_activates_button():
             assert r.status_code == 200  # back to setup page
     finally:
         settings_store.set("deriv_oauth_app_id", None)
+
+
+def test_is_virtual_detection():
+    """Options-platform ids (DOT*/ROT*) must be classified without an
+    is_virtual field — DOT94300575-style demo, ROT92532523-style real."""
+    from app.api.auth import _is_virtual
+    assert _is_virtual({"account_id": "DOT94300575"}) is True
+    assert _is_virtual({"account_id": "ROT92532523"}) is False
+    assert _is_virtual({"loginid": "VRTC12345"}) is True
+    assert _is_virtual({"account_id": "CR123"}) is False
+    assert _is_virtual({"account_id": "X", "is_virtual": True}) is True
+    assert _is_virtual({"account_id": "UNKNOWN9"}) is False

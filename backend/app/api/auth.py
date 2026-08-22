@@ -104,6 +104,24 @@ def _account_key(account: dict) -> str:
     return str(account.get("account_id") or account.get("loginid") or account.get("id") or "")
 
 
+def _is_virtual(account: dict) -> bool:
+    """Demo detection. Deriv's Options accounts may omit is_virtual, so fall
+    back on: explicit field → VRTC prefix → id prefix ('DO'/'VR' = demo,
+    'RO'/'CR' = real) → unknown defaults to False with the UI showing the
+    raw id so the user can tell."""
+    if "is_virtual" in account:
+        return bool(account.get("is_virtual"))
+    loginid = str(account.get("loginid") or "")
+    if loginid.startswith("VRTC"):
+        return True
+    key = _account_key(account).upper()
+    if key.startswith(("DO", "VR")):
+        return True
+    if key.startswith(("RO", "CR")):
+        return False
+    return False
+
+
 async def _pat_validate(token: str, app_id: Optional[str]) -> dict:
     """Validate a modern PAT token via Deriv's REST trading API.
 
@@ -146,7 +164,7 @@ async def _pat_validate(token: str, app_id: Optional[str]) -> dict:
             "loginid": a.get("loginid") or _account_key(a),
             "currency": a.get("currency"),
             "balance": a.get("balance"),
-            "is_virtual": bool(a.get("is_virtual")) or str(a.get("loginid") or _account_key(a)).startswith("VRTC"),
+            "is_virtual": _is_virtual(a),
         }
         for a in accounts
     ]
