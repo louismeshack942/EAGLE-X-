@@ -136,17 +136,18 @@ class TestPersistence:
         assert session["position"] == 0 or session["position"] == 1
 
 
-from app.services.auto_trader import FLUID_MAX_PLAYS, MIN_EDGE_PCT, MIN_EV, select_plays
+from app.services.auto_trader import FLUID_MAX_PLAYS, MAX_ANOMALIES, select_plays
+from app.services.market_master import MIN_EDGE_PCT, MIN_EV
 
 
-def _mm(signal="STRONG_DATA_SUPPORT", dq=88.0, contracts=None):
+def _mm(signal="STRONG_DATA_SUPPORT", dq=88.0, contracts=None, anomalies=0):
     return {
         "signal": signal,
         "data_quality": dq,
         "contracts": contracts or [],
         "volatility": {"regime": "LOW"},
         "movement": {"regime": "RANGING"},
-        "anomaly_count": 0,
+        "anomaly_count": anomalies,
     }
 
 
@@ -158,26 +159,33 @@ def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT", significant=True):
         "ev": ev,
         "observed_edge": edge,
         "confidence": 50 + edge * 5,
-        "z": -2.5 if significant else -0.5,
+        "z": 2.5 if significant else 0.5,
         "significant": significant,
         "evidence": evidence,
     }
 
 
-class TestFluidPlay:
-    def test_only_differs_play(self):
-        """Manager's directive: bench the coin flips and lottery, play DIFFERS."""
+class TestTeamDecision:
+    def test_team_decides_not_the_cf(self):
+        """The CF has no favourite. Any contract type the team approves plays —
+        the squad's best EV leads, whatever shirt it wears."""
         mm = _mm(contracts=[
-            _c("OVER 1", 0.88, 8.0),        # coin flip — benched despite EV
-            _c("MATCHES on 6", 0.71, 9.0),   # lottery — benched despite EV
-            _c("DIFFERS on 3", 0.09, 5.0),   # the edge — plays
+            _c("OVER 1", 0.88, 8.0),         # team-approved edge — plays
+            _c("MATCHES on 6", 0.71, 9.0),   # team-approved — plays as second
+            _c("DIFFERS on 3", 0.09, 5.0),   # real edge but too far behind
         ])
         plays = select_plays(mm, "R_100")
-        assert len(plays) == 1
-        assert plays[0]["type"] == "DIFFERS"
+        assert len(plays) == 2  # FLUID_MAX_PLAYS
+        assert plays[0]["name"] == "OVER 1"      # highest EV leads the line
+        assert plays[1]["name"] == "MATCHES on 6"
+
+    def test_every_contract_type_is_eligible(self):
+        for name in ("DIFFERS on 3", "MATCHES on 6", "ODD", "EVEN", "OVER 4", "UNDER 5"):
+            plays = select_plays(_mm(contracts=[_c(name, 0.10, 5.0)]), "R_100")
+            assert plays and plays[0]["name"] == name, f"{name} benched despite full team approval"
 
     def test_two_equal_plays_split(self):
-        """Two strong positive-EV DIFFERS -> both play, stake splits."""
+        """Two strong positive-EV plays -> both play, stake splits."""
         mm = _mm(contracts=[_c("DIFFERS on 3", 0.09, 5.0), _c("DIFFERS on 7", 0.085, 4.8)])
         plays = select_plays(mm, "R_100")
         assert len(plays) == 2
@@ -189,6 +197,10 @@ class TestFluidPlay:
         plays = select_plays(mm, "R_100")
         assert len(plays) == 1
         assert plays[0]["name"] == "DIFFERS on 3"
+
+    def test_physio_blocks_anomalous_market(self):
+        mm = _mm(anomalies=MAX_ANOMALIES + 1, contracts=[_c("DIFFERS on 3", 0.10, 5.0)])
+        assert select_plays(mm, "R_100") == []
 
     def test_gate_blocks_weak_signal(self):
         mm = _mm(signal="NEUTRAL", contracts=[_c("DIFFERS on 3", 0.10, 5.0)])
@@ -301,3 +313,105 @@ class TestZScoreAnalytics:
         # A fair digit is NOT significant.
         f3 = a["frequency"]["3"]
         assert f3["significant"] is False
+
+
+class TestDerivContractMapping:
+    """Live-money correctness: Deriv only understands its own contract names,
+    and digit contracts are rejected without a barrier."""
+
+    def test_internal_names_map(self):
+        from app.services.deriv_trader import deriv_contract_params
+        assert deriv_contract_params("MATCHES", 6) == {"contract_type": "DIGITMATCH", "barrier": "6"}
+        assert deriv_contract_params("DIFFERS", 3) == {"contract_type": "DIGITDIFF", "barrier": "3"}
+        assert deriv_contract_params("ODD", None) == {"contract_type": "DIGITODD"}
+        assert deriv_contract_params("EVEN", None) == {"contract_type": "DIGITEVEN"}
+        assert deriv_contract_params("OVER", 4) == {"contract_type": "DIGITOVER", "barrier": "4"}
+        assert deriv_contract_params("UNDER", 7) == {"contract_type": "DIGITUNDER", "barrier": "7"}
+
+    def test_deriv_native_names_pass_through(self):
+        from app.services.deriv_trader import deriv_contract_params
+        assert deriv_contract_params("DIGITDIFF", 2) == {"contract_type": "DIGITDIFF", "barrier": "2"}
+        assert deriv_contract_params("CALL", None) == {"contract_type": "CALL"}
+        assert deriv_contract_params("PUT", None) == {"contract_type": "PUT"}
+
+    def test_digit_contract_without_barrier_rejected(self):
+        import pytest
+        from app.services.deriv_trader import deriv_contract_params
+        with pytest.raises(ValueError):
+            deriv_contract_params("MATCHES", None)
+        with pytest.raises(ValueError):
+            deriv_contract_params("DIGITOVER", None)
+
+    def test_unknown_contract_rejected(self):
+        import pytest
+        from app.services.deriv_trader import deriv_contract_params
+        with pytest.raises(ValueError):
+            deriv_contract_params("LOTTERY_TICKET", None)
+
+
+class TestTeamBoard:
+    def test_every_contract_carries_a_verdict(self):
+        """Market Master stamps PLAY/BENCH + reason on every contract — the
+        whole team's vote is visible, not just the winner."""
+        q = BoundedTickQueue()
+        demo = DemoGenerator(interval_ms=1)
+        async def fill():
+            async for tick in demo.stream("R_100"):
+                q.push(tick)
+                if q.count("R_100") >= 300:
+                    break
+        asyncio.run(fill())
+        from app.services.analytics_advanced import AdvancedAnalytics
+        from app.services.intelligence import IntelligenceEngine
+        import app.services.market_master as mm_mod
+        # Point the shared engines at our queue for this test (restored after).
+        orig_intel, orig_digit = mm_mod.intelligence_engine, mm_mod.digit_engine
+        mm_mod.intelligence_engine = IntelligenceEngine(queue=q)
+        mm_mod.digit_engine = AdvancedAnalytics(queue=q)
+        try:
+            out = mm_mod.MarketMaster().analyze("R_100", 100)
+        finally:
+            mm_mod.intelligence_engine, mm_mod.digit_engine = orig_intel, orig_digit
+        board = out["all_contracts"]
+        assert board, "board empty"
+        for c in board:
+            assert c["verdict"] in ("PLAY", "BENCH")
+            assert "verdict_reason" in c
+            assert "z" in c and "significant" in c  # every type, incl. ODD/EVEN/OVER/UNDER
+        plays = select_plays(out, "R_100")
+        # CF may only finish what the team approved.
+        for p in plays:
+            on_board = next(b for b in board if b["name"] == p["name"])
+            assert on_board["verdict"] == "PLAY"
+
+    def test_odd_even_carry_z_scores(self):
+        """A deliberately odd-heavy stream must make ODD significant, not EVEN."""
+        from app.models.tick import Tick
+        from datetime import datetime, timezone
+        from app.core.queue import tick_queue
+        from app.services.analytics_advanced import AdvancedAnalytics
+        from app.services.intelligence import IntelligenceEngine
+        import app.services.market_master as mm_mod
+        for i in range(400):
+            # last digit odd 70% of the time
+            last = 7 if i % 10 < 7 else 2
+            tick_queue.push(Tick(symbol="Z_OE", quote=100.0 + last * 0.01, timestamp=datetime.now(timezone.utc), provider="demo"))
+        orig_intel, orig_digit = mm_mod.intelligence_engine, mm_mod.digit_engine
+        mm_mod.intelligence_engine = IntelligenceEngine(queue=tick_queue)
+        mm_mod.digit_engine = AdvancedAnalytics(queue=tick_queue)
+        try:
+            board = mm_mod.MarketMaster().analyze("Z_OE", 400)["all_contracts"]
+        finally:
+            mm_mod.intelligence_engine, mm_mod.digit_engine = orig_intel, orig_digit
+        odd = next(c for c in board if c["type"] == "ODD")
+        even = next(c for c in board if c["type"] == "EVEN")
+        assert odd["z"] > 1.96 and odd["significant"] is True
+        assert even["significant"] is False
+        over = next(c for c in board if c["type"] == "OVER" and c["digit"] == 1)
+        assert over["z"] > 1.96 and over["significant"] is True
+
+    def test_status_exposes_decision_history(self):
+        from app.services.auto_trader import AutoTrader
+        at = AutoTrader()
+        s = at.status()
+        assert "decision_history" in s and isinstance(s["decision_history"], list)

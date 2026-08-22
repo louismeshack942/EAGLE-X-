@@ -114,6 +114,7 @@ class TradeBody(BaseModel):
     duration: int = 60
     api_token: Optional[str] = None
     duration_unit: str = "t"
+    digit: Optional[int] = None
 
 
 class BacktestBody(BaseModel):
@@ -409,6 +410,7 @@ async def trade(body: TradeBody):
         duration=body.duration,
         api_token=token,
         duration_unit=body.duration_unit,
+        digit=body.digit,
     )
 
 

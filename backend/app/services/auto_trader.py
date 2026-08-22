@@ -1,6 +1,14 @@
-"""Auto Trader — autonomous trading loop with strict risk management.
+"""Auto Trader — the CF. He never picks the play; the whole squad does.
 
-Paper mode simulates trades; live mode executes via DerivTrader.
+Market Master (the team meeting) ranks every contract on every market and
+stamps a verdict on each: CB's signal, LB's data quality, the analysts'
+95% z-significance, the scouts' edge/EV floors, the physio room's anomaly
+check. The CF receives the team's top-rated PLAY verdicts and his only job
+is to put the ball in the net. GK sizes the stake. The Manager benches him
+when his form drops.
+
+Paper mode simulates trades at fair odds; live mode executes via
+DerivTrader and waits for the REAL settlement before touching the books.
 Paper and live logs are clearly separated; every trade is journaled.
 """
 import asyncio
@@ -11,7 +19,7 @@ from typing import Optional
 
 from app.config import get_settings
 from app.services.deriv_trader import deriv_trader
-from app.services.market_master import market_master
+from app.services.market_master import MIN_EDGE_PCT, MIN_EV, PAYOUTS, market_master
 from app.services.money_management import (
     check_hard_stops,
     compute_stake,
@@ -25,27 +33,26 @@ from app.services.telegram import telegram_notifier
 from app.services.token_vault import VAULT
 
 FLUID_MAX_PLAYS = 2          # at most two simultaneous positions
-FLUID_MIN_CONFIDENCE = 60    # absolute floor for any play (fallback if ev missing)
-FLUID_PAIR_RATIO = 0.75      # second play must reach 75% of the top's confidence
-MIN_EV = 0.0                 # minimum positive expected value per 1.0 staked
-MIN_EDGE_PCT = 1.0           # minimum observed-vs-fair edge (percentage points)
+FLUID_PAIR_RATIO = 0.75      # second play must reach 75% of the top's EV
 MAX_GAMES_WITHOUT_GOAL = 3   # bench the CF after this many consecutive losses
 BENCH_GAMES = 2              # scans he must sit out before returning
+MAX_ANOMALIES = 3            # physio room: too many anomalies, nobody plays
+DECISION_HISTORY_LEN = 20    # recent team decisions surfaced in status
 
 
 def select_plays(mm: dict, symbol: str) -> list[dict]:
-    """The team feeds SS: pick up to FLUID_MAX_PLAYS contracts on one market.
+    """The team picks the play; the CF just finishes it.
 
-    Manager's directive: only play DIFFERS. It is the only contract whose true
-    base rate (90%) beats the payout — a genuine, sustainable edge. ODD/EVEN/
-    OVER/UNDER are 50/50 coin flips the house always wins long-term; MATCHES
-    is a 10% lottery. The CF was bleeding because he kept firing at those.
-
-    Gate: STRONG signal + data quality >= 70 + positive EV + minimum edge.
+    Every contract type is eligible — MATCHES, DIFFERS, ODD, EVEN, OVER,
+    UNDER — because the decision belongs to the whole squad, not to the
+    striker. The gates below ARE the team: CB's signal, LB's data quality,
+    the physio's anomaly count, the analysts' 95% z-significance, and the
+    scouts' edge/EV floors. Whatever survives, ranked by EV, is the call.
     """
     dq = mm.get("data_quality", 0) or 0
     sig = mm.get("signal", "") or ""
-    if "STRONG" not in sig or dq < 70:
+    anomalies = mm.get("anomaly_count", 0) or 0
+    if "STRONG" not in sig or dq < 70 or anomalies > MAX_ANOMALIES:
         return []
     contracts = sorted(
         mm.get("all_contracts") or mm.get("contracts") or [],
@@ -53,18 +60,16 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
     )
     plays: list[dict] = []
     for c in contracts:
-        if c.get("type") != "DIFFERS":
-            continue  # bench the coin flips and the lottery — play the edge
         ev = c.get("ev", -1)
         edge = c.get("observed_edge", 0.0) or 0.0
         if ev <= MIN_EV or edge < MIN_EDGE_PCT:
-            continue
+            continue  # scouts: no positive expectation, no meaningful edge
         if not c.get("significant", False):
-            continue  # world-class: only statistically significant starvation
+            continue  # analysts: deviation not proven at the 95% level
         if "SUPPORT" not in (c.get("evidence") or ""):
-            continue
+            continue  # CB: data does not support the direction
         if plays and c.get("ev", 0) < plays[0].get("ev", 0) * FLUID_PAIR_RATIO:
-            continue
+            continue  # coach: second play must be nearly as good as the first
         plays.append({**c, "symbol": symbol, "data_quality": dq, "signal": sig})
         if len(plays) >= FLUID_MAX_PLAYS:
             break
@@ -96,6 +101,21 @@ class AutoTrader:
         self.benched_until = 0
         self.benched = False
         self._scan_count = 0
+        self.decision_history: list[dict] = []
+
+    def _record_decision(self, symbol: str, plays: list[dict], team: dict) -> None:
+        """Stamp every fresh team decision — proof the call tracks the market."""
+        self.decision_history.append({
+            "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+            "symbol": symbol,
+            "plays": [p["name"] for p in plays],
+            "ev": plays[0].get("ev"),
+            "z": plays[0].get("z"),
+            "signal": team.get("signal"),
+            "dq": team.get("data_quality"),
+        })
+        if len(self.decision_history) > DECISION_HISTORY_LEN:
+            self.decision_history = self.decision_history[-DECISION_HISTORY_LEN:]
 
     def _log(self, msg: str) -> None:
         stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
@@ -108,10 +128,37 @@ class AutoTrader:
         if self.running:
             return {"status": "already running", "mode": self.mode}
         self.mode = mode if mode in ("paper", "live") else "paper"
+        balance = 10.0
+        if self.mode == "live":
+            # Live mode plays with the REAL account — never with a made-up $10.
+            token = api_token or await VAULT.get() or self.settings.deriv_api_token
+            if not token:
+                return {
+                    "status": "error",
+                    "message": "LIVE refused: no Deriv token connected. "
+                               "Connect your account first (Auth panel), then start live.",
+                }
+            real_balance = await deriv_trader.get_balance(token)
+            if real_balance is None:
+                acct = await VAULT.status()
+                real_balance = acct.get("balance")
+            if real_balance is None:
+                return {
+                    "status": "error",
+                    "message": "LIVE refused: could not read your Deriv balance. "
+                               "Not risking a single cent blind.",
+                }
+            if real_balance <= 0.35:
+                return {
+                    "status": "error",
+                    "message": f"LIVE refused: balance ${real_balance:.2f} is below the minimum stake.",
+                }
+            balance = float(real_balance)
+            self._log(f"LIVE account connected — real balance ${balance:.2f}")
         self.running = True
         self.session_started = time.time()
-        self.balance = 10.0
-        self.initial_balance = 10.0
+        self.balance = balance
+        self.initial_balance = balance
         self.daily_pnl = 0.0
         self.trades_today = 0
         self.wins_today = 0
@@ -141,33 +188,31 @@ class AutoTrader:
 
         The CF was losing because paper mode treated displayed confidence as
         truth. It isn't — confidence is a heuristic. Here each contract plays
-        out at its true base rate (what Deriv prices against), so a strategy
-        with no real edge shows a real loss in paper too.
+        out at the fair base rate for its type, nudged only by the observed
+        (z-verified) edge, so a strategy with no real edge shows a real loss
+        in paper too.
         """
         t = contract["type"]
+        payout = PAYOUTS.get(t, 1.9)
+        edge = (contract.get("observed_edge", 0.0) or 0.0) / 100.0
         if t == "MATCHES":
-            # fair base rate ~10%; observed edge nudges it but capped honestly
-            payout = 9.0
-            p_win = 0.10 + (contract.get("observed_edge", 0.0) / 100.0)
-            p_win = max(0.05, min(0.22, p_win))
-            win = rng.random() < p_win
+            p_win = max(0.05, min(0.22, 0.10 + edge))
         elif t == "DIFFERS":
-            payout = 1.1
-            p_win = 0.90 - (contract.get("observed_edge", 0.0) / 100.0)
-            p_win = max(0.78, min(0.95, p_win))
-            win = rng.random() < p_win
+            p_win = max(0.78, min(0.95, 0.90 + edge))
         elif t in ("ODD", "EVEN"):
-            payout = 1.9
-            win = rng.random() < 0.5  # fair — house edge lives in the payout
+            p_win = max(0.40, min(0.60, 0.50 + edge))
         elif t in ("OVER", "UNDER"):
-            payout = 1.9
-            win = rng.random() < 0.5  # fair — same story
+            fair = (contract.get("fair_pct", 50.0) or 50.0) / 100.0
+            p_win = max(0.05, min(0.95, fair + edge))
         else:
-            payout = 1.9
-            win = rng.random() < 0.5
-        return win, payout
+            p_win = 0.5
+        return rng.random() < p_win, payout
 
     async def place_trade(self, contract: dict, stake: float, api_token: str | None = None) -> dict:
+        """Execute one contract. Live mode waits for the REAL settlement —
+        a successful purchase is not a win. A failed step ABORTS the trade:
+        no fake P&L, no phantom losses, loud logging, and no journal entry.
+        """
         vault_token = await VAULT.get()
         if self.mode == "live" and (api_token or vault_token or self.settings.deriv_api_token):
             token = api_token or vault_token or self.settings.deriv_api_token
@@ -177,12 +222,23 @@ class AutoTrader:
                 amount=stake,
                 duration=contract.get("duration_seconds", 60),
                 api_token=token,
+                digit=contract.get("digit"),
             )
-            won = result.get("status") == "success"
-            pnl = (result.get("payout") or stake) - stake if won else -stake
+            if result.get("status") != "success":
+                # ABORT: nothing settled, nothing is booked. Loud, not silent.
+                msg = result.get("error", "unknown error")
+                self._log(
+                    f"TRADE ABORTED ({result.get('step', '?')}): {contract.get('symbol')} "
+                    f"{contract['name']} — {msg}. No money booked."
+                )
+                telegram_notifier.send_risk_alert(
+                    f"Trade aborted at {result.get('step', '?')}: {msg}"
+                )
+                return {"won": None, "pnl": 0.0, "aborted": True}
+            won = bool(result.get("won"))
+            pnl = float(result.get("pnl", 0.0))
         else:
-            won_fr_action, payout = await self._simulate_contract_outcome(contract, self._paper_rng)
-            won = won_fr_action
+            won, payout = await self._simulate_contract_outcome(contract, self._paper_rng)
             pnl = stake * (payout - 1) if won else -stake
             # simulate contract duration quickly (paper keeps it snappy)
             await asyncio.sleep(0.5)
@@ -251,6 +307,7 @@ class AutoTrader:
                 best_symbol = None
                 best_plays: list[dict] = []
                 best_team: dict = {}
+                best_board: list[dict] = []
                 best_rank = (-1, -1.0)  # (top ev, data quality) — better DQ wins ties
                 for sym in symbols:
                     try:
@@ -265,6 +322,7 @@ class AutoTrader:
                         best_rank = rank
                         best_symbol = sym
                         best_plays = plays
+                        best_board = mm.get("all_contracts") or []
                         best_team = {
                             "signal": mm.get("signal"),
                             "data_quality": mm.get("data_quality"),
@@ -279,14 +337,18 @@ class AutoTrader:
                     if key == self._last_conf_key:
                         self.confirmation_ticks += 1
                     else:
+                        # The market moved and the team's call moved with it.
                         self._last_conf_key = key
                         self.confirmation_ticks = 1
+                        self._record_decision(best_symbol, best_plays, best_team)
                     self.current_recommendation = {
                         "symbol": best_symbol,
                         "contract": best_plays[0]["name"],
                         "confidence": best_plays[0]["confidence"],
                         "ev": best_plays[0].get("ev"),
                         "digit": best_plays[0].get("digit"),
+                        "z": best_plays[0].get("z"),
+                        "decided_at": datetime.now(timezone.utc).isoformat(),
                         "plays": [
                             {
                                 "contract": p["name"],
@@ -296,10 +358,23 @@ class AutoTrader:
                             }
                             for p in best_plays
                         ],
+                        # The whole squad's verdict on this market — top 5 of
+                        # the scouting board with WHY each plays or sits.
+                        "board": [
+                            {
+                                "contract": c["name"],
+                                "ev": c.get("ev"),
+                                "z": c.get("z"),
+                                "verdict": c.get("verdict", "PLAY" if c in best_plays else "BENCH"),
+                                "reason": c.get("verdict_reason", ""),
+                            }
+                            for c in (best_board or [])[:5]
+                        ],
                         "team": best_team,
                     }
                 else:
                     self.confirmation_ticks = 0
+                    self.current_recommendation = None
 
                 session_seconds = time.time() - (self.session_started or time.time())
                 violations = check_hard_stops(
@@ -322,8 +397,8 @@ class AutoTrader:
                     dd_mult = drawdown_multiplier(self.initial_balance, self.balance)
                     stakes = []
                     for p in best_plays:
-                        p_win = max(0.01, min(0.99, (p.get("observed_pct", 90.0) or 90.0) / 100.0))
-                        payout = 1.1 if p["type"] == "DIFFERS" else 1.9
+                        p_win = max(0.01, min(0.99, (p.get("observed_pct", 50.0) or 50.0) / 100.0))
+                        payout = PAYOUTS.get(p["type"], 1.9)
                         ks = kelly_stake(p_win, payout, self.balance)
                         cap = compute_stake(self.balance)
                         stakes.append(round(min(ks, cap) * dd_mult, 2))
@@ -402,6 +477,7 @@ class AutoTrader:
             "status": "running" if self.running else "stopped",
             "last_trade": self.last_trade,
             "current_recommendation": self.current_recommendation,
+            "decision_history": self.decision_history[-DECISION_HISTORY_LEN:],
             "confirmation_ticks": self.confirmation_ticks,
             "log": self.log[-50:],
         }

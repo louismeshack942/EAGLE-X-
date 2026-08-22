@@ -66,10 +66,50 @@ export default function AutoTraderPanel({ refreshMs = 3000 }: { refreshMs?: numb
           value={`${rec.team.signal} · DQ ${rec.team.data_quality} · anomalies ${rec.team.anomaly_count ?? 0}`}
         />
       )}
+      {rec?.decided_at && (
+        <Row label="Team Call Made" value={new Date(rec.decided_at).toLocaleTimeString()} accent="#8b949e" />
+      )}
+      {rec?.board?.length > 0 && (
+        <div style={{ marginTop: 8, borderTop: "1px solid #21262d", paddingTop: 6 }}>
+          <div style={{ fontSize: "0.7rem", color: "#8b949e", letterSpacing: 1, marginBottom: 4 }}>
+            TEAM BOARD — every contract voted on by the whole squad
+          </div>
+          {rec.board.map((b: any, i: number) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 6, fontSize: "0.72rem", padding: "2px 0", color: b.verdict === "PLAY" ? "#3fb950" : "#8b949e" }}>
+              <span style={{ minWidth: 130 }}>{b.verdict === "PLAY" ? "✅" : "🪑"} {b.contract}</span>
+              <span style={{ fontFamily: "monospace" }}>
+                EV {b.ev != null ? (b.ev >= 0 ? `+${b.ev}` : b.ev) : "—"} · z {b.z != null ? b.z : "—"}
+              </span>
+              <span style={{ color: "#6e7681", textAlign: "right", flex: 1 }}>{b.verdict === "PLAY" ? "" : b.reason}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {status?.decision_history?.length > 0 && (
+        <div style={{ marginTop: 8, borderTop: "1px solid #21262d", paddingTop: 6 }}>
+          <div style={{ fontSize: "0.7rem", color: "#8b949e", letterSpacing: 1, marginBottom: 4 }}>
+            DECISION HISTORY — the team's call as the market moves
+          </div>
+          <div style={{ maxHeight: 110, overflow: "auto", fontSize: "0.7rem", fontFamily: "monospace" }}>
+            {[...status.decision_history].reverse().map((d: any, i: number) => (
+              <div key={i} style={{ color: "#c9d1d9", padding: "1px 0" }}>
+                <span style={{ color: "#8b949e" }}>{d.ts}</span> {d.symbol} → {d.plays?.join(" + ")} <span style={{ color: "#58a6ff" }}>EV {d.ev != null && d.ev >= 0 ? `+${d.ev}` : d.ev}</span> <span style={{ color: "#6e7681" }}>z {d.z} · {d.signal}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <Row label="Confirmation Ticks" value={status?.confirmation_ticks ?? 0} />
       <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
         <Btn small variant="success" disabled={busy || status?.running} onClick={() => act("/auto-trader/start", { mode: "paper" })}>
           START PAPER
+        </Btn>
+        <Btn small variant="primary" disabled={busy || status?.running} onClick={() => {
+          if (window.confirm("GO LIVE with real money? The GK's hard stops apply (20% stop-loss, 3-loss benching), but real stakes are real risk. Confirm to start.")) {
+            act("/auto-trader/start", { mode: "live" });
+          }
+        }}>
+          START LIVE
         </Btn>
         <Btn small variant="danger" disabled={busy || !status?.running} onClick={() => act("/auto-trader/stop")}>
           STOP
