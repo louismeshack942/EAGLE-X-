@@ -25,3 +25,7 @@ frontend/.next/
 # OS
 .DS_Store
 frontend/out/
+
+# Splash build intermediates (source footage is re-downloadable)
+scripts/_splash_src/
+scripts/_splash_tmp/
