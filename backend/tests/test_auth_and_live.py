@@ -305,3 +305,30 @@ def test_oauth_login_registered_id_redirects_with_pkce(monkeypatch):
             assert "code_challenge_method=S256" in loc
     finally:
         get_settings.cache_clear()
+
+
+def test_extract_accounts_all_shapes():
+    """The exact crash the user hit: data as a bare list must parse."""
+    from app.api.auth import _extract_accounts
+    accts = [{"account_id": "CR1"}]
+    assert _extract_accounts({"data": {"accounts": accts}}) == accts
+    assert _extract_accounts({"data": accts}) == accts
+    assert _extract_accounts(accts) == accts
+    assert _extract_accounts({"data": {"items": accts}}) == accts
+    assert _extract_accounts({"data": {}}) == []
+    assert _extract_accounts({}) == []
+    assert _extract_accounts("garbage") == []
+
+
+def test_extract_ws_url_shapes():
+    from app.api.auth import _extract_ws_url
+    assert _extract_ws_url({"data": {"url": "wss://x?otp=1"}}) == "wss://x?otp=1"
+    assert _extract_ws_url({"data": {}}) is None
+    assert _extract_ws_url({"data": ["not", "a", "dict"]}) is None
+
+
+@pytest.mark.asyncio
+async def test_pat_validate_requires_app_id():
+    from app.api.auth import _pat_validate
+    with pytest.raises(ValueError, match="app id is required"):
+        await _pat_validate("pat_x", None)

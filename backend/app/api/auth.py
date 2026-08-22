@@ -79,51 +79,64 @@ async def _request(client: httpx.AsyncClient, method: str, url: str, headers: di
     raise ValueError(f"Deriv API unreachable after {attempts} attempts: {last_error}")
 
 
+def _extract_accounts(payload) -> list:
+    """Deriv's /options/accounts payload shape varies: data may be the
+    accounts list itself or an object wrapping it."""
+    data = payload.get("data") if isinstance(payload, dict) else payload
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("accounts", "items"):
+            if isinstance(data.get(key), list):
+                return data[key]
+    return []
+
+
+def _extract_ws_url(payload) -> Optional[str]:
+    data = payload.get("data") if isinstance(payload, dict) else payload
+    if isinstance(data, dict):
+        return data.get("url")
+    return None
+
+
+def _account_key(account: dict) -> str:
+    return str(account.get("account_id") or account.get("loginid") or account.get("id") or "")
+
+
 async def _pat_validate(token: str, app_id: Optional[str]) -> dict:
     """Validate a modern PAT token via Deriv's REST trading API.
 
-    Finds the primary trading account, then mints a one-time authenticated
-    websocket URL from the OTP endpoint. Tries with and without the
-    Deriv-App-ID header so a wrong/missing app id doesn't block an otherwise
-    valid token. Raises on any failure."""
+    Deriv requires the Deriv-App-ID header on every PAT call — without it the
+    answer is 401 even for a good token. Finds the primary trading account,
+    then mints a one-time authenticated websocket URL from the OTP endpoint.
+    Raises on any failure."""
+    if not app_id:
+        raise ValueError("app id is required for pat_ tokens — enter the app id from your registered app on developers.deriv.com")
     settings = get_settings()
     base = settings.deriv_rest_base.rstrip("/")
-    header_variants = []
-    if app_id:
-        header_variants.append({"Authorization": f"Bearer {token}", "Deriv-App-ID": str(app_id)})
-    header_variants.append({"Authorization": f"Bearer {token}"})
+    headers = {"Authorization": f"Bearer {token}", "Deriv-App-ID": str(app_id)}
 
     async with httpx.AsyncClient(timeout=20) as client:
-        accounts = None
-        used_headers = header_variants[0]
-        rejected = False
-        for headers in header_variants:
-            resp = await _request(client, "GET", f"{base}/options/accounts", headers)
-            if resp.status_code == 200:
-                accounts = (resp.json().get("data") or {}).get("accounts", [])
-                used_headers = headers
-                break
-            if resp.status_code in (401, 403):
-                rejected = True
-                continue
-            raise ValueError(f"accounts lookup failed ({resp.status_code})")
-        if accounts is None:
-            if rejected and not app_id:
-                raise ValueError("Deriv rejected this token (401) — pat_ tokens usually need your registered app id too")
-            raise ValueError("Deriv rejected this token")
+        resp = await _request(client, "GET", f"{base}/options/accounts", headers)
+        if resp.status_code in (401, 403):
+            detail = resp.text.strip()[:200]
+            raise ValueError(f"Deriv rejected this token or app id ({resp.status_code}): {detail or 'check that the app id matches the app where you created the token'}")
+        if resp.status_code != 200:
+            raise ValueError(f"accounts lookup failed ({resp.status_code}): {resp.text.strip()[:200]}")
+        accounts = _extract_accounts(resp.json())
         if not accounts:
             raise ValueError("no Deriv accounts visible to this token")
-        accounts.sort(key=lambda a: a.get("account_id", ""))
+        accounts.sort(key=_account_key)
         primary = accounts[0]
-        account_id = primary.get("account_id")
+        account_id = _account_key(primary)
         if not account_id:
             raise ValueError("accounts entry has no account_id")
-        otp_resp = await _request(client, "POST", f"{base}/options/accounts/{account_id}/otp", used_headers)
+        otp_resp = await _request(client, "POST", f"{base}/options/accounts/{account_id}/otp", headers)
         if otp_resp.status_code in (401, 403):
             raise ValueError("Deriv rejected this token on OTP — enable the trading scope for your token")
         if otp_resp.status_code != 200:
             raise ValueError(f"otp generation failed ({otp_resp.status_code})")
-        ws_url = (otp_resp.json().get("data") or {}).get("url")
+        ws_url = _extract_ws_url(otp_resp.json())
         if not ws_url:
             raise ValueError("no OTP URL returned by Deriv")
     return {
@@ -159,6 +172,8 @@ async def _validate_token(token: str, app_id: Optional[str] = None) -> dict:
     fails we fall back to the legacy websocket authorize before giving up.
     Everything else uses the websocket flow directly. Raises on failure."""
     if token.startswith("pat_"):
+        if not app_id:
+            raise ValueError("app id is required for pat_ tokens — enter the app id from your registered app on developers.deriv.com")
         rest_error: Optional[Exception] = None
         try:
             return await _pat_validate(token, app_id)
@@ -167,8 +182,8 @@ async def _validate_token(token: str, app_id: Optional[str] = None) -> dict:
         numeric_app_id = int(app_id) if app_id and app_id.isdigit() else None
         try:
             return await _ws_validate(token, numeric_app_id)
-        except Exception:
-            raise ValueError(f"REST flow failed: {rest_error}") from rest_error
+        except Exception as ws_exc:
+            raise ValueError(f"REST flow: {rest_error} | WebSocket flow: {ws_exc}") from rest_error
     return await _ws_validate(token)
 
 
