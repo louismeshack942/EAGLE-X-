@@ -6,7 +6,9 @@ or ANTHROPIC_API_KEY is set, those can be layered on (not required).
 """
 from typing import Optional
 
+from app.services import forensics as forensics_svc
 from app.services import scout as scout_svc
+from app.services import season as season_svc
 from app.services.analytics import analytics_engine
 from app.services.analytics_advanced import digit_engine
 from app.services.auto_trader import auto_trader
@@ -21,6 +23,57 @@ class AICopilot:
     def ask(self, question: str, symbol: Optional[str] = None) -> dict:
         q = question.lower().strip()
         symbol = symbol or "R_100"
+
+        if any(w in q for w in ["ruin", "blow up", "broke", "monte carlo", "risk of ruin"]):
+            r = forensics_svc.risk_of_ruin()
+            if "note" in r:
+                answer = r["note"] + " Until then the Monte Carlo on the standard DIFFERS table says: " \
+                    + forensics_svc.monte_carlo(0.9, 1.1, sims=300)["verdict"]
+            else:
+                answer = (f"From your own {r['based_on_trades']} trades: win rate {r['observed_win_rate']}%, "
+                          f"risk of ruin {r['risk_of_ruin_pct']}%, median drawdown {r['median_drawdown_pct']}%. "
+                          f"{r['verdict']}")
+            return {"question": question, "answer": answer, "symbol": symbol, "data": r}
+
+        if any(w in q for w in ["how am i doing", "scorecard", "session", "grade"]):
+            sc = forensics_svc.session_scorecard(
+                risk_guard.equity_curve, auto_trader.daily_pnl,
+                auto_trader.trades_today, auto_trader.wins_today,
+            )
+            return {
+                "question": question,
+                "answer": f"Session grade {sc.get('grade', 'N/A')}: {sc.get('note', '')} "
+                          f"(result {sc.get('components', {}).get('result', '-')}, "
+                          f"discipline {sc.get('components', {}).get('discipline', '-')}, "
+                          f"smoothness {sc.get('components', {}).get('smoothness', '-')}).",
+                "symbol": symbol, "data": sc,
+            }
+
+        if any(w in q for w in ["mistake", "lesson", "went wrong", "debrief"]):
+            ls = forensics_svc.lessons()
+            lines = "; ".join(f"{x['lesson']} ({x['count']}x)" for x in ls["lessons"])
+            return {
+                "question": question,
+                "answer": f"Match analyst's debrief: {lines}",
+                "symbol": symbol, "data": ls,
+            }
+
+        if any(w in q for w in ["improve", "suggestion", "get better", "advice"]):
+            sg = forensics_svc.suggestions()
+            lines = " | ".join(f"[{s['priority']}] {s['text']}" for s in sg["suggestions"])
+            return {"question": question, "answer": lines, "symbol": symbol, "data": sg}
+
+        if any(w in q for w in ["season", "this week", "weekly", "league"]):
+            rep = season_svc.weekly_report()
+            return {
+                "question": question,
+                "answer": rep.get("note") or (
+                    f"Week {rep['week']}: {rep['position']} — {rep['verdict']} "
+                    f"(P&L ${rep['pnl']:+.2f}, {rep['win_rate']}% WR, {rep['trades']} trades, "
+                    f"trend {rep['trend_vs_last_week'] or 'first week'})."
+                ),
+                "symbol": symbol, "data": rep,
+            }
 
         if any(w in q for w in ["bank", "vault", "treasurer", "protect", "profit split"]):
             b = virtual_bank.status()

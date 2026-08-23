@@ -41,6 +41,14 @@ class VirtualBank:
         self.total_loss: float = 0.0
         self.synced: bool = False
         self.history: list[dict] = []
+        # Per-mode ledgers: paper money and real money never mix.
+        self.mode_totals: dict[str, dict] = {}
+        # Vault goal: the milestone the whole club watches.
+        self.vault_goal: float = 0.0     # 0 = no goal set
+        self._goal_celebrated: bool = False
+        # Lock-in ladder: once total climbs, the floor climbs with it.
+        self.lock_pct: float = 0.0       # 0 = ladder off
+        self.floor: float = 0.0
         self._load()
 
     # ---------------- persistence ----------------
@@ -55,6 +63,11 @@ class VirtualBank:
             self.total_loss = float(state.get("total_loss", 0.0))
             self.synced = bool(state.get("synced", False))
             self.history = list(state.get("history", []))[-200:]
+            self.mode_totals = dict(state.get("mode_totals", {}))
+            self.vault_goal = float(state.get("vault_goal", 0.0))
+            self._goal_celebrated = bool(state.get("goal_celebrated", False))
+            self.lock_pct = float(state.get("lock_pct", 0.0))
+            self.floor = float(state.get("floor", 0.0))
 
     def _save(self) -> None:
         settings_store.set(_STATE_KEY, {
@@ -66,6 +79,11 @@ class VirtualBank:
             "total_loss": self.total_loss,
             "synced": self.synced,
             "history": self.history[-200:],
+            "mode_totals": self.mode_totals,
+            "vault_goal": self.vault_goal,
+            "goal_celebrated": self._goal_celebrated,
+            "lock_pct": self.lock_pct,
+            "floor": self.floor,
         })
 
     def _log(self, kind: str, amount: float, note: str) -> None:
@@ -102,7 +120,7 @@ class VirtualBank:
             self._log("sync", balance, "session opened — balance moved to current")
             self._save()
 
-    def record_pnl(self, pnl: float, note: str = "trade") -> dict:
+    def record_pnl(self, pnl: float, note: str = "trade", mode: str = "unknown") -> dict:
         """Split every settled trade.
 
         Profit: split_ratio (default 60%) is swept to the vault, the rest
@@ -114,21 +132,67 @@ class VirtualBank:
                 self.sync_opening(0.0)
             pnl = float(pnl)
             split = {"pnl": round(pnl, 4), "to_vault": 0.0, "to_current": 0.0}
+            mt = self.mode_totals.setdefault(mode, {"profit": 0.0, "loss": 0.0, "trades": 0})
+            mt["trades"] += 1
             if pnl > 0:
                 sweep = round(pnl * self.split_ratio, 4)
                 keep = round(pnl - sweep, 4)
                 self.vault += sweep
                 self.current += keep
                 self.total_profit += pnl
+                mt["profit"] += pnl
                 split.update({"to_vault": sweep, "to_current": keep})
                 self._log("sweep", sweep, f"{note}: profit split — vault +${sweep:.2f}, current +${keep:.2f}")
+                self._check_milestone()
             elif pnl < 0:
                 self.current += pnl  # pnl is negative
                 self.total_loss += abs(pnl)
+                mt["loss"] += abs(pnl)
                 split.update({"to_current": pnl})
                 self._log("loss", pnl, f"{note}: loss absorbed by current balance")
+            self._raise_ladder()
             self._save()
             return split
+
+    def _check_milestone(self) -> None:
+        if self.vault_goal > 0 and self.vault >= self.vault_goal and not self._goal_celebrated:
+            self._goal_celebrated = True
+            self._log("milestone", self.vault_goal,
+                      f"VAULT GOAL REACHED — ${self.vault:.2f} protected. Consider banking it for real.")
+
+    def _raise_ladder(self) -> None:
+        """Lock-in ladder: the floor only ever climbs, never drops."""
+        if self.lock_pct > 0:
+            new_floor = round(self.total * self.lock_pct, 2)
+            if new_floor > self.floor:
+                self.floor = new_floor
+                self._log("ladder", self.floor, f"lock-in ladder raised the floor to ${self.floor:.2f}")
+
+    def check_floor(self) -> str | None:
+        """Hard violation when the total account falls through the ladder."""
+        if self.lock_pct > 0 and self.floor > 0 and self.total < self.floor:
+            return (
+                f"BANK_FLOOR: total ${self.total:.2f} fell through the locked floor "
+                f"${self.floor:.2f} — the ladder says stop"
+            )
+        return None
+
+    def set_goal(self, goal: float) -> dict:
+        with _lock:
+            self.vault_goal = max(0.0, float(goal))
+            self._goal_celebrated = False
+            self._log("config", self.vault_goal, f"vault goal set to ${self.vault_goal:.2f}")
+            self._save()
+            return {"vault_goal": self.vault_goal}
+
+    def set_lock(self, lock_pct: float) -> dict:
+        with _lock:
+            self.lock_pct = max(0.0, min(0.95, float(lock_pct)))
+            if self.lock_pct == 0:
+                self.floor = 0.0
+            self._log("config", self.lock_pct, f"lock-in ladder set to {self.lock_pct * 100:.0f}% of peak total")
+            self._save()
+            return {"lock_pct": self.lock_pct, "floor": self.floor}
 
     def withdraw(self, amount: float) -> dict:
         """Manager moves money vault -> current (un-protects it)."""
@@ -174,6 +238,13 @@ class VirtualBank:
             "net_profit": round(self.total_profit - self.total_loss, 2),
             "spendable": round(self.spendable(), 2),
             "protected_pct": round(self.vault / self.total * 100, 1) if self.total > 0 else 0.0,
+            "mode_totals": {m: {**v, "profit": round(v["profit"], 2), "loss": round(v["loss"], 2)}
+                            for m, v in self.mode_totals.items()},
+            "vault_goal": self.vault_goal,
+            "goal_progress_pct": round(self.vault / self.vault_goal * 100, 1) if self.vault_goal > 0 else None,
+            "goal_reached": self._goal_celebrated,
+            "lock_pct": self.lock_pct,
+            "floor": round(self.floor, 2),
         }
 
     def recent_history(self, limit: int = 20) -> list[dict]:

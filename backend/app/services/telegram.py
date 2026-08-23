@@ -41,10 +41,22 @@ class TelegramNotifier:
             logger.warning("telegram send failed: %s", exc)
             return False
 
+    def _quiet(self) -> bool:
+        """Quiet hours sleep the chatter; RISK ALERTS always break through."""
+        try:
+            from app.services.risk_guard import risk_guard
+            return risk_guard.alerts_quiet_now()
+        except Exception:  # noqa: BLE001
+            return False
+
     def send_trade_alert(self, symbol: str, contract: str, stake: float, duration: int) -> bool:
+        if self._quiet():
+            return False
         return self.send_message(f"🦅 TRADE PLACED: {symbol} {contract} stake=${stake:.2f} duration={duration}s")
 
     def send_result_alert(self, won: bool, pnl: float, symbol: Optional[str] = None, contract: Optional[str] = None) -> bool:
+        if self._quiet():
+            return False
         emoji = "✅" if won else "❌"
         label = "WON" if won else "LOST"
         sign = "+" if pnl >= 0 else ""

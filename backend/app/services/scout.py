@@ -18,7 +18,8 @@ Also learns from the journal:
 - hot hours / hot days: win rate by hour-of-day and weekday (min sample)
 """
 import math
-from collections import Counter
+import time
+from collections import Counter, deque
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -28,6 +29,68 @@ from app.services.persistence import journal_engine
 FAIR_P = 0.10
 SIGNIFICANCE_Z = 1.96
 MIN_HOT_SAMPLE = 10   # hot-hours needs at least this many trades to speak
+STALE_FEED_S = 15.0   # a table with no tick for 15s is a dead table
+
+# z-trend memory: (symbol, digit) -> deque of (ts, z)
+_z_history: dict = {}
+_Z_HISTORY_LEN = 120
+
+
+def _note_z(symbol: str, digit: int, z: float) -> None:
+    key = (symbol, digit)
+    if key not in _z_history:
+        _z_history[key] = deque(maxlen=_Z_HISTORY_LEN)
+    _z_history[key].append((time.time(), z))
+
+
+def z_age_s(symbol: str, digit: int) -> float:
+    """How long the digit has been continuously significant (z <= -1.96).
+
+    An edge that appeared 3 seconds ago is noise; one that has held for a
+    minute has survived its own regression test.
+    """
+    hist = _z_history.get((symbol, digit))
+    if not hist:
+        return 0.0
+    age = 0.0
+    now = time.time()
+    for ts, z in reversed(hist):
+        if z <= -SIGNIFICANCE_Z:
+            age = now - ts
+        else:
+            break
+    return round(age, 1)
+
+
+def feed_health(symbols: list[str], queue=None) -> dict:
+    """Is the tick feed alive? A stale feed makes every stat a lie."""
+    queue = queue or tick_queue
+    out = {}
+    now = datetime.now(timezone.utc)
+    for symbol in symbols:
+        ticks = queue.recent(symbol, limit=1)
+        if not ticks:
+            out[symbol] = {"age_s": None, "stale": True, "ticks": 0}
+            continue
+        try:
+            ts = ticks[-1].timestamp
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            age = (now - ts).total_seconds()
+        except Exception:  # noqa: BLE001
+            age = None
+        out[symbol] = {
+            "age_s": round(age, 1) if age is not None else None,
+            "stale": age is None or age > STALE_FEED_S,
+            "ticks": len(queue.recent(symbol, limit=100)),
+        }
+    stale = [s for s, v in out.items() if v["stale"]]
+    return {
+        "symbols": out,
+        "all_fresh": not stale,
+        "stale_symbols": stale,
+        "note": "all feeds fresh" if not stale else f"stale feeds: {', '.join(stale)}",
+    }
 
 
 def chi_square_digit(digits: list[int]) -> dict:
@@ -115,8 +178,17 @@ def scan_tables(symbols: list[str], window: int = 100, queue=None) -> dict:
     plain-English verdict.
     """
     queue = queue or tick_queue
+    feed = feed_health(symbols, queue)
+    track = {s: v for s, v in journal_breakdown().get("by_symbol", {}).items()}
     tables = []
     for symbol in symbols:
+        if feed["symbols"].get(symbol, {}).get("stale"):
+            tables.append({
+                "symbol": symbol, "tradeable": False, "score": 0.0,
+                "verdict": "feed is stale — no fresh ticks, every stat on this table is a lie",
+                "chi2": None, "best_digit": None, "best_z": None, "differs_ev": None,
+            })
+            continue
         ticks = queue.recent(symbol, limit=window)
         digits = [t.digit for t in ticks]
         if len(digits) < 30:
@@ -136,6 +208,8 @@ def scan_tables(symbols: list[str], window: int = 100, queue=None) -> dict:
         differs_ev = round(p_diff * 1.1 - 1.0, 4)
         rising = momentum_rising(digits, best_digit)
         mw = multi_window_confirmed(symbol, best_digit, queue)
+        _note_z(symbol, best_digit, best_z)
+        age = z_age_s(symbol, best_digit)
         tradeable = (
             best_z <= -SIGNIFICANCE_Z
             and chi["skewed"]
@@ -144,8 +218,13 @@ def scan_tables(symbols: list[str], window: int = 100, queue=None) -> dict:
             and differs_ev > 0
         )
         score = round(max(0.0, -best_z) * 10 + (chi["chi2"] or 0) * 0.5, 1)
+        rec = track.get(symbol)
+        rec_txt = (
+            f" (your record here: {rec['win_rate']}% WR over {rec['trades']}, ${rec['pnl']:+.2f})"
+            if rec and rec["trades"] >= 3 else ""
+        )
         if tradeable:
-            verdict = f"HOT: digit {best_digit} starving at z={best_z:.2f}, table skewed, all windows confirm"
+            verdict = f"HOT: digit {best_digit} starving at z={best_z:.2f}, table skewed, all windows confirm{rec_txt}"
         elif best_z <= -SIGNIFICANCE_Z and not chi["skewed"]:
             verdict = f"digit {best_digit} looks hot but the TABLE is fair — mirage, skip"
         elif rising:
@@ -162,10 +241,12 @@ def scan_tables(symbols: list[str], window: int = 100, queue=None) -> dict:
             "chi2": chi,
             "best_digit": best_digit,
             "best_z": round(best_z, 2),
+            "z_age_s": age,
             "differs_ev": differs_ev,
             "momentum_rising": rising,
             "multi_window": mw,
             "posterior": posterior,
+            "track_record": rec,
         })
     tables.sort(key=lambda t: t["score"], reverse=True)
     hot = [t for t in tables if t["tradeable"]]

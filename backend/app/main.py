@@ -45,6 +45,8 @@ from app.services.persistence import (
 )
 from app.services.strategy_engine import StrategyConfig, strategy_engine
 from app.services import scout as scout_svc
+from app.services import season as season_svc
+from app.services import forensics as forensics_svc
 from app.services.risk_guard import risk_guard
 from app.services.virtual_bank import virtual_bank
 from app.services.telegram import telegram_notifier
@@ -546,6 +548,138 @@ def scout_hot_hours():
 @app.get("/scout/breakdown")
 def scout_breakdown():
     return scout_svc.journal_breakdown()
+
+
+@app.get("/scout/feed-health")
+def scout_feed_health():
+    return scout_svc.feed_health(settings.active_symbols)
+
+
+# ---------------- Forensics (the match analyst) ----------------
+@app.get("/forensics/mistakes")
+def forensics_mistakes():
+    return forensics_svc.mistakes()
+
+
+@app.get("/forensics/lessons")
+def forensics_lessons():
+    return forensics_svc.lessons()
+
+
+@app.get("/forensics/expectancy")
+def forensics_expectancy():
+    return forensics_svc.expectancy()
+
+
+@app.get("/forensics/smoothness")
+def forensics_smoothness():
+    return forensics_svc.smoothness()
+
+
+@app.get("/forensics/risk-of-ruin")
+def forensics_ruin():
+    return forensics_svc.risk_of_ruin()
+
+
+@app.get("/forensics/monte-carlo")
+def forensics_mc(p_win: float = 0.90, payout: float = 1.1, stake_pct: float = 0.10,
+                 trades: int = 200, sims: int = 500):
+    return forensics_svc.monte_carlo(
+        p_win=p_win, payout=payout, stake_pct=stake_pct,
+        trades=min(trades, 1000), sims=min(sims, 2000),
+    )
+
+
+@app.get("/forensics/suggestions")
+def forensics_suggestions():
+    return forensics_svc.suggestions()
+
+
+@app.get("/session/scorecard")
+def session_scorecard_route():
+    return forensics_svc.session_scorecard(
+        risk_guard.equity_curve, auto_trader.daily_pnl,
+        auto_trader.trades_today, auto_trader.wins_today,
+    )
+
+
+# ---------------- Season ----------------
+@app.get("/season")
+def season_table():
+    return season_svc.weekly_table()
+
+
+@app.get("/season/report")
+def season_report(week: Optional[str] = None):
+    return season_svc.weekly_report(week)
+
+
+@app.get("/season/chart")
+def season_chart_route():
+    return season_svc.season_chart()
+
+
+# ---------------- Guard extras ----------------
+@app.post("/guard/preset/{name}")
+def guard_preset(name: str):
+    return risk_guard.apply_preset(name)
+
+
+@app.post("/guard/schedule")
+def guard_schedule(body: dict):
+    return risk_guard.set_limits(
+        allowed_hours_utc=body.get("allowed_hours_utc"),
+        quiet_hours_utc=body.get("quiet_hours_utc"),
+    )
+
+
+# ---------------- Bank extras ----------------
+@app.post("/bank/goal")
+def bank_goal(body: dict):
+    return virtual_bank.set_goal(float(body.get("goal", 0)))
+
+
+@app.post("/bank/lock")
+def bank_lock(body: dict):
+    return virtual_bank.set_lock(float(body.get("lock_pct", 0)))
+
+
+# ---------------- Operations ----------------
+@app.get("/metrics")
+def metrics():
+    return {
+        "counters": auto_trader.counters,
+        "trades_last_hour": risk_guard.trades_last_hour(),
+        "feed": scout_svc.feed_health(settings.active_symbols)["note"],
+        "bank": {
+            "current": virtual_bank.current,
+            "vault": virtual_bank.vault,
+            "floor": virtual_bank.floor,
+        },
+    }
+
+
+@app.get("/doctor")
+def doctor():
+    """Self-diagnosis: every vital sign, one call."""
+    checks = []
+    checks.append({"check": "symbols configured", "ok": bool(settings.active_symbols),
+                   "detail": ", ".join(settings.active_symbols)})
+    checks.append({"check": "frontend dir exists", "ok": _frontend_dir() is not None,
+                   "detail": str(_frontend_dir() or "not found")})
+    try:
+        settings_store.set("doctor_probe", True)
+        checks.append({"check": "settings store writable", "ok": True, "detail": "ok"})
+    except Exception as exc:  # noqa: BLE001
+        checks.append({"check": "settings store writable", "ok": False, "detail": str(exc)})
+    feed = scout_svc.feed_health(settings.active_symbols)
+    checks.append({"check": "tick feed fresh", "ok": feed["all_fresh"], "detail": feed["note"]})
+    checks.append({"check": "guard not killed", "ok": not risk_guard.killed,
+                   "detail": risk_guard.kill_reason or "circuits live"})
+    checks.append({"check": "bank synced", "ok": virtual_bank.synced,
+                   "detail": "ledger opens on trader start" if not virtual_bank.synced else "ledger active"})
+    healthy = all(c["ok"] for c in checks if c["check"] != "bank synced")
+    return {"healthy": healthy, "checks": checks}
 
 
 # ---------------- Settings ----------------

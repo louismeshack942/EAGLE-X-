@@ -111,6 +111,16 @@ class AutoTrader:
         self._session_active = False       # bank/guard hooks only fire in real sessions
         self._coach_pending_id: Optional[str] = None
         self._hot_hours_cache: tuple[float, Optional[bool]] = (0.0, None)
+        self._matchday: Optional[str] = None
+        self.no_trade_reasons: dict[str, str] = {}
+        self.counters: dict[str, int] = {"scans": 0, "trades": 0, "aborts": 0, "gate_blocks": 0}
+        self._adaptive_z: float = 1.96
+        self._adaptive_z_checked: float = 0.0
+        self._last_reconcile: float = 0.0
+        # Shadow scoreboard: what the benched CF WOULD have done, settled
+        # against the real tick stream. Proof the benching saves money.
+        self._pending_shadow: list[dict] = []
+        self.shadow_stats: dict[str, float] = {"wins": 0, "losses": 0, "pnl": 0.0}
 
     def _stake_base(self) -> float:
         """Stakes are sized off the bank's SPENDABLE balance when the bank
@@ -131,6 +141,79 @@ class AutoTrader:
             ok = None
         self._hot_hours_cache = (now, ok)
         return ok
+
+    def _rollover_matchday(self) -> None:
+        """A new UTC day = a new matchday: daily counters reset, form keeps."""
+        today = datetime.now(timezone.utc).date().isoformat()
+        if self._matchday is None:
+            self._matchday = today
+            return
+        if today != self._matchday:
+            self._matchday = today
+            self.trades_today = 0
+            self.wins_today = 0
+            self.losses_today = 0
+            self.daily_pnl = 0.0
+            self._log("NEW MATCHDAY — daily counters reset, yesterday is archived in the journal")
+
+    def _effective_min_z(self) -> float:
+        """Adaptive significance bar: cold form demands stronger proof.
+
+        Last-20 win rate below 45% -> the bar rises 1.96 -> 2.46. Hot form
+        keeps the standard 95% gate. Recomputed at most once a minute.
+        """
+        now = time.time()
+        if now - self._adaptive_z_checked < 60:
+            return self._adaptive_z
+        self._adaptive_z_checked = now
+        try:
+            recent = journal_engine.list_entries(limit=20)
+            if len(recent) >= 10:
+                wr = sum(1 for e in recent if e["result"] == "win") / len(recent)
+                self._adaptive_z = 2.46 if wr < 0.45 else 1.96
+        except Exception:  # noqa: BLE001
+            self._adaptive_z = 1.96
+        return self._adaptive_z
+
+    def _shadow_track(self, symbol: str, plays: list[dict], tick_count: int) -> None:
+        """While benched, record the would-be strike for the shadow scoreboard."""
+        if not plays:
+            return
+        top = plays[0]
+        self._pending_shadow.append({
+            "symbol": symbol, "name": top["name"], "type": top["type"],
+            "digit": top.get("digit"), "z": top.get("z"), "ev": top.get("ev"),
+            "tick_count_at_entry": tick_count, "placed_at": time.time(),
+        })
+        self._pending_shadow = self._pending_shadow[-10:]
+
+    def _shadow_resolve(self, symbol: str, ticks_seen: int) -> None:
+        """Settle shadow plays once 5 fresh ticks have passed since entry."""
+        from app.core.queue import tick_queue
+        resolved = []
+        for sh in self._pending_shadow:
+            if sh["symbol"] != symbol:
+                continue
+            fresh = ticks_seen - sh["tick_count_at_entry"]
+            if fresh < 5:
+                continue
+            ticks = tick_queue.recent(symbol, limit=5)
+            digits = [t.digit for t in ticks]
+            if sh["type"] == "DIFFERS" and sh.get("digit") is not None:
+                won = all(d != sh["digit"] for d in digits[:5])
+                pnl = 0.10 if won else -1.0  # 1.1 payout on a 1.0 shadow stake
+            else:
+                won = False
+                pnl = -1.0
+            self.shadow_stats["wins" if won else "losses"] += 1
+            self.shadow_stats["pnl"] = round(self.shadow_stats["pnl"] + pnl, 2)
+            resolved.append(sh)
+            self._log(
+                f"SHADOW: benched call {sh['name']} would have {'WON' if won else 'LOST'} "
+                f"(shadow P&L ${self.shadow_stats['pnl']:+.2f})"
+            )
+        for sh in resolved:
+            self._pending_shadow.remove(sh)
 
     def _record_decision(self, symbol: str, plays: list[dict], team: dict) -> None:
         """Stamp every fresh team decision — proof the call tracks the market."""
@@ -266,6 +349,7 @@ class AutoTrader:
             if result.get("status") != "success":
                 # ABORT: nothing settled, nothing is booked. Loud, not silent.
                 msg = result.get("error", "unknown error")
+                self.counters["aborts"] += 1
                 self._log(
                     f"TRADE ABORTED ({result.get('step', '?')}): {contract.get('symbol')} "
                     f"{contract['name']} — {msg}. No money booked."
@@ -285,10 +369,11 @@ class AutoTrader:
         self.balance += pnl
         self.daily_pnl += pnl
         self.trades_today += 1
+        self.counters["trades"] += 1
         if self._session_active:
             # The Treasurer splits the money: 60% of profits locked in the
             # vault, losses hit only the spendable current balance.
-            split = virtual_bank.record_pnl(pnl, note=f"{contract.get('symbol')} {contract['name']}")
+            split = virtual_bank.record_pnl(pnl, note=f"{contract.get('symbol')} {contract['name']}", mode=self.mode)
             risk_guard.record_trade(self.balance)
             if split["to_vault"] > 0:
                 self._log(
@@ -327,6 +412,12 @@ class AutoTrader:
                 telegram_notifier.send_risk_alert(
                     f"CF benched: {self.consecutive_losses} consecutive losses — regrouping, no chasing"
                 )
+            # Mode escalation: if the manager armed the ladder, enough
+            # straight losses and the trigger moves to COACH by itself.
+            esc = risk_guard.maybe_escalate(self.consecutive_losses)
+            if esc:
+                self._log(esc)
+                telegram_notifier.send_risk_alert(esc)
 
         self.last_trade = {
             "symbol": contract.get("symbol", ""),
@@ -345,7 +436,7 @@ class AutoTrader:
             data_quality=contract.get("data_quality", 0.0),
             evidence_score=contract.get("confidence", 0.0),
             mode=self.mode,
-            analysis_snapshot=contract,
+            analysis_snapshot={**contract, "balance_at_entry": round(self.balance - pnl, 2)},
         )
         self._log(f"Trade resolved: {result_label} {'+' if pnl >= 0 else ''}${pnl:.2f} ({contract.get('symbol')} {contract['name']})")
         return {"won": won, "pnl": pnl}
@@ -354,8 +445,21 @@ class AutoTrader:
         try:
             while self.running:
                 self._scan_count += 1
+                self.counters["scans"] += 1
+                self._rollover_matchday()
                 # Manager's bench: the CF sits out a few scans after a bad run.
+                # While he sits, the shadow scoreboard settles what he WOULD
+                # have done — proof the benching is saving (or costing) money.
                 if self.benched:
+                    for sym in self.settings.active_symbols:
+                        try:
+                            mm = market_master.analyze(sym, window=100)
+                            from app.core.queue import tick_queue
+                            ticks_seen = len(tick_queue.recent(sym, limit=1000))
+                            self._shadow_track(sym, select_plays(mm, sym), ticks_seen)
+                            self._shadow_resolve(sym, ticks_seen)
+                        except Exception:  # noqa: BLE001
+                            pass
                     if self._scan_count >= self.benched_until:
                         self.benched = False
                         self.consecutive_losses = 0
@@ -368,6 +472,21 @@ class AutoTrader:
                     else:
                         await asyncio.sleep(1.0)
                         continue
+                # Live balance reconciliation: every 5 minutes, the books are
+                # checked against the REAL account. Drift is logged and synced.
+                if self.mode == "live" and time.time() - self._last_reconcile > 300:
+                    self._last_reconcile = time.time()
+                    try:
+                        token = api_token or await VAULT.get() or self.settings.deriv_api_token
+                        real = await deriv_trader.get_balance(token) if token else None
+                        if real is not None and abs(real - self.balance) > 0.5:
+                            drift = round(real - self.balance, 2)
+                            self._log(f"Reconciliation: Deriv says ${real:.2f}, books said ${self.balance:.2f} — syncing ({drift:+})")
+                            if self._session_active:
+                                virtual_bank.record_pnl(drift, note="balance reconciliation", mode=self.mode)
+                            self.balance = float(real)
+                    except Exception:  # noqa: BLE001
+                        pass
                 symbols = self.settings.active_symbols
                 best_symbol = None
                 best_plays: list[dict] = []
@@ -381,6 +500,14 @@ class AutoTrader:
                         continue
                     plays = select_plays(mm, sym)
                     if not plays:
+                        # Explain-my-no-trade: why the best contract on this
+                        # table sits — the verdict, in plain words.
+                        board = mm.get("all_contracts") or []
+                        if board:
+                            self.no_trade_reasons[sym] = (
+                                f"{board[0].get('name', 'top contract')}: "
+                                f"{board[0].get('verdict_reason', 'team vote: bench')}"
+                            )
                         continue
                     rank = (plays[0].get("ev", 0), mm.get("data_quality", 0) or 0)
                     if rank > best_rank:
@@ -458,9 +585,13 @@ class AutoTrader:
 
                 # The Risk Guard speaks money, not percentages: kill switch,
                 # daily $ loss floor, session $ take-profit, hourly trade cap.
-                guard_violations = risk_guard.check(self.daily_pnl)
+                guard_violations = risk_guard.check(self.daily_pnl, balance=self.balance)
+                floor_v = virtual_bank.check_floor() if self._session_active else None
+                if floor_v:
+                    guard_violations.append(floor_v)
                 hard = [v for v in guard_violations if not v.startswith("FULL_MANUAL")]
                 if hard:
+                    self.counters["gate_blocks"] += 1
                     for v in hard:
                         telegram_notifier.send_risk_alert(v)
                         self._log(f"GUARD: {v}")
@@ -488,6 +619,10 @@ class AutoTrader:
                     proven = [p for p in best_plays if abs(p.get("z") or 0.0) >= TIGHT_MIN_Z]
                     if len(proven) < len(best_plays):
                         best_plays = proven
+                # Adaptive significance: cold form raises the proof bar.
+                min_z = self._effective_min_z()
+                if min_z > 1.96 and best_plays:
+                    best_plays = [p for p in best_plays if abs(p.get("z") or 0.0) >= min_z]
                 if manual_only and best_plays and self.confirmation_ticks >= required_ticks:
                     # FULL_MANUAL: the CF advises, you pull the trigger.
                     self.current_recommendation = self.current_recommendation or {}
@@ -543,6 +678,15 @@ class AutoTrader:
                         stakes.append(round(min(ks, cap) * dd_mult * streak_mult, 2))
                     if streak_mult < 1.0 and stakes:
                         self._log(f"Streak halving: stakes x{streak_mult} after {self.consecutive_losses} straight misses")
+                    # Exposure stagger: combined stakes never exceed 15% of
+                    # spendable — two big simultaneous positions are two big
+                    # simultaneous heart attacks.
+                    total_exposure = sum(stakes)
+                    exposure_cap = 0.15 * stake_base
+                    if total_exposure > exposure_cap > 0:
+                        scale = exposure_cap / total_exposure
+                        stakes = [round(s * scale, 2) for s in stakes]
+                        self._log(f"Exposure stagger: combined stakes capped at ${exposure_cap:.2f} (x{scale:.2f})")
                     plays = [p for p, s in zip(best_plays, stakes) if s >= 0.35]
                     stakes = [s for s in stakes if s >= 0.35]
                     if not plays:
@@ -630,6 +774,16 @@ class AutoTrader:
             "stake_base": round(self._stake_base(), 2),
             "streak_multiplier": risk_guard.streak_multiplier(self.consecutive_losses),
             "hot_window_ok": self._current_window_ok(),
+            "matchday": self._matchday,
+            "effective_min_z": self._effective_min_z(),
+            "no_trade_reasons": self.no_trade_reasons,
+            "counters": self.counters,
+            "shadow": {
+                "pending": len(self._pending_shadow),
+                "wins": int(self.shadow_stats["wins"]),
+                "losses": int(self.shadow_stats["losses"]),
+                "pnl": round(self.shadow_stats["pnl"], 2),
+            },
         }
 
 

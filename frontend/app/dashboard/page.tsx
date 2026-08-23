@@ -25,6 +25,7 @@ import RiskDashboard from "@/components/panels/RiskDashboard";
 import PerformanceAnalytics, { DiversificationAnalyzer } from "@/components/panels/PerformanceAnalytics";
 import ClubPanel from "@/components/panels/ClubPanel";
 import VirtualBankPanel from "@/components/panels/VirtualBankPanel";
+import SessionRoom from "@/components/panels/SessionRoom";
 
 const SYMBOLS = ["R_10", "R_25", "R_50", "R_75", "R_100"];
 
@@ -131,6 +132,7 @@ export default function Dashboard() {
 
         <SectionHeader emoji="🔄" title="Second XI" sub="Bench" />
         <div className="main-grid">
+          <SessionRoom />
           <TradeJournal />
           <DigitHacker symbol={symbol} />
           <StrategyBuilder />

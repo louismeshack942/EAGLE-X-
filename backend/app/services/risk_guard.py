@@ -42,6 +42,19 @@ class RiskGuard:
         self.max_trades_per_hour: int = 0      # 0 = unlimited
         # Streak halving
         self.streak_halving: bool = True
+        # Trailing session stop: once peak P&L >= trail_arm, stop if P&L
+        # falls back below peak * (1 - trail_pct). 0 = disabled.
+        self.trail_arm: float = 0.0
+        self.trail_pct: float = 0.5
+        self.peak_balance: Optional[float] = None
+        # Auto-arm: kill everything automatically at this session drawdown
+        self.auto_kill_drawdown_pct: float = 0.0  # 0 = disabled
+        # Schedule: UTC hours when trading is allowed. Empty = always.
+        self.allowed_hours_utc: list[int] = []
+        # Quiet hours for low-priority alerts (risk alerts always fire)
+        self.quiet_hours_utc: list[int] = []
+        # Mode escalation: auto-switch to COACH after this many straight losses
+        self.escalate_after_losses: int = 0  # 0 = disabled
         # Session tracking
         self.session_start_balance: Optional[float] = None
         self.session_started_at: Optional[str] = None
@@ -61,6 +74,12 @@ class RiskGuard:
             self.max_trades_per_hour = int(s.get("max_trades_per_hour", 0))
             self.streak_halving = bool(s.get("streak_halving", True))
             self.equity_curve = list(s.get("equity_curve", []))[-500:]
+            self.trail_arm = float(s.get("trail_arm", 0.0))
+            self.trail_pct = float(s.get("trail_pct", 0.5))
+            self.auto_kill_drawdown_pct = float(s.get("auto_kill_drawdown_pct", 0.0))
+            self.allowed_hours_utc = list(s.get("allowed_hours_utc", []))
+            self.quiet_hours_utc = list(s.get("quiet_hours_utc", []))
+            self.escalate_after_losses = int(s.get("escalate_after_losses", 0))
 
     def _save(self) -> None:
         settings_store.set(_STATE_KEY, {
@@ -70,6 +89,12 @@ class RiskGuard:
             "max_trades_per_hour": self.max_trades_per_hour,
             "streak_halving": self.streak_halving,
             "equity_curve": self.equity_curve[-500:],
+            "trail_arm": self.trail_arm,
+            "trail_pct": self.trail_pct,
+            "auto_kill_drawdown_pct": self.auto_kill_drawdown_pct,
+            "allowed_hours_utc": self.allowed_hours_utc,
+            "quiet_hours_utc": self.quiet_hours_utc,
+            "escalate_after_losses": self.escalate_after_losses,
         })
 
     # ---------------- kill switch ----------------
@@ -90,6 +115,7 @@ class RiskGuard:
     def open_session(self, balance: float) -> None:
         with _lock:
             self.session_start_balance = float(balance)
+            self.peak_balance = float(balance)
             self.session_started_at = _utcnow()
             self.equity_curve = [{"ts": self.session_started_at, "balance": float(balance)}]
             self.trade_times.clear()
@@ -102,6 +128,7 @@ class RiskGuard:
             self.trade_times.append(now)
             if manual:
                 self.manual_trade_times.append(now)
+            self.peak_balance = max(self.peak_balance or balance, balance)
             self.equity_curve.append({"ts": _utcnow(), "balance": round(float(balance), 2)})
             self.equity_curve = self.equity_curve[-500:]
             self._save()
@@ -110,8 +137,19 @@ class RiskGuard:
         cutoff = time.time() - 3600
         return sum(1 for t in self.trade_times if t >= cutoff)
 
+    def peak_pnl(self) -> float:
+        if self.session_start_balance is None or self.peak_balance is None:
+            return 0.0
+        return self.peak_balance - self.session_start_balance
+
+    def alerts_quiet_now(self) -> bool:
+        """Quiet hours: low-priority alerts sleep; risk alerts always fire."""
+        if not self.quiet_hours_utc:
+            return False
+        return datetime.now(timezone.utc).hour in self.quiet_hours_utc
+
     # ---------------- gates ----------------
-    def check(self, session_pnl: float) -> list[str]:
+    def check(self, session_pnl: float, balance: Optional[float] = None) -> list[str]:
         """Money-terms violations. Empty list = clear to trade."""
         violations: list[str] = []
         if self.killed:
@@ -128,9 +166,78 @@ class RiskGuard:
             violations.append(
                 f"MAX_TRADES_PER_HOUR: {self.trades_last_hour()} (limit {self.max_trades_per_hour})"
             )
+        # Trailing session stop: armed once peak P&L clears trail_arm, fires
+        # when P&L gives back trail_pct of the peak. Winning then handing it
+        # back is the sweat-bucket filler — this nails the shutters.
+        peak = self.peak_pnl()
+        if self.trail_arm > 0 and peak >= self.trail_arm:
+            floor = peak * (1.0 - self.trail_pct)
+            if session_pnl <= floor:
+                violations.append(
+                    f"TRAILING_STOP: gave back the peak — P&L ${session_pnl:.2f} vs peak +${peak:.2f} (floor ${floor:.2f})"
+                )
+        # Auto-arm: the kill switch pulls ITSELF at the drawdown you set.
+        if (
+            self.auto_kill_drawdown_pct > 0
+            and balance is not None
+            and self.session_start_balance
+            and balance <= self.session_start_balance * (1.0 - self.auto_kill_drawdown_pct)
+        ):
+            self.kill(f"auto-armed at {self.auto_kill_drawdown_pct * 100:.0f}% session drawdown")
+            violations.append(
+                f"AUTO_KILL: drawdown {self.auto_kill_drawdown_pct * 100:.0f}% reached — kill switch pulled itself"
+            )
+        # Schedule: only the hours you said you trade well.
+        if self.allowed_hours_utc and datetime.now(timezone.utc).hour not in self.allowed_hours_utc:
+            violations.append(
+                f"SCHEDULE: outside your allowed hours (UTC {self.allowed_hours_utc})"
+            )
         if self.mode == "FULL_MANUAL":
             violations.append("FULL_MANUAL mode: CF advises only — no auto strikes")
         return violations
+
+    def maybe_escalate(self, consecutive_losses: int) -> Optional[str]:
+        """Mode escalation ladder: enough straight losses and the manager
+        takes the trigger away from the CF — COACH mode engages itself."""
+        if self.escalate_after_losses > 0 and self.mode == "FULL_AUTO" \
+                and consecutive_losses >= self.escalate_after_losses:
+            self.set_mode("COACH")
+            return (
+                f"ESCALATION: {consecutive_losses} straight losses — "
+                "manager takes the trigger, COACH mode engaged"
+            )
+        return None
+
+    PRESETS = {
+        "SAFE": {
+            "daily_loss_limit": 10.0, "session_take_profit": 10.0,
+            "max_trades_per_hour": 6, "streak_halving": True,
+            "trail_arm": 5.0, "trail_pct": 0.5, "auto_kill_drawdown_pct": 0.15,
+            "escalate_after_losses": 2,
+        },
+        "BALANCED": {
+            "daily_loss_limit": 20.0, "session_take_profit": 25.0,
+            "max_trades_per_hour": 12, "streak_halving": True,
+            "trail_arm": 10.0, "trail_pct": 0.5, "auto_kill_drawdown_pct": 0.25,
+            "escalate_after_losses": 3,
+        },
+        "AGGRESSIVE": {
+            "daily_loss_limit": 40.0, "session_take_profit": 0.0,
+            "max_trades_per_hour": 25, "streak_halving": False,
+            "trail_arm": 0.0, "trail_pct": 0.5, "auto_kill_drawdown_pct": 0.0,
+            "escalate_after_losses": 0,
+        },
+    }
+
+    def apply_preset(self, name: str) -> dict:
+        preset = self.PRESETS.get(name.upper())
+        if not preset:
+            return {"error": f"unknown preset — choose from {list(self.PRESETS)}"}
+        with _lock:
+            for k, v in preset.items():
+                setattr(self, k, v)
+            self._save()
+            return {"preset": name.upper(), "applied": preset, "status": self.status()}
 
     def needs_approval(self) -> bool:
         return self.mode == "COACH"
@@ -193,6 +300,13 @@ class RiskGuard:
             "session_take_profit": self.session_take_profit,
             "max_trades_per_hour": self.max_trades_per_hour,
             "streak_halving": self.streak_halving,
+            "trail_arm": self.trail_arm,
+            "trail_pct": self.trail_pct,
+            "peak_pnl": round(self.peak_pnl(), 2),
+            "auto_kill_drawdown_pct": self.auto_kill_drawdown_pct,
+            "allowed_hours_utc": self.allowed_hours_utc,
+            "quiet_hours_utc": self.quiet_hours_utc,
+            "escalate_after_losses": self.escalate_after_losses,
             "trades_last_hour": self.trades_last_hour(),
             "session_start_balance": self.session_start_balance,
             "session_started_at": self.session_started_at,
@@ -202,13 +316,23 @@ class RiskGuard:
 
     def set_limits(self, **kw) -> dict:
         with _lock:
-            for k in ("daily_loss_limit", "session_take_profit"):
+            for k in ("daily_loss_limit", "session_take_profit", "trail_arm"):
                 if k in kw and kw[k] is not None:
                     setattr(self, k, max(0.0, float(kw[k])))
+            if kw.get("trail_pct") is not None:
+                self.trail_pct = max(0.05, min(0.95, float(kw["trail_pct"])))
+            if kw.get("auto_kill_drawdown_pct") is not None:
+                self.auto_kill_drawdown_pct = max(0.0, min(0.9, float(kw["auto_kill_drawdown_pct"])))
             if kw.get("max_trades_per_hour") is not None:
                 self.max_trades_per_hour = max(0, int(kw["max_trades_per_hour"]))
             if kw.get("streak_halving") is not None:
                 self.streak_halving = bool(kw["streak_halving"])
+            if kw.get("escalate_after_losses") is not None:
+                self.escalate_after_losses = max(0, int(kw["escalate_after_losses"]))
+            if kw.get("allowed_hours_utc") is not None:
+                self.allowed_hours_utc = sorted({int(h) % 24 for h in kw["allowed_hours_utc"]})
+            if kw.get("quiet_hours_utc") is not None:
+                self.quiet_hours_utc = sorted({int(h) % 24 for h in kw["quiet_hours_utc"]})
             self._save()
             return self.status()
 
