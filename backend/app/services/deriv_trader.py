@@ -211,10 +211,14 @@ class DerivTrader:
                 "currency": (account or {}).get("currency") or "USD",
                 "duration": int(duration),
                 "duration_unit": duration_unit,
-                "symbol": symbol,
-                "product_type": "basic",
                 **contract_fields,
             }
+            # OTP endpoint requires the symbol as `underlying_symbol`;
+            # the legacy authorize endpoint requires plain `symbol`.
+            if self._needs_authorize(url):
+                proposal_req["symbol"] = symbol
+            else:
+                proposal_req["underlying_symbol"] = symbol
             prop_msg = await self._send_recv(ws, proposal_req)
             if "error" in prop_msg:
                 return {"status": "error", "step": "proposal", "error": prop_msg["error"].get("message")}
