@@ -4,17 +4,20 @@ import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-TARGET = os.environ.get("KEEPALIVE_TARGET", "https://eaglex-backend-excn.onrender.com/health")
 PORT = int(os.environ.get("PORT", "8000"))
+TARGETS = [t.strip() for t in os.environ.get(
+"KEEPALIVE_TARGETS",
+"https://eaglex-backend-excn.onrender.com/health").split(",") if t.strip()]
 
 
 def ping_loop():
     while True:
-        try:
-            with urllib.request.urlopen(TARGET, timeout=20) as r:
-                print("ping", TARGET, r.status)
-        except Exception as e:
-            print("ping failed:", e)
+        for t in TARGETS:
+            try:
+                with urllib.request.urlopen(t, timeout=20) as r:
+                    print("ping", t, r.status)
+            except Exception as e:
+                print("ping failed", t, e)
         time.sleep(600)
 
 
