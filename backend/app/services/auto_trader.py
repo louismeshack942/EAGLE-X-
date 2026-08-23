@@ -223,7 +223,7 @@ class AutoTrader:
                 symbol=contract.get("symbol", self.settings.active_symbols[0]),
                 contract_type=contract["type"],
                 amount=stake,
-                duration=contract.get("duration_seconds", 60),
+                duration=contract.get("duration_seconds", 5),
                 api_token=token,
                 digit=contract.get("digit"),
             )
@@ -445,7 +445,7 @@ class AutoTrader:
                         )
                     telegram_notifier.send_trade_alert(
                         best_symbol, plays[0]["name"], stakes[0],
-                        plays[0].get("duration_seconds", 60),
+                        plays[0].get("duration_seconds", 5),
                     )
                     self._log(
                         f"Placing trade: {best_symbol} {plays[0]['name']} "
