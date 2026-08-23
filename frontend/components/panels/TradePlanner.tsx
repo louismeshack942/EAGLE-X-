@@ -11,7 +11,7 @@ export default function TradePlanner() {
   const [contract, setContract] = useState("CALL");
   const [digit, setDigit] = useState("5");
   const [stake, setStake] = useState("1");
-  const [duration, setDuration] = useState("60");
+  const [duration, setDuration] = useState("5");
   const [token, setToken] = useState("");
   const [result, setResult] = useState<any>(null);
   const [busy, setBusy] = useState(false);

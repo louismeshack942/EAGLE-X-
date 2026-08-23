@@ -28,7 +28,7 @@ export default function StrategyBuilder() {
     setBusy(true);
     try {
       await apiPost("/strategies/create", {
-        config: { name, strategy_type: strategyType, symbol, stake: Number(stake), duration_seconds: 60 },
+        config: { name, strategy_type: strategyType, symbol, stake: Number(stake), duration_seconds: 5 },
       });
       await load();
     } catch (e: any) { setError(String(e.message ?? e)); }
