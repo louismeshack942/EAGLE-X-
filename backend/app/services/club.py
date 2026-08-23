@@ -17,9 +17,12 @@ from typing import Any, Dict, List, Optional
 
 from app.services import portfolio as portfolio_svc
 from app.services import risk_analytics
+from app.services import scout as scout_svc
 from app.services.auto_trader import auto_trader
 from app.services.intelligence import intelligence_engine
 from app.services.market_master import market_master
+from app.services.risk_guard import risk_guard
+from app.services.virtual_bank import virtual_bank
 
 
 def _now() -> str:
@@ -75,6 +78,20 @@ def manager_briefing(symbols: List[str], window: int = 100) -> Dict[str, Any]:
     if playable == 0:
         directives.append("Drills, not matches — markets unreadable, stay in training")
 
+    # The Treasurer and the Guard sit in the dugout too.
+    bank = virtual_bank.status()
+    guard = risk_guard.status()
+    if guard["killed"]:
+        morale = "CAUTIOUS"
+        directives.append(f"KILL SWITCH is down ({guard['kill_reason']}) — nobody plays until you release it")
+    if bank["synced"] and bank["vault_balance"] > 0:
+        briefing += (
+            f" Treasurer's report: ${bank['vault_balance']:.2f} locked in the vault, "
+            f"${bank['current_balance']:.2f} spendable."
+        )
+    if guard["mode"] != "FULL_AUTO":
+        directives.append(f"Guard mode {guard['mode']}: CF needs your say before he shoots")
+
     return {
         "timestamp": _now(),
         "morale": morale,
@@ -85,6 +102,9 @@ def manager_briefing(symbols: List[str], window: int = 100) -> Dict[str, Any]:
         "formation": formation,
         "briefing": briefing,
         "directives": directives,
+        "bank": bank,
+        "guard_mode": guard["mode"],
+        "guard_killed": guard["killed"],
     }
 
 
@@ -100,8 +120,10 @@ def board_report() -> Dict[str, Any]:
     except Exception:  # noqa: BLE001
         portfolio = {}
     invested = portfolio.get("total_value", 0.0)
+    bank = virtual_bank.status()
     cash = st.get("balance") or 0.0
-    value = round(invested + cash, 2)
+    vault = bank.get("vault_balance", 0.0) if bank.get("synced") else 0.0
+    value = round(invested + cash + vault, 2)
     standings = "GOOD" if (st.get("daily_pnl") or 0) >= 0 else "WATCH"
     sponsors = [
         {"name": "Apex Analytics", "tier": "Title", "clause": "Data quality > 80"},
@@ -114,11 +136,13 @@ def board_report() -> Dict[str, Any]:
         "club_value": value,
         "daily_pnl": st.get("daily_pnl"),
         "balance": st.get("balance"),
+        "vault_balance": vault,
         "win_rate": perf.get("win_rate"),
         "standings": standings,
         "sponsors": sponsors,
         "statement": (
-            f"Club value ${value:.2f}. The board is {'confident' if standings == 'GOOD' else 'attentive'}. "
+            f"Club value ${value:.2f} (${vault:.2f} of it protected in the vault). "
+            f"The board is {'confident' if standings == 'GOOD' else 'attentive'}. "
             f"Sponsors hold us to: quality data, positive win rate, controlled drawdown."
         ),
     }
@@ -227,6 +251,24 @@ def market_alerts(symbols: List[str], window: int = 100) -> Dict[str, Any]:
         if dq < 60:
             alerts.append({"symbol": sym, "type": "DATA_QUALITY_DROP", "severity": "high",
                            "message": f"{sym} data quality {dq}", "timestamp": _now()})
+    # The dugout speaks too: kill switch, hot tables, vault milestones.
+    guard = risk_guard.status()
+    if guard["killed"]:
+        alerts.append({"symbol": "CLUB", "type": "KILL_SWITCH", "severity": "high",
+                       "message": f"Kill switch DOWN: {guard['kill_reason']}", "timestamp": _now()})
+    try:
+        tables = scout_svc.scan_tables(symbols, window)
+        best = tables.get("best_table")
+        if best:
+            alerts.append({"symbol": best["symbol"], "type": "TABLE_HOT", "severity": "medium",
+                           "message": best["verdict"], "timestamp": _now()})
+    except Exception:  # noqa: BLE001
+        pass
+    bank = virtual_bank.status()
+    if bank.get("synced") and bank.get("vault_balance", 0) >= 10:
+        alerts.append({"symbol": "CLUB", "type": "VAULT_MILESTONE", "severity": "low",
+                       "message": f"Treasurer: ${bank['vault_balance']:.2f} now protected in the vault",
+                       "timestamp": _now()})
     return {"timestamp": _now(), "alerts": alerts, "count": len(alerts)}
 
 
@@ -267,11 +309,28 @@ def squad_ratings(symbols: List[str], window: int = 100) -> Dict[str, Any]:
     amf_rating = 88
     # SS — execution: win rate when he has played; unrated = professional.
     ss_rating = clamp(60 + (status.get("win_rate", 0) or 0) * 0.35) if status.get("trades_today", 0) > 0 else 78
-    # CF — striker form rating from the auto trader.
+    # CF — striker form rating from the auto trader, with an honesty check:
+    # if his calibration says he overstates his numbers, the rating drops.
     cf_rating = status.get("cf_rating", 75)
+    try:
+        cal = scout_svc.calibration()
+        if cal.get("overconfident"):
+            cf_rating = clamp(cf_rating - 8)
+    except Exception:  # noqa: BLE001
+        pass
     # GM — the manager himself: team morale from the briefing.
     morale_map = {"HIGH": 92, "READY": 85, "PATIENT": 74, "CAUTIOUS": 68}
     gm_rating = morale_map.get(manager_briefing(symbols, window).get("morale", "READY"), 80)
+    # Treasurer — the virtual bank. Rated on how much of the club's money is
+    # protected and whether profits are actually being banked.
+    bank = virtual_bank.status()
+    if bank.get("synced"):
+        treasurer_raw = 70 + bank.get("protected_pct", 0) * 0.4
+        if bank.get("net_profit", 0) > 0:
+            treasurer_raw += 5
+        treasurer_rating = clamp(treasurer_raw)
+    else:
+        treasurer_rating = 65  # on the team sheet, not yet on the pitch
 
     players = [
         {"pos": "GK", "name": "Risk Engine", "rating": gk_rating},
@@ -284,6 +343,7 @@ def squad_ratings(symbols: List[str], window: int = 100) -> Dict[str, Any]:
         {"pos": "SS", "name": "Trade Planner", "rating": ss_rating},
         {"pos": "CF", "name": "Auto Trader", "rating": cf_rating},
         {"pos": "GM", "name": "Team Manager", "rating": gm_rating},
+        {"pos": "TR", "name": "Treasurer (Virtual Bank)", "rating": treasurer_rating},
     ]
     overall = clamp(sum(p["rating"] for p in players) / len(players))
     tier = "WORLD CLASS" if overall >= 85 else "ELITE" if overall >= 75 else "PROFESSIONAL" if overall >= 65 else "DEVELOPING"

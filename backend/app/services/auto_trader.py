@@ -29,8 +29,11 @@ from app.services.money_management import (
     risk_state,
 )
 from app.services.persistence import journal_engine
+from app.services.risk_guard import risk_guard
+from app.services.scout import performance_by_hour
 from app.services.telegram import telegram_notifier
 from app.services.token_vault import VAULT
+from app.services.virtual_bank import virtual_bank
 
 FLUID_MAX_PLAYS = 2          # at most two simultaneous positions
 FLUID_PAIR_RATIO = 0.75      # second play must reach 75% of the top's EV
@@ -105,6 +108,29 @@ class AutoTrader:
         self.tight_marking = False  # Pep's regroup: higher bar after a benching
         self._scan_count = 0
         self.decision_history: list[dict] = []
+        self._session_active = False       # bank/guard hooks only fire in real sessions
+        self._coach_pending_id: Optional[str] = None
+        self._hot_hours_cache: tuple[float, Optional[bool]] = (0.0, None)
+
+    def _stake_base(self) -> float:
+        """Stakes are sized off the bank's SPENDABLE balance when the bank
+        is synced — profits swept to the vault never get re-risked."""
+        if self._session_active and virtual_bank.synced:
+            return virtual_bank.spendable()
+        return self.balance
+
+    def _current_window_ok(self) -> Optional[bool]:
+        """Hot-hours filter, cached for 5 minutes. None = not enough data."""
+        now = time.time()
+        ts, cached = self._hot_hours_cache
+        if now - ts < 300:
+            return cached
+        try:
+            ok = performance_by_hour().get("current_window_ok")
+        except Exception:  # noqa: BLE001
+            ok = None
+        self._hot_hours_cache = (now, ok)
+        return ok
 
     def _record_decision(self, symbol: str, plays: list[dict], team: dict) -> None:
         """Stamp every fresh team decision — proof the call tracks the market."""
@@ -167,7 +193,16 @@ class AutoTrader:
         self.wins_today = 0
         self.losses_today = 0
         self.consecutive_losses = 0
+        self._session_active = True
+        virtual_bank.sync_opening(balance)
+        risk_guard.open_session(balance)
+        self._hot_hours_cache = (0.0, None)
+        self._coach_pending_id = None
         self._log(f"Auto Trader started ({self.mode.upper()} mode)")
+        self._log(
+            f"Treasurer: ${balance:.2f} in current — 60% of every profit "
+            "will be locked in the virtual bank"
+        )
         telegram_notifier.send_bot_status("started", self.mode)
         self._task = asyncio.create_task(self._main_loop(api_token))
         return {"status": "started", "mode": self.mode, "message": "Auto Trader started successfully."}
@@ -179,6 +214,7 @@ class AutoTrader:
         if self._task:
             self._task.cancel()
             self._task = None
+        self._session_active = False
         self._log("Auto Trader stopped")
         telegram_notifier.send_bot_status("stopped", self.mode)
         return {"status": "stopped", "message": "Auto Trader stopped."}
@@ -249,6 +285,21 @@ class AutoTrader:
         self.balance += pnl
         self.daily_pnl += pnl
         self.trades_today += 1
+        if self._session_active:
+            # The Treasurer splits the money: 60% of profits locked in the
+            # vault, losses hit only the spendable current balance.
+            split = virtual_bank.record_pnl(pnl, note=f"{contract.get('symbol')} {contract['name']}")
+            risk_guard.record_trade(self.balance)
+            if split["to_vault"] > 0:
+                self._log(
+                    f"Treasurer: +${pnl:.2f} — vault +${split['to_vault']:.2f}, "
+                    f"current +${split['to_current']:.2f} "
+                    f"(spendable ${virtual_bank.spendable():.2f})"
+                )
+            tilt = risk_guard.tilt_warning("win" if won else "loss")
+            if tilt:
+                self._log(tilt)
+                telegram_notifier.send_risk_alert(tilt)
         if won:
             self.wins_today += 1
             self.consecutive_losses = 0
@@ -405,6 +456,29 @@ class AutoTrader:
                     self.running = False
                     break
 
+                # The Risk Guard speaks money, not percentages: kill switch,
+                # daily $ loss floor, session $ take-profit, hourly trade cap.
+                guard_violations = risk_guard.check(self.daily_pnl)
+                hard = [v for v in guard_violations if not v.startswith("FULL_MANUAL")]
+                if hard:
+                    for v in hard:
+                        telegram_notifier.send_risk_alert(v)
+                        self._log(f"GUARD: {v}")
+                    self.running = False
+                    break
+                manual_only = any(v.startswith("FULL_MANUAL") for v in guard_violations)
+
+                # Hot-hours filter: if the CF's own track record says this
+                # hour is a graveyard (enough data), he stays on the bench.
+                window_ok = self._current_window_ok()
+                if window_ok is False:
+                    now = time.time()
+                    if now - self._last_scan_log > 60:
+                        self._last_scan_log = now
+                        self._log("Hot-hours filter: this hour has been a loser historically — CF stays on the bench")
+                    await asyncio.sleep(5.0)
+                    continue
+
                 # The strike gate. Normal pressing: 2 confirmations is enough.
                 # Under Pep's tight marking (after a benching): one extra
                 # confirmation AND the analysts must show stronger proof —
@@ -414,17 +488,61 @@ class AutoTrader:
                     proven = [p for p in best_plays if abs(p.get("z") or 0.0) >= TIGHT_MIN_Z]
                     if len(proven) < len(best_plays):
                         best_plays = proven
+                if manual_only and best_plays and self.confirmation_ticks >= required_ticks:
+                    # FULL_MANUAL: the CF advises, you pull the trigger.
+                    self.current_recommendation = self.current_recommendation or {}
+                    now = time.time()
+                    if now - self._last_scan_log > 30:
+                        self._last_scan_log = now
+                        self._log("FULL_MANUAL: play is lined up — fire it yourself from the dashboard")
+                    await asyncio.sleep(5.0)
+                    continue
+                coach_approved = False
+                if risk_guard.needs_approval() and best_plays and self.confirmation_ticks >= required_ticks:
+                    # COACH mode: the CF proposes, the manager confirms.
+                    if self._coach_pending_id is None:
+                        item = risk_guard.queue_approval({
+                            "symbol": best_symbol,
+                            "plays": [{"name": p["name"], "ev": p.get("ev"), "z": p.get("z")} for p in best_plays],
+                        })
+                        self._coach_pending_id = item["id"]
+                        self._log(f"COACH mode: play proposed ({best_plays[0]['name']}) — waiting for your confirmation")
+                        telegram_notifier.send_risk_alert(
+                            f"Coach mode: {best_symbol} {best_plays[0]['name']} needs your approval"
+                        )
+                        await asyncio.sleep(5.0)
+                        continue
+                    pending = risk_guard.next_pending()
+                    if pending is not None and pending["id"] == self._coach_pending_id:
+                        await asyncio.sleep(5.0)
+                        continue  # still waiting on the manager
+                    resolved = next(
+                        (a for a in risk_guard.pending_approvals if a["id"] == self._coach_pending_id), None
+                    )
+                    self._coach_pending_id = None
+                    if not resolved or resolved["status"] != "approved":
+                        self._log("COACH mode: play rejected — CF moves on, no chasing")
+                        await asyncio.sleep(5.0)
+                        continue
+                    coach_approved = True
+                    self._log("COACH mode: play approved — CF fires")
                 if best_plays and self.confirmation_ticks >= required_ticks:
-                    # GK sizes the stake: quarter-Kelly per play, capped at 10%
-                    # of balance, scaled down as drawdown deepens.
+                    # GK sizes the stake: quarter-Kelly per play off the bank's
+                    # SPENDABLE balance (vault profits are never re-risked),
+                    # capped at 10%, scaled down as drawdown deepens, and
+                    # halved for every consecutive loss on the streak.
+                    stake_base = self._stake_base()
                     dd_mult = drawdown_multiplier(self.initial_balance, self.balance)
+                    streak_mult = risk_guard.streak_multiplier(self.consecutive_losses)
                     stakes = []
                     for p in best_plays:
                         p_win = max(0.01, min(0.99, (p.get("observed_pct", 50.0) or 50.0) / 100.0))
                         payout = PAYOUTS.get(p["type"], 1.9)
-                        ks = kelly_stake(p_win, payout, self.balance)
-                        cap = compute_stake(self.balance)
-                        stakes.append(round(min(ks, cap) * dd_mult, 2))
+                        ks = kelly_stake(p_win, payout, stake_base)
+                        cap = compute_stake(stake_base)
+                        stakes.append(round(min(ks, cap) * dd_mult * streak_mult, 2))
+                    if streak_mult < 1.0 and stakes:
+                        self._log(f"Streak halving: stakes x{streak_mult} after {self.consecutive_losses} straight misses")
                     plays = [p for p, s in zip(best_plays, stakes) if s >= 0.35]
                     stakes = [s for s in stakes if s >= 0.35]
                     if not plays:
@@ -455,7 +573,9 @@ class AutoTrader:
                         *(self.place_trade(p, s, api_token) for p, s in zip(plays, stakes))
                     )
                     worst = "loss" if any(not o["won"] for o in outcomes) else "win"
-                    await asyncio.sleep(cooldown_for(worst))
+                    await asyncio.sleep(
+                        risk_guard.cooldown_escalator(cooldown_for(worst), self.consecutive_losses)
+                    )
                 else:
                     if not best_plays:
                         now = time.time()
@@ -505,6 +625,11 @@ class AutoTrader:
             "decision_history": self.decision_history[-DECISION_HISTORY_LEN:],
             "confirmation_ticks": self.confirmation_ticks,
             "log": self.log[-50:],
+            "bank": virtual_bank.status(),
+            "guard": risk_guard.status(),
+            "stake_base": round(self._stake_base(), 2),
+            "streak_multiplier": risk_guard.streak_multiplier(self.consecutive_losses),
+            "hot_window_ok": self._current_window_ok(),
         }
 
 

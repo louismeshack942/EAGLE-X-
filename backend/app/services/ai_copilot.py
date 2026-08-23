@@ -6,18 +6,73 @@ or ANTHROPIC_API_KEY is set, those can be layered on (not required).
 """
 from typing import Optional
 
+from app.services import scout as scout_svc
 from app.services.analytics import analytics_engine
 from app.services.analytics_advanced import digit_engine
 from app.services.auto_trader import auto_trader
 from app.services.intelligence import intelligence_engine
 from app.services.market_master import market_master
 from app.services.money_management import kelly_stake, risk_state
+from app.services.risk_guard import risk_guard
+from app.services.virtual_bank import virtual_bank
 
 
 class AICopilot:
     def ask(self, question: str, symbol: Optional[str] = None) -> dict:
         q = question.lower().strip()
         symbol = symbol or "R_100"
+
+        if any(w in q for w in ["bank", "vault", "treasurer", "protect", "profit split"]):
+            b = virtual_bank.status()
+            if not b["synced"]:
+                answer = ("The virtual bank opens when the CF starts a session. "
+                          "From then on, 60% of every profit is locked in the vault "
+                          "and losses only hit the spendable balance.")
+            else:
+                answer = (
+                    f"Treasurer's ledger: current ${b['current_balance']:.2f} (spendable — stakes come from this), "
+                    f"vault ${b['vault_balance']:.2f} (protected — {b['split_label']}), "
+                    f"total ${b['total_balance']:.2f}. "
+                    f"Lifetime: +${b['total_profit']:.2f} profit, -${b['total_loss']:.2f} losses. "
+                    f"{b['protected_pct']}% of the account is untouchable right now."
+                )
+            return {"question": question, "answer": answer, "symbol": symbol, "data": b}
+
+        if any(w in q for w in ["should i trade", "trade now", "good time", "hot hour", "best time", "when to"]):
+            tables = scout_svc.scan_tables([symbol])
+            hours = scout_svc.performance_by_hour()
+            best = tables.get("best_table")
+            hot_txt = (
+                f"This hour (UTC {hours['current_hour_utc']}) has been kind to you historically."
+                if hours["current_window_ok"] is True else
+                f"This hour (UTC {hours['current_hour_utc']}) has been a GRAVEYARD in your own journal — stay out."
+                if hours["current_window_ok"] is False else
+                "Not enough of your own history yet to judge this hour."
+            )
+            guard = risk_guard.status()
+            block = " Kill switch is DOWN — nothing fires." if guard["killed"] else ""
+            return {
+                "question": question,
+                "answer": f"{tables['summary']} {hot_txt}{block}",
+                "symbol": symbol,
+                "data": {"table": best, "hot_hours": hours},
+            }
+
+        if any(w in q for w in ["kill", "limit", "guard", "stop loss", "circuit"]):
+            g = risk_guard.status()
+            return {
+                "question": question,
+                "answer": (
+                    f"Guard state: {'KILL SWITCH DOWN — ' + g['kill_reason'] if g['killed'] else 'all circuits live'}. "
+                    f"Mode {g['mode']}. Daily loss limit ${g['daily_loss_limit'] or 'off'}, "
+                    f"take-profit ${g['session_take_profit'] or 'off'}, "
+                    f"hourly trade cap {g['max_trades_per_hour'] or 'off'}. "
+                    f"Trades this hour: {g['trades_last_hour']}. "
+                    "Streak halving is on: every straight loss halves the next stake."
+                ),
+                "symbol": symbol,
+                "data": g,
+            }
 
         if any(w in q for w in ["trade", "matches", "differs", "odd", "even", "over", "under", "play"]):
             ml = intelligence_engine.most_likely(symbol)

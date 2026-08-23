@@ -163,7 +163,7 @@ def test_club_endpoints(client):
     squad = client.get("/club/squad")
     assert squad.status_code == 200
     s = squad.json()
-    assert len(s["players"]) == 10
+    assert len(s["players"]) == 11  # Starting XI + the Treasurer (virtual bank)
     assert all(40 <= p["rating"] <= 99 for p in s["players"])
     assert s["tier"] in ("WORLD CLASS", "ELITE", "PROFESSIONAL", "DEVELOPING")
 

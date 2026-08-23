@@ -44,6 +44,10 @@ from app.services.persistence import (
     settings_store,
 )
 from app.services.strategy_engine import StrategyConfig, strategy_engine
+from app.services import scout as scout_svc
+from app.services.risk_guard import risk_guard
+from app.services.virtual_bank import virtual_bank
+from app.services.telegram import telegram_notifier
 from app.services.technical import technical_engine
 from app.services.token_vault import VAULT
 from app.api.auth import router as auth_router
@@ -397,13 +401,21 @@ def auto_trader_status():
 # ---------------- Trade ----------------
 @app.post("/trade")
 async def trade(body: TradeBody):
+    # Manual trades also go through the Guard: kill switch + tilt detector.
+    guard_block = [v for v in risk_guard.check(auto_trader.daily_pnl) if v.startswith("KILL_SWITCH")]
+    if guard_block:
+        return {"status": "error", "error": guard_block[0]}
+    risk_guard.record_trade(auto_trader.balance, manual=True)
+    tilt = risk_guard.tilt_warning(
+        "loss" if (auto_trader.last_trade or {}).get("result") == "LOSS" else None
+    )
     token = body.api_token or await VAULT.get() or settings.deriv_api_token
     if not token:
         return {
             "status": "error",
             "error": "No Deriv account connected. Use POST /auth/token or the OAuth connect flow.",
         }
-    return await deriv_trader.place_trade(
+    result = await deriv_trader.place_trade(
         symbol=body.symbol,
         contract_type=body.direction,
         amount=body.amount,
@@ -412,6 +424,128 @@ async def trade(body: TradeBody):
         duration_unit=body.duration_unit,
         digit=body.digit,
     )
+    if tilt:
+        result["tilt_warning"] = tilt
+    return result
+
+
+# ---------------- Virtual Bank (the Treasurer) ----------------
+class BankAmountBody(BaseModel):
+    amount: float
+
+
+class BankSplitBody(BaseModel):
+    split_ratio: float
+
+
+@app.get("/bank")
+def bank_status():
+    return virtual_bank.status()
+
+
+@app.get("/bank/history")
+def bank_history(limit: int = 20):
+    return {"history": virtual_bank.recent_history(limit)}
+
+
+@app.post("/bank/withdraw")
+def bank_withdraw(body: BankAmountBody):
+    return virtual_bank.withdraw(body.amount)
+
+
+@app.post("/bank/deposit")
+def bank_deposit(body: BankAmountBody):
+    return virtual_bank.deposit(body.amount)
+
+
+@app.post("/bank/split")
+def bank_split(body: BankSplitBody):
+    return virtual_bank.set_split(body.split_ratio)
+
+
+# ---------------- Risk Guard (circuit breakers) ----------------
+class GuardModeBody(BaseModel):
+    mode: str
+
+
+class ApprovalBody(BaseModel):
+    approve: bool
+
+
+@app.get("/guard")
+def guard_status():
+    return risk_guard.status()
+
+
+@app.post("/guard/kill")
+def guard_kill(reason: str = "manager pulled the kill switch"):
+    result = risk_guard.kill(reason)
+    telegram_notifier.send_risk_alert(f"KILL SWITCH: {reason}")
+    return result
+
+
+@app.post("/guard/release")
+def guard_release():
+    return risk_guard.release()
+
+
+@app.post("/guard/mode")
+def guard_mode(body: GuardModeBody):
+    return risk_guard.set_mode(body.mode)
+
+
+@app.get("/guard/limits")
+def guard_limits_get():
+    return risk_guard.status()
+
+
+@app.post("/guard/limits")
+def guard_limits_set(body: dict):
+    return risk_guard.set_limits(
+        daily_loss_limit=body.get("daily_loss_limit"),
+        session_take_profit=body.get("session_take_profit"),
+        max_trades_per_hour=body.get("max_trades_per_hour"),
+        streak_halving=body.get("streak_halving"),
+    )
+
+
+@app.get("/guard/approvals")
+def guard_approvals():
+    return {"pending": [a for a in risk_guard.pending_approvals if a["status"] == "pending"]}
+
+
+@app.post("/guard/approvals/{approval_id}")
+def guard_approval_resolve(approval_id: str, body: ApprovalBody):
+    resolved = risk_guard.resolve_approval(approval_id, body.approve)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="approval not found or already resolved")
+    return resolved
+
+
+# ---------------- Table Scout ----------------
+@app.get("/scout/tables")
+def scout_tables(window: int = 100):
+    return scout_svc.scan_tables(settings.active_symbols, window)
+
+
+@app.get("/scout/heatmap")
+def scout_heatmap(window: int = 100):
+    return scout_svc.heatmap(settings.active_symbols, window)
+
+
+@app.get("/scout/calibration")
+def scout_calibration():
+    return scout_svc.calibration()
+
+
+@app.get("/scout/hot-hours")
+def scout_hot_hours():
+    return scout_svc.performance_by_hour()
+
+
+@app.get("/scout/breakdown")
+def scout_breakdown():
+    return scout_svc.journal_breakdown()
 
 
 # ---------------- Settings ----------------

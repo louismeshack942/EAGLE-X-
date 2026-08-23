@@ -24,6 +24,7 @@ import PortfolioManager from "@/components/panels/PortfolioManager";
 import RiskDashboard from "@/components/panels/RiskDashboard";
 import PerformanceAnalytics, { DiversificationAnalyzer } from "@/components/panels/PerformanceAnalytics";
 import ClubPanel from "@/components/panels/ClubPanel";
+import VirtualBankPanel from "@/components/panels/VirtualBankPanel";
 
 const SYMBOLS = ["R_10", "R_25", "R_50", "R_75", "R_100"];
 
@@ -110,6 +111,7 @@ export default function Dashboard() {
       <main style={{ padding: "0 1rem 1rem" }}>
         <SectionHeader emoji="🏆" title="Starting XI" sub="4-3-3" />
         <div className="main-grid">
+          <VirtualBankPanel />
           <RiskEngine />
           <IntelligenceEnginePanel symbol={symbol} />
           <DataQuality symbol={symbol} />
