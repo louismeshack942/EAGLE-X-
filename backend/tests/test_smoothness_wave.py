@@ -479,3 +479,57 @@ class TestCorrelationBan:
         }
         plays = select_plays(mm, 'R_100')
         assert len(plays) == 2  # {0,1} and {7,8,9} never collide
+
+
+class TestManualStake:
+    """The manager sets the bullet size himself."""
+
+    def test_stake_override_set_and_clear(self):
+        g = _fresh_guard()
+        r = g.set_stake(250.0)
+        assert r["stake_override"] == 250.0 and r["mode"] == "manual stake"
+        r = g.set_stake(0)
+        assert r["stake_override"] == 0.0 and "auto" in r["mode"]
+
+    def test_stake_endpoint(self):
+        r = client.post("/guard/stake", json={"amount": 50.0})
+        assert r.status_code == 200
+        assert r.json()["stake_override"] == 50.0
+        assert client.get("/guard").json()["stake_override"] == 50.0
+        client.post("/guard/stake", json={"amount": 0})  # restore auto
+
+    def test_env_arming_survives_store_wipe(self):
+        import os
+        from app.services.risk_guard import RiskGuard
+        os.environ["GUARD_DAILY_LOSS_LIMIT"] = "400"
+        os.environ["GUARD_STAKE_OVERRIDE"] = "100"
+        try:
+            g = RiskGuard()  # fresh load, store may be empty
+            assert g.daily_loss_limit == 400.0
+            assert g.stake_override == 100.0
+        finally:
+            del os.environ["GUARD_DAILY_LOSS_LIMIT"]
+            del os.environ["GUARD_STAKE_OVERRIDE"]
+
+    def test_limits_endpoint_forwards_all_fields(self):
+        r = client.post("/guard/limits", json={
+            "trail_arm": 150, "trail_pct": 0.5,
+            "auto_kill_drawdown_pct": 0.10, "escalate_after_losses": 2,
+        })
+        d = r.json()
+        assert d["trail_arm"] == 150.0
+        assert d["auto_kill_drawdown_pct"] == 0.10
+        assert d["escalate_after_losses"] == 2
+        # restore loose defaults so other tests aren't gated
+        client.post("/guard/limits", json={
+            "trail_arm": 0, "auto_kill_drawdown_pct": 0, "escalate_after_losses": 0,
+        })
+
+    def test_trader_status_shows_stake_mode(self):
+        client.post("/guard/stake", json={"amount": 25.0})
+        s = client.get("/auto-trader/status").json()
+        assert s["stake_mode"] == "manual"
+        assert s["current_stake"] == 25.0
+        client.post("/guard/stake", json={"amount": 0})
+        s = client.get("/auto-trader/status").json()
+        assert s["stake_mode"] == "auto"

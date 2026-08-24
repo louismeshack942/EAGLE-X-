@@ -9,10 +9,12 @@ Also home of the manager's control mode:
 - FULL_AUTO    — the CF trades without asking (current behaviour)
 - COACH        — the CF proposes, you confirm each strike (approval queue)
 - FULL_MANUAL  — the CF only advises; nothing fires without your click
+- HYBRID       — overwhelming evidence fires instantly, the rest asks you
 
-And the tilt detector: rapid manual firing after a loss gets flagged
-before it becomes a revenge-trading spiral.
+Arming is durable: GUARD_* env vars override the persisted store, so a
+Render redeploy (which wipes store.json) can never disarm the account.
 """
+import os
 import threading
 import time
 from collections import deque
@@ -55,6 +57,12 @@ class RiskGuard:
         self.quiet_hours_utc: list[int] = []
         # Mode escalation: auto-switch to COACH after this many straight losses
         self.escalate_after_losses: int = 0  # 0 = disabled
+        # Manual stake: the manager sets the stake himself in dollars.
+        # 0 = auto (10% of spendable, Kelly-capped). When set, every play
+        # fires at exactly this amount — no Kelly, no 10% rule, no drawdown
+        # scaling, no streak halving. The manager owns the bullet; the
+        # Guard's dollar limits and kill switch own the gun.
+        self.stake_override: float = 0.0
         # Session tracking
         self.session_start_balance: Optional[float] = None
         self.session_started_at: Optional[str] = None
@@ -80,10 +88,54 @@ class RiskGuard:
             self.allowed_hours_utc = list(s.get("allowed_hours_utc", []))
             self.quiet_hours_utc = list(s.get("quiet_hours_utc", []))
             self.escalate_after_losses = int(s.get("escalate_after_losses", 0))
+            self.stake_override = float(s.get("stake_override", 0.0))
+        self._apply_env()
+
+    def _apply_env(self) -> None:
+        """GUARD_* env vars override the store. store.json dies on every
+        Render redeploy; env vars are forever. This is how the account
+        stays armed across deploys."""
+        def f(name):
+            v = os.environ.get(name)
+            return float(v) if v not in (None, "") else None
+
+        def i(name):
+            v = f(name)
+            return int(v) if v is not None else None
+
+        for env_name, attr in (
+            ("GUARD_DAILY_LOSS_LIMIT", "daily_loss_limit"),
+            ("GUARD_TAKE_PROFIT", "session_take_profit"),
+            ("GUARD_TRAIL_ARM", "trail_arm"),
+            ("GUARD_AUTO_KILL_DD", "auto_kill_drawdown_pct"),
+        ):
+            v = f(env_name)
+            if v is not None:
+                setattr(self, attr, max(0.0, v))
+        v = i("GUARD_MAX_TRADES_PER_HOUR")
+        if v is not None:
+            self.max_trades_per_hour = max(0, v)
+        v = i("GUARD_ESCALATE_LOSSES")
+        if v is not None:
+            self.escalate_after_losses = max(0, v)
+        v = f("GUARD_STAKE_OVERRIDE")
+        if v is not None:
+            self.stake_override = max(0.0, v)
+
+    def set_stake(self, amount: float) -> dict:
+        """Manager sets the stake himself. 0 returns control to the GK."""
+        with _lock:
+            self.stake_override = max(0.0, float(amount))
+            self._save()
+            return {
+                "stake_override": self.stake_override,
+                "mode": "manual stake" if self.stake_override > 0 else "auto (10% rule)",
+            }
 
     def _save(self) -> None:
         settings_store.set(_STATE_KEY, {
             "mode": self.mode,
+            "stake_override": self.stake_override,
             "daily_loss_limit": self.daily_loss_limit,
             "session_take_profit": self.session_take_profit,
             "max_trades_per_hour": self.max_trades_per_hour,
@@ -307,6 +359,7 @@ class RiskGuard:
             "allowed_hours_utc": self.allowed_hours_utc,
             "quiet_hours_utc": self.quiet_hours_utc,
             "escalate_after_losses": self.escalate_after_losses,
+            "stake_override": self.stake_override,
             "trades_last_hour": self.trades_last_hour(),
             "session_start_balance": self.session_start_balance,
             "session_started_at": self.session_started_at,

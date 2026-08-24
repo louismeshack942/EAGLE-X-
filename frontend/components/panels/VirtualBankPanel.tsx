@@ -15,6 +15,7 @@ export default function VirtualBankPanel({ refreshMs = 4000 }: { refreshMs?: num
   const [guard, setGuard] = useState<any>(null);
   const [tables, setTables] = useState<any>(null);
   const [amount, setAmount] = useState("10");
+  const [stake, setStake] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = async () => {
@@ -82,6 +83,29 @@ export default function VirtualBankPanel({ refreshMs = 4000 }: { refreshMs?: num
         </div>
       )}
       {msg && <div style={{ color: "#8b949e", fontSize: "0.75rem", marginBottom: 6 }}>{msg}</div>}
+
+      {/* Manual stake — the manager sets the bullet size himself */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", borderTop: "1px solid #21262d", paddingTop: 8 }}>
+        <span style={{ fontSize: "0.78rem", color: "#8b949e" }}>
+          Stake: <strong style={{ color: "#e6edf3" }}>
+            {guard?.stake_override > 0 ? `${fmtUsd(guard.stake_override)} (manual)` : "auto (10%)"}
+          </strong>
+        </span>
+        <input
+          className="ex-select" style={{ width: 90 }} placeholder="$ stake" value={stake}
+          onChange={(e) => setStake(e.target.value)} aria-label="manual stake"
+        />
+        <Btn small variant="primary" title="Fire every play at exactly this amount"
+          onClick={() => act(() => apiPost("/guard/stake", { amount: Number(stake) || 0 }), `Manual stake set: $${stake}`)}>
+          Set
+        </Btn>
+        {guard?.stake_override > 0 && (
+          <Btn small variant="secondary" title="Return to the 10% rule"
+            onClick={() => act(() => apiPost("/guard/stake", { amount: 0 }), "Back to auto (10%)")}>
+            Auto
+          </Btn>
+        )}
+      </div>
 
       <Row label="Current (spendable)" value={fmtUsd(bank?.current_balance ?? 0)} accent="#58a6ff" />
       <Row label="Vault (protected)" value={fmtUsd(bank?.vault_balance ?? 0)} accent="#3fb950" />

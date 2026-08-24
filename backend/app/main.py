@@ -508,7 +508,24 @@ def guard_limits_set(body: dict):
         session_take_profit=body.get("session_take_profit"),
         max_trades_per_hour=body.get("max_trades_per_hour"),
         streak_halving=body.get("streak_halving"),
+        trail_arm=body.get("trail_arm"),
+        trail_pct=body.get("trail_pct"),
+        auto_kill_drawdown_pct=body.get("auto_kill_drawdown_pct"),
+        escalate_after_losses=body.get("escalate_after_losses"),
+        allowed_hours_utc=body.get("allowed_hours_utc"),
+        quiet_hours_utc=body.get("quiet_hours_utc"),
     )
+
+
+class StakeBody(BaseModel):
+    amount: float  # dollars per play; 0 returns control to the GK (10% rule)
+
+
+@app.post("/guard/stake")
+def guard_stake(body: StakeBody):
+    """Manager sets the stake himself. The 10% rule steps aside; drawdown
+    scaling and streak halving still apply on top."""
+    return risk_guard.set_stake(body.amount)
 
 
 @app.get("/guard/approvals")

@@ -811,31 +811,40 @@ class AutoTrader:
                     coach_approved = True
                     self._log("COACH mode: play approved — CF fires")
                 if best_plays and self.confirmation_ticks >= required_ticks:
-                    # GK sizes the stake: quarter-Kelly per play off the bank's
-                    # SPENDABLE balance (vault profits are never re-risked),
-                    # capped at 10%, scaled down as drawdown deepens, and
-                    # halved for every consecutive loss on the streak.
+                    # Stake sizing. Manual mode: the manager's exact amount,
+                    # capped only by what's spendable — no Kelly, no 10% rule,
+                    # no drawdown scaling, no streak halving. The manager owns
+                    # the bullet; the Guard's dollar limits own the gun.
+                    # Auto mode: quarter-Kelly off SPENDABLE, all scaling on.
                     stake_base = self._stake_base()
-                    dd_mult = drawdown_multiplier(self.initial_balance, self.balance)
-                    streak_mult = risk_guard.streak_multiplier(self.consecutive_losses)
+                    manual_stake = risk_guard.stake_override
                     stakes = []
-                    for p in best_plays:
-                        p_win = max(0.01, min(0.99, (p.get("observed_pct", 50.0) or 50.0) / 100.0))
-                        payout = p.get("payout") or PAYOUTS.get(p["type"], 1.9)
-                        ks = kelly_stake(p_win, payout, stake_base)
-                        cap = compute_stake(stake_base)
-                        stakes.append(round(min(ks, cap) * dd_mult * streak_mult, 2))
-                    if streak_mult < 1.0 and stakes:
-                        self._log(f"Streak halving: stakes x{streak_mult} after {self.consecutive_losses} straight misses")
-                    # Exposure stagger: combined stakes never exceed 15% of
-                    # spendable — two big simultaneous positions are two big
-                    # simultaneous heart attacks.
-                    total_exposure = sum(stakes)
-                    exposure_cap = 0.15 * stake_base
-                    if total_exposure > exposure_cap > 0:
-                        scale = exposure_cap / total_exposure
-                        stakes = [round(s * scale, 2) for s in stakes]
-                        self._log(f"Exposure stagger: combined stakes capped at ${exposure_cap:.2f} (x{scale:.2f})")
+                    if manual_stake > 0:
+                        stakes = [round(min(manual_stake, stake_base), 2) for _ in best_plays]
+                        if stakes:
+                            self._log(f"Manual stake: ${stakes[0]:.2f} per play (manager's call)")
+                    else:
+                        dd_mult = drawdown_multiplier(self.initial_balance, self.balance)
+                        streak_mult = risk_guard.streak_multiplier(self.consecutive_losses)
+                        for p in best_plays:
+                            p_win = max(0.01, min(0.99, (p.get("observed_pct", 50.0) or 50.0) / 100.0))
+                            payout = p.get("payout") or PAYOUTS.get(p["type"], 1.9)
+                            ks = kelly_stake(p_win, payout, stake_base)
+                            cap = compute_stake(stake_base)
+                            stakes.append(round(min(ks, cap) * dd_mult * streak_mult, 2))
+                        if streak_mult < 1.0 and stakes:
+                            self._log(f"Streak halving: stakes x{streak_mult} after {self.consecutive_losses} straight misses")
+                    # Exposure stagger (auto mode only): combined stakes
+                    # never exceed 15% of spendable. In manual mode the
+                    # manager owns the number — the Guard's dollar limits
+                    # and kill switch are the cage, not a silent resizer.
+                    if manual_stake <= 0:
+                        total_exposure = sum(stakes)
+                        exposure_cap = 0.15 * stake_base
+                        if total_exposure > exposure_cap > 0:
+                            scale = exposure_cap / total_exposure
+                            stakes = [round(s * scale, 2) for s in stakes]
+                            self._log(f"Exposure stagger: combined stakes capped at ${exposure_cap:.2f} (x{scale:.2f})")
                     plays = [p for p, s in zip(best_plays, stakes) if s >= 0.35]
                     stakes = [s for s in stakes if s >= 0.35]
                     if not plays:
@@ -901,7 +910,10 @@ class AutoTrader:
             "running": self.running,
             "mode": self.mode,
             "balance": round(self.balance, 2),
-            "current_stake": compute_stake(self._stake_base()),  # vault invisible to the GK
+            # Manager's stake when set, else 10% of spendable (vault invisible).
+            "current_stake": round(risk_guard.stake_override, 2) if risk_guard.stake_override > 0
+            else compute_stake(self._stake_base()),
+            "stake_mode": "manual" if risk_guard.stake_override > 0 else "auto",
             "daily_pnl": round(self.daily_pnl, 2),
             "trades_today": self.trades_today,
             "consecutive_losses": self.consecutive_losses,
