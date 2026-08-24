@@ -533,3 +533,79 @@ class TestManualStake:
         client.post("/guard/stake", json={"amount": 0})
         s = client.get("/auto-trader/status").json()
         assert s["stake_mode"] == "auto"
+
+
+class TestPHEV:
+    """Plug-in hybrid: fewer, bigger, cleaner strikes."""
+
+    def _mm(self, ev=0.09, z=3.33, ctype="DIFFERS", digit=0):
+        return {
+            'data_quality': 85, 'signal': 'STRONG_DATA_SUPPORT', 'anomaly_count': 0,
+            'contracts': [], 'all_contracts': [
+                {'name': f'{ctype} on {digit}', 'type': ctype, 'digit': digit, 'ev': ev,
+                 'observed_edge': 8.0, 'confidence': 90, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': z},
+            ],
+        }
+
+    def test_phev_mode_exists(self):
+        g = _fresh_guard()
+        assert g.set_mode("PHEV")["mode"] == "PHEV"
+        g.set_mode("FULL_AUTO")
+
+    def test_phev_preset(self):
+        g = _fresh_guard()
+        r = g.apply_preset("PHEV")
+        assert r["preset"] == "PHEV"
+        assert g.max_trades_per_hour == 4
+        assert g.auto_kill_drawdown_pct == 0.08
+
+    def test_phev_rejects_weak_z(self):
+        from app.services.auto_trader import select_plays
+        from app.services.risk_guard import risk_guard
+        risk_guard.set_mode("PHEV")
+        mm = self._mm(z=2.0)
+        assert select_plays(mm, "R_100") == []
+        risk_guard.set_mode("FULL_AUTO")
+
+    def test_phev_rejects_thin_ev(self):
+        from app.services.auto_trader import select_plays
+        from app.services.risk_guard import risk_guard
+        risk_guard.set_mode("PHEV")
+        mm = self._mm(ev=0.02, z=3.0)
+        assert select_plays(mm, "R_100") == []
+        risk_guard.set_mode("FULL_AUTO")
+
+    def test_phev_single_strike_only(self):
+        from app.services.auto_trader import select_plays
+        from app.services.risk_guard import risk_guard
+        risk_guard.set_mode("PHEV")
+        mm = {
+            'data_quality': 85, 'signal': 'STRONG_DATA_SUPPORT', 'anomaly_count': 0,
+            'contracts': [], 'all_contracts': [
+                {'name': 'DIFFERS on 0', 'type': 'DIFFERS', 'digit': 0, 'ev': 0.09,
+                 'observed_edge': 8.0, 'confidence': 90, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.33},
+                {'name': 'OVER 2', 'type': 'OVER', 'digit': 2, 'ev': 0.08,
+                 'observed_edge': 7.0, 'confidence': 85, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.0},
+            ],
+        }
+        plays = select_plays(mm, 'R_100')
+        assert len(plays) <= 1
+        risk_guard.set_mode("FULL_AUTO")
+
+    def test_phev_stake_compounds_with_profit(self):
+        from app.services.auto_trader import AutoTrader
+        from app.services.risk_guard import risk_guard
+        risk_guard.set_mode("PHEV")
+        at = AutoTrader()
+        at._session_active = True
+        at.initial_balance = 1000.0
+        at.daily_pnl = 0.0
+        assert at._phev_stake(1000.0) == 1000.0
+        at.daily_pnl = 500.0
+        assert at._phev_stake(1000.0) == 1000.0 + 200.0
+        at.daily_pnl = -100.0
+        assert at._phev_stake(1000.0) == 1000.0
+        risk_guard.set_mode("FULL_AUTO")

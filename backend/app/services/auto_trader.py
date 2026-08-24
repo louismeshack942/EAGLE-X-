@@ -55,6 +55,11 @@ DECISION_HISTORY_LEN = 20    # recent team decisions surfaced in status
 STRIKE_ROTATION_S = 30.0     # don't repeat the exact same strike for 30s
 
 
+PHEV_MIN_Z = 2.8             # PHEV: stronger proof than the standard 1.96
+PHEV_MIN_EV = 0.05           # PHEV: minimum +5% real expected value
+PHEV_MIN_CHI_N = 300         # PHEV: chi-square gate always on (deep window)
+
+
 def _loss_set(contract: dict) -> set:
     """The digits this contract LOSES on. Two contracts whose loss sets
     overlap are not a pair — they're double exposure to the same digit.
@@ -112,10 +117,18 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         mm.get("all_contracts") or mm.get("contracts") or [],
         key=lambda c: (c.get("type") == "DIFFERS", c.get("ev", -1)), reverse=True,
     )
+    phev = risk_guard.mode == "PHEV"
     plays: list[dict] = []
     for c in contracts:
         ev = c.get("ev", -1)
         edge = c.get("observed_edge", 0.0) or 0.0
+        if phev:
+            # PHEV gates: stronger proof and fatter real EV than the standard
+            # squad. The engine only runs when the market is charging.
+            if abs(c.get("z") or 0.0) < PHEV_MIN_Z:
+                continue
+            if ev < PHEV_MIN_EV:
+                continue
         if ev <= MIN_EV or edge < MIN_EDGE_PCT:
             continue  # scouts: no positive expectation, no meaningful edge
         if not c.get("significant", False):
@@ -131,7 +144,7 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         if plays and _correlated(plays[0], c):
             continue  # never pair two contracts that lose on the same digit
         plays.append({**c, "symbol": symbol, "data_quality": dq, "signal": sig})
-        if len(plays) >= FLUID_MAX_PLAYS:
+        if len(plays) >= (1 if phev else FLUID_MAX_PLAYS):  # PHEV: single strike
             break
     if not plays:
         return []
@@ -155,11 +168,13 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         )
         if table is not None:
             chi = table.get("chi2") or {}
-            # chi-square needs a deep window to speak. On a shallow queue the
-            # whole-table skew test can't separate one starved digit from a
-            # fair table — so we only enforce it when n is big enough to matter.
-            if chi.get("n", 0) >= 300 and not chi.get("skewed", False):
+            # chi-square needs a deep window to speak. Standard: only enforced
+            # when n >= 300. PHEV: always enforced — the engine only runs on a
+            # provably skewed table.
+            if chi.get("n", 0) >= (PHEV_MIN_CHI_N if phev else 300) and not chi.get("skewed", False):
                 return []  # one hot digit on a provably fair table is a mirage
+            if phev and not chi.get("skewed", False):
+                return []  # PHEV: no skew, no engine — even on shallow data
             mw = table.get("multi_window") or {}
             if mw.get("digit") == top["digit"] and not mw.get("confirmed", False):
                 return []  # hot on the short window only — not a story
@@ -238,6 +253,16 @@ class AutoTrader:
         if self._session_active and virtual_bank.synced:
             return virtual_bank.spendable()
         return self.balance
+
+    def _phev_stake(self, base: float) -> float:
+        """PHEV compounding: stake grows with session profit, but the base
+        is always the session's opening balance — never the house's money.
+        After a win the next stake rises; after a loss it snaps back to base."""
+        if risk_guard.mode != "PHEV" or not self._session_active:
+            return base
+        # stake = opening + 40% of session profit (the part that stays spendable)
+        spendable_profit = max(0.0, self.daily_pnl * 0.4)
+        return self.initial_balance + spendable_profit
 
     def _current_window_ok(self) -> Optional[bool]:
         """Hot-hours filter, cached for 5 minutes. None = not enough data."""
@@ -816,7 +841,7 @@ class AutoTrader:
                     # no drawdown scaling, no streak halving. The manager owns
                     # the bullet; the Guard's dollar limits own the gun.
                     # Auto mode: quarter-Kelly off SPENDABLE, all scaling on.
-                    stake_base = self._stake_base()
+                    stake_base = self._phev_stake(self._stake_base())
                     manual_stake = risk_guard.stake_override
                     stakes = []
                     if manual_stake > 0:

@@ -26,7 +26,7 @@ from app.services.persistence import settings_store
 _STATE_KEY = "risk_guard_state"
 _lock = threading.Lock()
 
-MODES = ("FULL_AUTO", "COACH", "FULL_MANUAL", "HYBRID")
+MODES = ("FULL_AUTO", "COACH", "FULL_MANUAL", "HYBRID", "PHEV")
 
 
 def _utcnow() -> str:
@@ -278,6 +278,14 @@ class RiskGuard:
             "max_trades_per_hour": 25, "streak_halving": False,
             "trail_arm": 0.0, "trail_pct": 0.5, "auto_kill_drawdown_pct": 0.0,
             "escalate_after_losses": 0,
+        },
+        "PHEV": {
+            # Plug-in hybrid: fewer, bigger, cleaner strikes. The engine only
+            # runs when the market is charging.
+            "daily_loss_limit": 300.0, "session_take_profit": 500.0,
+            "max_trades_per_hour": 4, "streak_halving": True,
+            "trail_arm": 100.0, "trail_pct": 0.4, "auto_kill_drawdown_pct": 0.08,
+            "escalate_after_losses": 2,
         },
     }
 
