@@ -156,7 +156,7 @@ def multi_window_confirmed(symbol: str, digit: int, queue=None) -> dict:
     as unconfirmed, not as pass.
     """
     queue = queue or tick_queue
-    windows = (100, 300, 1000)
+    windows = (100, 300, 1000, 2000)  # the deep window separates story from noise
     zs = {}
     for w in windows:
         ticks = queue.recent(symbol, limit=w)

@@ -290,3 +290,52 @@ class TestCopilotV2:
         from app.services.ai_copilot import ai_copilot
         r = ai_copilot.ask("how do I improve?")
         assert r["answer"]
+
+
+class TestPrecisionGate:
+    """The 8W/2L upgrade: fewer entries, cleaner entries."""
+
+    def _mm(self, ev=0.06, z=-2.5, ctype="DIFFERS", digit=3, significant=True):
+        contract = {
+            "name": f"{ctype} on {digit}" if digit is not None else ctype,
+            "type": ctype, "digit": digit, "ev": ev, "observed_edge": 3.0,
+            "confidence": 80.0, "evidence": "STRONG_DATA_SUPPORT",
+            "significant": significant, "z": z,
+        }
+        return {
+            "data_quality": 85, "signal": "STRONG_DATA_SUPPORT",
+            "anomaly_count": 0, "contracts": [contract], "all_contracts": [contract],
+        }
+
+    def test_sliver_differs_ev_rejected(self):
+        from app.services.auto_trader import select_plays
+        mm = self._mm(ev=0.005)  # positive but paper-thin
+        assert select_plays(mm, "R_100") == []
+
+    def test_real_differs_ev_reaches_precision_layer(self):
+        from app.services.auto_trader import select_plays
+        mm = self._mm(ev=0.06)
+        out = select_plays(mm, "R_100")
+        assert isinstance(out, list)
+
+    def test_non_differs_skips_precision_layer(self):
+        from app.services.auto_trader import select_plays
+        mm = self._mm(ev=0.5, ctype="OVER", digit=1)
+        out = select_plays(mm, "R_100")
+        assert len(out) == 1  # OVER bypasses the DIFFERS-only precision gate
+
+    def test_min_differs_ev_constant(self):
+        from app.services.market_master import MIN_DIFFERS_EV, MIN_Z_AGE_S, BREAKEVEN_MIN_TICKS
+        assert MIN_DIFFERS_EV >= 0.02
+        assert MIN_Z_AGE_S >= 30.0
+        assert BREAKEVEN_MIN_TICKS >= 200
+
+    def test_z_age_blocks_fresh_edges(self):
+        from app.services import scout as sc
+        sc._note_z("AGE_TEST", 5, -3.0)
+        assert sc.z_age_s("AGE_TEST", 5) < 45.0
+
+    def test_multi_window_has_deep_window(self):
+        from app.services import scout as sc
+        out = sc.multi_window_confirmed("R_100", 3)
+        assert 2000 in out["windows"]

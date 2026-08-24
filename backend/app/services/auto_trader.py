@@ -19,7 +19,15 @@ from typing import Optional
 
 from app.config import get_settings
 from app.services.deriv_trader import deriv_trader
-from app.services.market_master import MIN_EDGE_PCT, MIN_EV, PAYOUTS, market_master
+from app.services.market_master import (
+    MIN_DIFFERS_EV,
+    MIN_EDGE_PCT,
+    MIN_EV,
+    MIN_Z_AGE_S,
+    PAYOUTS,
+    market_master,
+)
+from app.services import scout as scout_svc
 from app.services.money_management import (
     check_hard_stops,
     compute_stake,
@@ -53,6 +61,13 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
     striker. The gates below ARE the team: CB's signal, LB's data quality,
     the physio's anomaly count, the analysts' 95% z-significance, and the
     scouts' edge/EV floors. Whatever survives, ranked by EV, is the call.
+
+    PRECISION LAYER (the 8W/2L upgrade): surviving the vote is not enough
+    to be FIRED. The CF now rejects entries he would regret — a starving
+    digit is only a strike if the table is skewed (chi-square), the skew
+    survives every window (100/300/1000), the edge isn't evaporating
+    (momentum), and it has HELD for a while (z-age). Fewer entries,
+    cleaner entries.
     """
     dq = mm.get("data_quality", 0) or 0
     sig = mm.get("signal", "") or ""
@@ -73,11 +88,38 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
             continue  # analysts: deviation not proven at the 95% level
         if "SUPPORT" not in (c.get("evidence") or ""):
             continue  # CB: data does not support the direction
+        # Entry quality bar: a DIFFERS strike must carry real expectancy.
+        # EV +0.005 means win 10 in a row and a single miss eats it all.
+        if c.get("type") == "DIFFERS" and ev < MIN_DIFFERS_EV:
+            continue
         if plays and c.get("ev", 0) < plays[0].get("ev", 0) * FLUID_PAIR_RATIO:
             continue  # coach: second play must be nearly as good as the first
         plays.append({**c, "symbol": symbol, "data_quality": dq, "signal": sig})
         if len(plays) >= FLUID_MAX_PLAYS:
             break
+    if not plays:
+        return []
+
+    # The precision gate: the top play must survive the table-level checks.
+    # These look at the WHOLE distribution, not the one hot digit.
+    top = plays[0]
+    if top.get("type") == "DIFFERS" and top.get("digit") is not None:
+        table = next(
+            (t for t in scout_svc.scan_tables([symbol]).get("tables", [])
+             if t["symbol"] == symbol),
+            None,
+        )
+        if table is not None:
+            chi = table.get("chi2") or {}
+            if not chi.get("skewed", False):
+                return []  # one hot digit on a fair table is a mirage
+            mw = table.get("multi_window") or {}
+            if mw.get("digit") == top["digit"] and not mw.get("confirmed", False):
+                return []  # hot on the short window only — not a story
+            if table.get("momentum_rising"):
+                return []  # the edge is evaporating under your feet
+            if scout_svc.z_age_s(symbol, top["digit"]) < MIN_Z_AGE_S:
+                return []  # the edge is seconds old — let it prove it lasts
     return plays
 
 
