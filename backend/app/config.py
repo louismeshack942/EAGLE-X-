@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"
     deriv_app_id: int = 1089
     deriv_api_token: str = ""
-    deriv_active_symbols: str = "R_10,R_25,R_50,R_75,R_100"
+    deriv_active_symbols: str = "R_10,R_25,R_50,R_75,R_100,1HZ100V,1HZ200V,1HZ300V"
     # OAuth: public client, no secret. Register your own app at api.deriv.com
     # and set DERIV_APP_ID for a branded OAuth screen.
     deriv_oauth_url: str = "https://auth.deriv.com/oauth2/auth"

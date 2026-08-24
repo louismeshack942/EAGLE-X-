@@ -25,6 +25,6 @@ services:
       - key: DERIV_API_TOKEN
         sync: false
       - key: DERIV_ACTIVE_SYMBOLS
-        value: R_10,R_25,R_50,R_75,R_100
+        value: R_10,R_25,R_50,R_75,R_100,1HZ100V,1HZ200V,1HZ300V
       - key: SECRET_KEY
         generateValue: true

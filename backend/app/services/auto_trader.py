@@ -690,7 +690,17 @@ class AutoTrader:
                 # Under Pep's tight marking (after a benching): one extra
                 # confirmation AND the analysts must show stronger proof —
                 # we wait for the right strike, we never chase the last one.
+                # BUT: overwhelming evidence (z > 3.0) fires on the spot —
+                # speed bots win because they don't wait for confirmations.
                 required_ticks = TIGHT_CONFIRM_TICKS if self.tight_marking else 2
+                overwhelming = (
+                    best_plays
+                    and abs(best_plays[0].get("z") or 0.0) >= 3.0
+                    and best_plays[0].get("ev", 0) >= 0.05
+                    and not self.tight_marking
+                )
+                if overwhelming:
+                    required_ticks = 1  # fire on the spot — evidence is overwhelming
                 if self.tight_marking and best_plays:
                     proven = [p for p in best_plays if abs(p.get("z") or 0.0) >= TIGHT_MIN_Z]
                     if len(proven) < len(best_plays):
