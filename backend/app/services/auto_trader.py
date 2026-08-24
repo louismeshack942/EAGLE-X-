@@ -904,10 +904,13 @@ class AutoTrader:
                     )
                     mark_strike_fired(plays)  # rotation: same strike can't fire again for 30s
                     worst = "loss" if any(not o["won"] for o in outcomes) else "win"
-                    if risk_guard.mode != "HEV":
-                        await asyncio.sleep(
-                            risk_guard.cooldown_escalator(cooldown_for(worst), self.consecutive_losses)
+                    speed = risk_guard.scan_speed()
+                    await asyncio.sleep(
+                        risk_guard.cooldown_escalator(
+                            cooldown_for(worst) * speed["cooldown_mult"],
+                            self.consecutive_losses,
                         )
+                    )
                     # HEV: no cooldown — the speed bot fires the next scan
                     # the moment this one settles. The Guard's dollar limits
                     # are the only brake.
@@ -920,8 +923,8 @@ class AutoTrader:
                                 "CF training ground: "
                                 f"{len(symbols)} markets scanned — no clean pass, drilling"
                             )
-                    # HEV scans at full speed; everyone else keeps the 1s rhythm.
-                    await asyncio.sleep(0.3 if risk_guard.mode == "HEV" else 1.0)
+                    # Every mode scans fast now: 0.3s across the board.
+                    await asyncio.sleep(risk_guard.scan_speed()["loop_sleep"])
         except asyncio.CancelledError:  # normal shutdown path
             pass
         except Exception as exc:  # noqa: BLE001

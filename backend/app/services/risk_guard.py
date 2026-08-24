@@ -345,6 +345,14 @@ class RiskGuard:
             return base_cooldown
         return min(300.0, base_cooldown * (2 ** consecutive_losses))
 
+    def scan_speed(self) -> dict:
+        """How fast the loop runs. The days of sleeping are over — every mode
+        scans at speed. HEV flat out; everyone else 3x faster than the old
+        1s rhythm; cooldowns are 30% of the old default."""
+        if self.mode == "HEV":
+            return {"loop_sleep": 0.3, "cooldown_mult": 0.0}
+        return {"loop_sleep": 0.3, "cooldown_mult": 0.3}
+
     # ---------------- tilt detector ----------------
     def tilt_warning(self, last_result: Optional[str]) -> Optional[str]:
         """3+ manual trades within 90s right after a loss = tilt."""
