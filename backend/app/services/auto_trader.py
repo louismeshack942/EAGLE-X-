@@ -52,6 +52,7 @@ TIGHT_CONFIRM_TICKS = 3      # after a benching: one extra confirmation tick
 TIGHT_MIN_Z = 2.5            # after a benching: stronger proof than the 1.96 floor
 MAX_ANOMALIES = 3            # physio room: too many anomalies, nobody plays
 DECISION_HISTORY_LEN = 20    # recent team decisions surfaced in status
+STRIKE_ROTATION_S = 30.0     # don't repeat the exact same strike for 30s
 
 
 def select_plays(mm: dict, symbol: str) -> list[dict]:
@@ -101,6 +102,14 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
     if not plays:
         return []
 
+    # Strike rotation: the exact same strike never repeats within 30s.
+    # The squad scores from every angle, not just one boot.
+    now = time.time()
+    fresh = [p for p in plays if now - _strike_last_fired.get(p["name"], 0) >= STRIKE_ROTATION_S]
+    if not fresh:
+        return []  # every approved strike is on cooldown — wait for a new angle
+    plays = fresh
+
     # The precision gate: the top play must survive the table-level checks.
     # These look at the WHOLE distribution, not the one hot digit.
     top = plays[0]
@@ -136,6 +145,16 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
             elif scout_svc.z_age_s(symbol, top["digit"]) < MIN_Z_AGE_S:
                 return []  # shallow cache: fall back to wall-clock age
     return plays
+
+
+_strike_last_fired: dict[str, float] = {}
+
+
+def mark_strike_fired(plays: list[dict]) -> None:
+    """Record when each strike last fired so rotation can enforce variety."""
+    now = time.time()
+    for p in plays:
+        _strike_last_fired[p["name"]] = now
 
 
 class AutoTrader:
@@ -773,6 +792,7 @@ class AutoTrader:
                     outcomes = await asyncio.gather(
                         *(self.place_trade(p, s, api_token) for p, s in zip(plays, stakes))
                     )
+                    mark_strike_fired(plays)  # rotation: same strike can't fire again for 30s
                     worst = "loss" if any(not o["won"] for o in outcomes) else "win"
                     await asyncio.sleep(
                         risk_guard.cooldown_escalator(cooldown_for(worst), self.consecutive_losses)
