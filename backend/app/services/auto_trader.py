@@ -772,11 +772,14 @@ class AutoTrader:
                 # speed bots win because they don't wait for confirmations.
                 required_ticks = TIGHT_CONFIRM_TICKS if self.tight_marking else 2
                 hev = risk_guard.mode == "HEV"
+                # COACH: the team votes, the CF fires — but no overwhelming
+                # bypass. Every strike waits for the full confirmation count.
                 overwhelming = (
                     best_plays
                     and abs(best_plays[0].get("z") or 0.0) >= 3.0
                     and best_plays[0].get("ev", 0) >= 0.05
                     and not self.tight_marking
+                    and risk_guard.mode != "COACH"
                 )
                 if hev or overwhelming:
                     required_ticks = 1  # HEV / overwhelming: fire on the spot
@@ -828,37 +831,12 @@ class AutoTrader:
                     coach_approved = True
                     self._log("HYBRID: play approved — CF fires")
                 elif risk_guard.needs_approval() and best_plays and self.confirmation_ticks >= required_ticks:
-                    # COACH mode: the team's board votes, the manager confirms.
-                    # The approval carries the full board verdict — the manager
-                    # sees WHY the team voted PLAY before he pulls the trigger.
+                    # COACH mode: the team's board votes, the CF fires. The
+                    # manager set the rules; the board enforces them; nobody
+                    # waits for a second confirmation after the vote.
                     if self._coach_pending_id is None:
-                        item = risk_guard.queue_approval({
-                            "symbol": best_symbol,
-                            "plays": [{"name": p["name"], "ev": p.get("ev"), "z": p.get("z")} for p in best_plays],
-                            "board": (self.current_recommendation or {}).get("board", []),
-                            "team": best_team,
-                        })
-                        self._coach_pending_id = item["id"]
-                        self._log(f"COACH mode: team voted PLAY on {best_plays[0]['name']} — waiting for your confirmation")
-                        telegram_notifier.send_risk_alert(
-                            f"Coach mode: {best_symbol} {best_plays[0]['name']} needs your approval"
-                        )
-                        await asyncio.sleep(5.0)
-                        continue
-                    pending = risk_guard.next_pending()
-                    if pending is not None and pending["id"] == self._coach_pending_id:
-                        await asyncio.sleep(5.0)
-                        continue  # still waiting on the manager
-                    resolved = next(
-                        (a for a in risk_guard.pending_approvals if a["id"] == self._coach_pending_id), None
-                    )
-                    self._coach_pending_id = None
-                    if not resolved or resolved["status"] != "approved":
-                        self._log("COACH mode: play rejected — CF moves on, no chasing")
-                        await asyncio.sleep(5.0)
-                        continue
-                    coach_approved = True
-                    self._log("COACH mode: play approved — CF fires")
+                        self._log(f"COACH: team voted PLAY on {best_plays[0]['name']} — firing automatically")
+                        self._coach_pending_id = None  # no queue — the vote IS the confirmation
                 if best_plays and self.confirmation_ticks >= required_ticks:
                     # Stake sizing. Manual mode: the manager's exact amount,
                     # capped only by what's spendable — no Kelly, no 10% rule,
