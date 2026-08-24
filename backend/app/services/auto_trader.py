@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from app.config import get_settings
+from app.core.queue import tick_queue
 from app.services.deriv_trader import deriv_trader
 from app.services.market_master import (
     MIN_DIFFERS_EV,
@@ -76,7 +77,7 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         return []
     contracts = sorted(
         mm.get("all_contracts") or mm.get("contracts") or [],
-        key=lambda c: c.get("ev", -1), reverse=True,
+        key=lambda c: (c.get("type") == "DIFFERS", c.get("ev", -1)), reverse=True,
     )
     plays: list[dict] = []
     for c in contracts:
@@ -111,15 +112,29 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         )
         if table is not None:
             chi = table.get("chi2") or {}
-            if not chi.get("skewed", False):
-                return []  # one hot digit on a fair table is a mirage
+            # chi-square needs a deep window to speak. On a shallow queue the
+            # whole-table skew test can't separate one starved digit from a
+            # fair table — so we only enforce it when n is big enough to matter.
+            if chi.get("n", 0) >= 300 and not chi.get("skewed", False):
+                return []  # one hot digit on a provably fair table is a mirage
             mw = table.get("multi_window") or {}
             if mw.get("digit") == top["digit"] and not mw.get("confirmed", False):
                 return []  # hot on the short window only — not a story
             if table.get("momentum_rising"):
                 return []  # the edge is evaporating under your feet
-            if scout_svc.z_age_s(symbol, top["digit"]) < MIN_Z_AGE_S:
-                return []  # the edge is seconds old — let it prove it lasts
+            # z-age: the edge must have HELD, not appeared this second. Derive
+            # it from the tick stream itself — split the cached ticks in half
+            # and require the digit was ALREADY significant in the older half.
+            ticks = tick_queue.recent(symbol, limit=1000)
+            digits = [t.digit for t in ticks]
+            if len(digits) >= 200:
+                half = len(digits) // 2
+                from app.services.scout import _digit_z
+                z_older = _digit_z(digits[:half]).get(top["digit"], 0.0)
+                if z_older > -1.96:
+                    return []  # edge is only recent — let it prove it lasts
+            elif scout_svc.z_age_s(symbol, top["digit"]) < MIN_Z_AGE_S:
+                return []  # shallow cache: fall back to wall-clock age
     return plays
 
 

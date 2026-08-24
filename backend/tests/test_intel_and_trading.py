@@ -178,17 +178,17 @@ def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT", significant=True):
 
 class TestTeamDecision:
     def test_team_decides_not_the_cf(self):
-        """The CF has no favourite. Any contract type the team approves plays —
-        the squad's best EV leads, whatever shirt it wears."""
+        """DIFFERS is the only sustainable edge — when one passes every gate,
+        it outranks the coin-flip tables regardless of their bigger EV."""
         mm = _mm(contracts=[
-            _c("OVER 1", 0.88, 8.0),         # team-approved edge — plays
-            _c("MATCHES on 6", 0.71, 9.0),   # team-approved — plays as second
-            _c("DIFFERS on 3", 0.09, 5.0),   # real edge but too far behind
+            _c("OVER 1", 0.88, 8.0),         # big EV, but a coin flip
+            _c("MATCHES on 6", 0.71, 9.0),   # 10% lottery
+            _c("DIFFERS on 3", 0.09, 5.0),   # the real 90% edge — leads now
         ])
         plays = select_plays(mm, "R_100")
         assert len(plays) == 2  # FLUID_MAX_PLAYS
-        assert plays[0]["name"] == "OVER 1"      # highest EV leads the line
-        assert plays[1]["name"] == "MATCHES on 6"
+        assert plays[0]["name"] == "DIFFERS on 3"  # the sustainable edge leads the line
+        assert plays[1]["name"] == "OVER 1"        # fluid second, still team-approved
 
     def test_every_contract_type_is_eligible(self):
         for name in ("DIFFERS on 3", "MATCHES on 6", "ODD", "EVEN", "OVER 4", "UNDER 5"):

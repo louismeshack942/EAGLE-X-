@@ -339,3 +339,57 @@ class TestPrecisionGate:
         from app.services import scout as sc
         out = sc.multi_window_confirmed("R_100", 3)
         assert 2000 in out["windows"]
+
+
+class TestDiffersPriority:
+    """The CF must finish the starving digit, not the coin flip."""
+
+    def _mm(self):
+        return {
+            'data_quality': 85, 'signal': 'STRONG_DATA_SUPPORT', 'anomaly_count': 0,
+            'contracts': [], 'all_contracts': [
+                {'name': 'OVER 1', 'type': 'OVER', 'digit': 1, 'ev': 0.86,
+                 'observed_edge': 5.0, 'confidence': 80, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.3},
+                {'name': 'DIFFERS on 0', 'type': 'DIFFERS', 'digit': 0, 'ev': 0.078,
+                 'observed_edge': 8.0, 'confidence': 90, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.33},
+            ],
+        }
+
+    def test_differs_outranks_over_on_gated_table(self):
+        from app.core.queue import tick_queue
+        from app.models.tick import Tick
+        import random
+        from app.services.auto_trader import select_plays
+        rng = random.Random(9)
+        for i in range(600):
+            tick_queue.push(Tick(symbol='R_100', quote=100.0 + rng.randrange(1, 10) / 10))
+        plays = select_plays(self._mm(), 'R_100')
+        assert plays and plays[0]['type'] == 'DIFFERS'
+
+    def test_over_leads_when_no_differs_passes(self):
+        from app.services.auto_trader import select_plays
+        mm = {
+            'data_quality': 85, 'signal': 'STRONG_DATA_SUPPORT', 'anomaly_count': 0,
+            'contracts': [], 'all_contracts': [
+                {'name': 'OVER 1', 'type': 'OVER', 'digit': 1, 'ev': 0.86,
+                 'observed_edge': 5.0, 'confidence': 80, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.3},
+            ],
+        }
+        plays = select_plays(mm, 'R_100')
+        assert plays and plays[0]['type'] == 'OVER'
+
+    def test_fair_table_still_blocks(self):
+        from app.services.auto_trader import select_plays
+        mm = {
+            'data_quality': 85, 'signal': 'STRONG_DATA_SUPPORT', 'anomaly_count': 0,
+            'contracts': [], 'all_contracts': [
+                {'name': 'DIFFERS on 0', 'type': 'DIFFERS', 'digit': 0, 'ev': 0.078,
+                 'observed_edge': 8.0, 'confidence': 90, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.33},
+            ],
+        }
+        plays = select_plays(mm, 'EMPTY_SYMBOL_XYZ')
+        assert plays == []
