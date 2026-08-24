@@ -393,3 +393,89 @@ class TestDiffersPriority:
         }
         plays = select_plays(mm, 'EMPTY_SYMBOL_XYZ')
         assert plays == []
+
+
+class TestPayoutHonesty:
+    """The 2026-08-24 drawdown: OVER 1 pays ~1.22, not 1.9. Never again."""
+
+    def test_digit_payout_matches_deriv_pricing(self):
+        from app.services.market_master import _digit_payout
+        assert abs(_digit_payout(0.8) - 1.231) < 0.01   # OVER 1
+        assert abs(_digit_payout(0.1) - 9.85) < 0.01    # UNDER 1
+        assert abs(_digit_payout(0.5) - 1.97) < 0.01    # coin-flip tables
+
+    def test_over_1_is_negative_ev_at_fair_odds(self):
+        """At fair 80% frequency, OVER 1 at its real 1.23 payout LOSES money.
+        The old 1.9 payout made it look like +0.52 EV — that lie cost $4k."""
+        from app.services.market_master import _digit_payout, _ev
+        fair = 0.80
+        payout = _digit_payout(fair)
+        assert _ev(fair, payout) < 0  # fair odds = the house wins, as always
+
+    def test_contracts_carry_real_payout(self):
+        from app.core.queue import tick_queue
+        from app.models.tick import Tick
+        import random
+        from app.services.market_master import market_master
+        rng = random.Random(3)
+        for i in range(150):
+            tick_queue.push(Tick(symbol='PO_TEST', quote=100.0 + rng.randrange(10) / 10))
+        mm = market_master.analyze('PO_TEST', 100)
+        for c in mm.get('all_contracts', []):
+            assert 'payout' in c, f"{c['name']} missing payout"
+        over1 = next(c for c in mm['all_contracts'] if c['name'] == 'OVER 1')
+        assert over1['payout'] < 1.5  # real odds, not the 1.9 fantasy
+
+
+class TestCorrelationBan:
+    """Two contracts that lose on the same digit are not a pair — they're
+    double exposure. The exact structure that drained the account."""
+
+    def test_loss_sets(self):
+        from app.services.auto_trader import _loss_set
+        assert _loss_set({'type': 'DIFFERS', 'digit': 0}) == {0}
+        assert _loss_set({'type': 'OVER', 'digit': 1}) == {0, 1}
+        assert _loss_set({'type': 'UNDER', 'digit': 7}) == {7, 8, 9}
+        assert _loss_set({'type': 'MATCHES', 'digit': 3}) == {0, 1, 2, 4, 5, 6, 7, 8, 9}
+        assert _loss_set({'type': 'ODD'}) == {0, 2, 4, 6, 8}
+
+    def test_loss_set_parses_digit_from_name(self):
+        from app.services.auto_trader import _loss_set
+        assert _loss_set({'type': 'OVER', 'name': 'OVER 1'}) == {0, 1}
+        assert _loss_set({'type': 'DIFFERS', 'name': 'DIFFERS on 3'}) == {3}
+
+    def test_differs0_over1_pair_banned(self):
+        """The exact killer pair from the drawdown."""
+        from app.services.auto_trader import select_plays
+        mm = {
+            'data_quality': 85, 'signal': 'STRONG_DATA_SUPPORT', 'anomaly_count': 0,
+            'contracts': [], 'all_contracts': [
+                {'name': 'DIFFERS on 0', 'type': 'DIFFERS', 'digit': 0, 'ev': 0.078,
+                 'observed_edge': 8.0, 'confidence': 90, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.33},
+                {'name': 'OVER 1', 'type': 'OVER', 'digit': 1, 'ev': 0.86,
+                 'observed_edge': 5.0, 'confidence': 80, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.3},
+            ],
+        }
+        plays = select_plays(mm, 'R_100')
+        # at most ONE of them — they both lose on digit 0
+        assert len(plays) <= 1
+        if plays:
+            assert plays[0]['name'] == 'DIFFERS on 0'
+
+    def test_uncorrelated_pair_still_allowed(self):
+        from app.services.auto_trader import select_plays
+        mm = {
+            'data_quality': 85, 'signal': 'STRONG_DATA_SUPPORT', 'anomaly_count': 0,
+            'contracts': [], 'all_contracts': [
+                {'name': 'OVER 1', 'type': 'OVER', 'digit': 1, 'ev': 0.86,
+                 'observed_edge': 5.0, 'confidence': 80, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.3},
+                {'name': 'UNDER 7', 'type': 'UNDER', 'digit': 7, 'ev': 0.70,
+                 'observed_edge': 4.5, 'confidence': 75, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 2.8},
+            ],
+        }
+        plays = select_plays(mm, 'R_100')
+        assert len(plays) == 2  # {0,1} and {7,8,9} never collide

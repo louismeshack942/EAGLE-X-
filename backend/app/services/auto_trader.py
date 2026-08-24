@@ -55,6 +55,38 @@ DECISION_HISTORY_LEN = 20    # recent team decisions surfaced in status
 STRIKE_ROTATION_S = 30.0     # don't repeat the exact same strike for 30s
 
 
+def _loss_set(contract: dict) -> set:
+    """The digits this contract LOSES on. Two contracts whose loss sets
+    overlap are not a pair — they're double exposure to the same digit.
+    (2026-08-24: DIFFERS 0 + OVER 1 both lose on digit 0; one bad tick
+    cost two full stakes. Never again.)"""
+    t = contract.get("type")
+    d = contract.get("digit")
+    if d is None:
+        # Names carry the digit: "DIFFERS on 3", "OVER 1", "MATCHES on 6".
+        parts = (contract.get("name") or "").split()
+        tail = parts[-1] if parts else ""
+        d = int(tail) if tail.isdigit() else None
+    if t == "DIFFERS":
+        return {d}
+    if t == "MATCHES":
+        return set(range(10)) - {d}
+    if t == "OVER":
+        return set(range(0, d + 1)) if d is not None else set(range(10))
+    if t == "UNDER":
+        return set(range(d, 10)) if d is not None else set(range(10))
+    if t == "ODD":
+        return {0, 2, 4, 6, 8}
+    if t == "EVEN":
+        return {1, 3, 5, 7, 9}
+    return set(range(10))
+
+
+def _correlated(a: dict, b: dict) -> bool:
+    """True when both contracts can lose on the same digit."""
+    return bool(_loss_set(a) & _loss_set(b))
+
+
 def select_plays(mm: dict, symbol: str) -> list[dict]:
     """The team picks the play; the CF just finishes it.
 
@@ -96,6 +128,8 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
             continue
         if plays and c.get("ev", 0) < plays[0].get("ev", 0) * FLUID_PAIR_RATIO:
             continue  # coach: second play must be nearly as good as the first
+        if plays and _correlated(plays[0], c):
+            continue  # never pair two contracts that lose on the same digit
         plays.append({**c, "symbol": symbol, "data_quality": dq, "signal": sig})
         if len(plays) >= FLUID_MAX_PLAYS:
             break
@@ -391,7 +425,7 @@ class AutoTrader:
         in paper too.
         """
         t = contract["type"]
-        payout = PAYOUTS.get(t, 1.9)
+        payout = contract.get("payout") or PAYOUTS.get(t, 1.9)
         edge = (contract.get("observed_edge", 0.0) or 0.0) / 100.0
         if t == "MATCHES":
             p_win = max(0.05, min(0.22, 0.10 + edge))
@@ -787,7 +821,7 @@ class AutoTrader:
                     stakes = []
                     for p in best_plays:
                         p_win = max(0.01, min(0.99, (p.get("observed_pct", 50.0) or 50.0) / 100.0))
-                        payout = PAYOUTS.get(p["type"], 1.9)
+                        payout = p.get("payout") or PAYOUTS.get(p["type"], 1.9)
                         ks = kelly_stake(p_win, payout, stake_base)
                         cap = compute_stake(stake_base)
                         stakes.append(round(min(ks, cap) * dd_mult * streak_mult, 2))

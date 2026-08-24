@@ -20,7 +20,23 @@ from app.services.money_management import compute_stake
 MAX_SCORE = 100.0
 
 # Fair payout multipliers Deriv offers (approx; used for EV honesty, not display).
-PAYOUTS = {"MATCHES": 9.0, "DIFFERS": 1.1, "ODD": 1.9, "EVEN": 1.9, "OVER": 1.9, "UNDER": 1.9}
+# MATCHES/DIFFERS are fixed by Deriv; ODD/EVEN are the ~1.9 coin-flip tables.
+# OVER/UNDER are NOT 1.9: Deriv prices them by win probability (~1-2% house
+# edge), so OVER 1 (wins 80%) pays ~1.21, not 1.9. Using 1.9 manufactured a
+# fake +EV on OVER/UNDER and cost the account real money — see the 2026-08-24
+# drawdown. _digit_payout computes the real number per contract.
+PAYOUTS = {"MATCHES": 9.0, "DIFFERS": 1.1, "ODD": 1.9, "EVEN": 1.9}
+HOUSE_EDGE = 0.015  # Deriv keeps ~1.5% on digit contracts
+
+
+def _digit_payout(p_win_fair: float) -> float:
+    """Deriv-style payout for a digit contract with fair win prob p_win_fair.
+
+    payout = (1 - house_edge) / p_fair. OVER 1 (80%) -> ~1.21; UNDER 1 (10%)
+    -> ~9.85; ODD/EVEN (50%) -> ~1.97 (capped by their fixed 1.9).
+    """
+    p = max(0.01, min(0.99, p_win_fair))
+    return round((1.0 - HOUSE_EDGE) / p, 3)
 
 SIGNIFICANCE_Z = 1.96  # 95% confidence level
 MIN_EDGE_PCT = 1.0     # scouts' floor: minimum observed-vs-fair edge (pp)
@@ -89,6 +105,7 @@ class MarketMaster:
                     "observed_edge": round(m_edge, 2),
                     "z": round(z_d, 2),
                     "significant": z_d >= 1.96,
+                    "payout": PAYOUTS["MATCHES"],
                     "ev": _ev(p_match, PAYOUTS["MATCHES"]),
                 })
                 # DIFFERS: fair 90%. Significant only when the digit is STARVING
@@ -107,6 +124,7 @@ class MarketMaster:
                     "observed_edge": round(d_edge, 2),
                     "z": round(-z_d, 2),
                     "significant": z_d <= -1.96,
+                    "payout": PAYOUTS["DIFFERS"],
                     "ev": _ev(p_diff, PAYOUTS["DIFFERS"]),
                 })
 
@@ -125,6 +143,7 @@ class MarketMaster:
                 "observed_edge": round(o_edge, 2),
                 "z": round(o_z, 2),
                 "significant": o_z >= SIGNIFICANCE_Z,
+                "payout": PAYOUTS["ODD"],
                 "ev": _ev(max(0.01, min(0.99, odd_freq / 100.0)), PAYOUTS["ODD"]),
             })
             e_edge = even_freq - 50.0
@@ -141,17 +160,25 @@ class MarketMaster:
                 "observed_edge": round(e_edge, 2),
                 "z": round(e_z, 2),
                 "significant": e_z >= SIGNIFICANCE_Z,
+                "payout": PAYOUTS["EVEN"],
                 "ev": _ev(max(0.01, min(0.99, even_freq / 100.0)), PAYOUTS["EVEN"]),
             })
 
             for d in range(1, 10):
-                high_freq = sum(est[x] for x in range(d, 10))
+                # Deriv's DIGITOVER/DIGITUNDER are STRICT: OVER d wins on
+                # digits d+1..9 (9-d digits), UNDER d wins on 0..d-1 (d digits).
+                # The model previously used >= for OVER (fair 90% for OVER 1)
+                # while Deriv pays for 80% — a fake 10pp edge baked into every
+                # OVER trade. The journal proves the real payout is ~1.23.
+                high_freq = sum(est[x] for x in range(d + 1, 10))
                 low_freq = sum(est[x] for x in range(0, d))
-                high_count = sum(counts[x] for x in range(d, 10))
+                high_count = sum(counts[x] for x in range(d + 1, 10))
                 low_count = sum(counts[x] for x in range(0, d))
-                # OVER d: fair = (10-d)*10%. UNDER d: fair = d*10%.
-                fair_over = (10 - d) * 10.0
+                # OVER d: fair = (9-d)*10%. UNDER d: fair = d*10%.
+                fair_over = (9 - d) * 10.0
                 fair_under = d * 10.0
+                ov_payout = _digit_payout(fair_over / 100.0)  # ~1.21 for OVER 1
+                un_payout = _digit_payout(fair_under / 100.0)  # ~9.85 for UNDER 1
                 ov_edge = high_freq - fair_over
                 ov_z = _z(high_count, n_ticks, fair_over / 100.0)
                 contracts.append({
@@ -166,7 +193,8 @@ class MarketMaster:
                     "observed_edge": round(ov_edge, 2),
                     "z": round(ov_z, 2),
                     "significant": ov_z >= SIGNIFICANCE_Z,
-                    "ev": _ev(max(0.01, min(0.99, high_freq / 100.0)), PAYOUTS["OVER"]),
+                    "payout": ov_payout,
+                    "ev": _ev(max(0.01, min(0.99, high_freq / 100.0)), ov_payout),
                 })
                 un_edge = low_freq - fair_under
                 un_z = _z(low_count, n_ticks, fair_under / 100.0)
@@ -182,7 +210,8 @@ class MarketMaster:
                     "observed_edge": round(un_edge, 2),
                     "z": round(un_z, 2),
                     "significant": un_z >= SIGNIFICANCE_Z,
-                    "ev": _ev(max(0.01, min(0.99, low_freq / 100.0)), PAYOUTS["UNDER"]),
+                    "payout": un_payout,
+                    "ev": _ev(max(0.01, min(0.99, low_freq / 100.0)), un_payout),
                 })
 
         # Keep the full board for scouting; the UI shows the top 6 by name order
