@@ -755,7 +755,8 @@ class AutoTrader:
 
                 # Hot-hours filter: if the CF's own track record says this
                 # hour is a graveyard (enough data), he stays on the bench.
-                window_ok = self._current_window_ok()
+                # HEV skips this — the speed bot doesn't care about history.
+                window_ok = True if risk_guard.mode == "HEV" else self._current_window_ok()
                 if window_ok is False:
                     now = time.time()
                     if now - self._last_scan_log > 60:
@@ -903,9 +904,13 @@ class AutoTrader:
                     )
                     mark_strike_fired(plays)  # rotation: same strike can't fire again for 30s
                     worst = "loss" if any(not o["won"] for o in outcomes) else "win"
-                    await asyncio.sleep(
-                        risk_guard.cooldown_escalator(cooldown_for(worst), self.consecutive_losses)
-                    )
+                    if risk_guard.mode != "HEV":
+                        await asyncio.sleep(
+                            risk_guard.cooldown_escalator(cooldown_for(worst), self.consecutive_losses)
+                        )
+                    # HEV: no cooldown — the speed bot fires the next scan
+                    # the moment this one settles. The Guard's dollar limits
+                    # are the only brake.
                 else:
                     if not best_plays:
                         now = time.time()
@@ -915,7 +920,8 @@ class AutoTrader:
                                 "CF training ground: "
                                 f"{len(symbols)} markets scanned — no clean pass, drilling"
                             )
-                    await asyncio.sleep(1.0)
+                    # HEV scans at full speed; everyone else keeps the 1s rhythm.
+                    await asyncio.sleep(0.3 if risk_guard.mode == "HEV" else 1.0)
         except asyncio.CancelledError:  # normal shutdown path
             pass
         except Exception as exc:  # noqa: BLE001
