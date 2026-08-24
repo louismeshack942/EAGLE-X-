@@ -719,7 +719,36 @@ class AutoTrader:
                     await asyncio.sleep(5.0)
                     continue
                 coach_approved = False
-                if risk_guard.needs_approval() and best_plays and self.confirmation_ticks >= required_ticks:
+                # HYBRID: fires instantly on overwhelming evidence, asks you
+                # on everything else. The speed of the bots, the brakes of the Guard.
+                if risk_guard.mode == "HYBRID" and not overwhelming and best_plays and self.confirmation_ticks >= required_ticks:
+                    if self._coach_pending_id is None:
+                        item = risk_guard.queue_approval({
+                            "symbol": best_symbol,
+                            "plays": [{"name": p["name"], "ev": p.get("ev"), "z": p.get("z")} for p in best_plays],
+                        })
+                        self._coach_pending_id = item["id"]
+                        self._log(f"HYBRID: play proposed ({best_plays[0]['name']}) — confirm to fire")
+                        telegram_notifier.send_risk_alert(
+                            f"Hybrid: {best_symbol} {best_plays[0]['name']} needs your approval"
+                        )
+                        await asyncio.sleep(3.0)
+                        continue
+                    pending = risk_guard.next_pending()
+                    if pending is not None and pending["id"] == self._coach_pending_id:
+                        await asyncio.sleep(3.0)
+                        continue
+                    resolved = next(
+                        (a for a in risk_guard.pending_approvals if a["id"] == self._coach_pending_id), None
+                    )
+                    self._coach_pending_id = None
+                    if not resolved or resolved["status"] != "approved":
+                        self._log("HYBRID: play rejected — CF moves on")
+                        await asyncio.sleep(3.0)
+                        continue
+                    coach_approved = True
+                    self._log("HYBRID: play approved — CF fires")
+                elif risk_guard.needs_approval() and best_plays and self.confirmation_ticks >= required_ticks:
                     # COACH mode: the CF proposes, the manager confirms.
                     if self._coach_pending_id is None:
                         item = risk_guard.queue_approval({

@@ -72,6 +72,8 @@ export default function VirtualBankPanel({ refreshMs = 4000 }: { refreshMs?: num
           onClick={() => act(() => apiPost("/guard/mode", { mode: "COACH" }), "Mode: COACH")}>COACH</Btn>
         <Btn small variant="secondary" title="CF advises only"
           onClick={() => act(() => apiPost("/guard/mode", { mode: "FULL_MANUAL" }), "Mode: FULL_MANUAL")}>MANUAL</Btn>
+        <Btn small variant="secondary" title="Speed of the bots, brakes of the Guard"
+          onClick={() => act(() => apiPost("/guard/mode", { mode: "HYBRID" }), "Mode: HYBRID")}>HYBRID</Btn>
       </div>
 
       {killed && (

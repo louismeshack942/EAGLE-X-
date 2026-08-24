@@ -24,7 +24,7 @@ from app.services.persistence import settings_store
 _STATE_KEY = "risk_guard_state"
 _lock = threading.Lock()
 
-MODES = ("FULL_AUTO", "COACH", "FULL_MANUAL")
+MODES = ("FULL_AUTO", "COACH", "FULL_MANUAL", "HYBRID")
 
 
 def _utcnow() -> str:
