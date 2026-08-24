@@ -609,3 +609,74 @@ class TestPHEV:
         at.daily_pnl = -100.0
         assert at._phev_stake(1000.0) == 1000.0
         risk_guard.set_mode("FULL_AUTO")
+
+
+class TestHEV:
+    """HEV: the speed bot between MANUAL and HYBRID."""
+
+    def test_hev_mode_exists(self):
+        g = _fresh_guard()
+        assert g.set_mode("HEV")["mode"] == "HEV"
+        g.set_mode("FULL_AUTO")
+
+    def test_hev_preset(self):
+        g = _fresh_guard()
+        r = g.apply_preset("HEV")
+        assert r["preset"] == "HEV"
+        assert g.max_trades_per_hour == 30
+        assert not g.streak_halving
+
+    def test_hev_fires_everything_significant(self):
+        from app.services.auto_trader import select_plays
+        from app.services.risk_guard import risk_guard
+        risk_guard.set_mode("HEV")
+        mm = {
+            "data_quality": 85, "signal": "STRONG_DATA_SUPPORT", "anomaly_count": 0,
+            "contracts": [], "all_contracts": [
+                {"name": "OVER 1", "type": "OVER", "digit": 1, "ev": 0.08,
+                 "observed_edge": 3.0, "confidence": 80, "evidence": "STRONG_DATA_SUPPORT",
+                 "significant": True, "z": 2.0},
+                {"name": "DIFFERS on 3", "type": "DIFFERS", "digit": 3, "ev": 0.06,
+                 "observed_edge": 2.5, "confidence": 75, "evidence": "STRONG_DATA_SUPPORT",
+                 "significant": True, "z": 2.1},
+            ],
+        }
+        plays = select_plays(mm, "R_100")
+        assert len(plays) == 2
+        risk_guard.set_mode("FULL_AUTO")
+
+    def test_hev_still_blocks_negative_ev(self):
+        from app.services.auto_trader import select_plays
+        from app.services.risk_guard import risk_guard
+        risk_guard.set_mode("HEV")
+        mm = {
+            "data_quality": 85, "signal": "STRONG_DATA_SUPPORT", "anomaly_count": 0,
+            "contracts": [], "all_contracts": [
+                {"name": "OVER 1", "type": "OVER", "digit": 1, "ev": -0.02,
+                 "observed_edge": 3.0, "confidence": 80, "evidence": "STRONG_DATA_SUPPORT",
+                 "significant": True, "z": 2.0},
+            ],
+        }
+        plays = select_plays(mm, "R_100")
+        assert plays == []
+        risk_guard.set_mode("FULL_AUTO")
+
+    def test_hev_still_blocks_correlated_pair(self):
+        from app.services.auto_trader import select_plays
+        from app.services.risk_guard import risk_guard
+        risk_guard.set_mode("HEV")
+        mm = {
+            "data_quality": 85, "signal": "STRONG_DATA_SUPPORT", "anomaly_count": 0,
+            "contracts": [], "all_contracts": [
+                {"name": "DIFFERS on 0", "type": "DIFFERS", "digit": 0, "ev": 0.08,
+                 "observed_edge": 8.0, "confidence": 90, "evidence": "STRONG_DATA_SUPPORT",
+                 "significant": True, "z": 3.33},
+                {"name": "OVER 1", "type": "OVER", "digit": 1, "ev": 0.06,
+                 "observed_edge": 5.0, "confidence": 80, "evidence": "STRONG_DATA_SUPPORT",
+                 "significant": True, "z": 2.5},
+            ],
+        }
+        plays = select_plays(mm, "R_100")
+        assert len(plays) == 1
+        assert plays[0]["name"] == "DIFFERS on 0"
+        risk_guard.set_mode("FULL_AUTO")

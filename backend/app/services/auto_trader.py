@@ -118,10 +118,27 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         key=lambda c: (c.get("type") == "DIFFERS", c.get("ev", -1)), reverse=True,
     )
     phev = risk_guard.mode == "PHEV"
+    hev = risk_guard.mode == "HEV"
     plays: list[dict] = []
     for c in contracts:
         ev = c.get("ev", -1)
         edge = c.get("observed_edge", 0.0) or 0.0
+        if hev:
+            # HEV: the speed bot. Only the 95% significance gate and a real
+            # positive EV stand between the market and the trigger — no z
+            # floor, no EV floor, no chi-square, no rotation, no benching.
+            if not c.get("significant", False):
+                continue
+            if ev <= 0:
+                continue
+            if "SUPPORT" not in (c.get("evidence") or ""):
+                continue
+            if plays and _correlated(plays[0], c):
+                continue  # never pair two contracts that lose on the same digit
+            plays.append({**c, "symbol": symbol, "data_quality": dq, "signal": sig})
+            if len(plays) >= FLUID_MAX_PLAYS:
+                break
+            continue
         if phev:
             # PHEV gates: stronger proof and fatter real EV than the standard
             # squad. The engine only runs when the market is charging.
@@ -150,17 +167,18 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         return []
 
     # Strike rotation: the exact same strike never repeats within 30s.
-    # The squad scores from every angle, not just one boot.
-    now = time.time()
-    fresh = [p for p in plays if now - _strike_last_fired.get(p["name"], 0) >= STRIKE_ROTATION_S]
-    if not fresh:
-        return []  # every approved strike is on cooldown — wait for a new angle
-    plays = fresh
+    # HEV skips this — the speed bot fires the same angle as fast as it appears.
+    if not hev:
+        now = time.time()
+        fresh = [p for p in plays if now - _strike_last_fired.get(p["name"], 0) >= STRIKE_ROTATION_S]
+        if not fresh:
+            return []  # every approved strike is on cooldown — wait for a new angle
+        plays = fresh
 
     # The precision gate: the top play must survive the table-level checks.
-    # These look at the WHOLE distribution, not the one hot digit.
+    # HEV skips this — the speed bot trusts the 95% significance gate alone.
     top = plays[0]
-    if top.get("type") == "DIFFERS" and top.get("digit") is not None:
+    if not hev and top.get("type") == "DIFFERS" and top.get("digit") is not None:
         table = next(
             (t for t in scout_svc.cached_scan([symbol]).get("tables", [])
              if t["symbol"] == symbol),
@@ -583,9 +601,10 @@ class AutoTrader:
                 self.counters["scans"] += 1
                 self._rollover_matchday()
                 # Manager's bench: the CF sits out a few scans after a bad run.
-                # While he sits, the shadow scoreboard settles what he WOULD
-                # have done — proof the benching is saving (or costing) money.
-                if self.benched:
+                # HEV never sits — the speed bot keeps firing; the Guard's
+                # dollar limits are the only brake. Pep's rule still applies
+                # in every other mode.
+                if self.benched and risk_guard.mode != "HEV":
                     for sym in self.settings.active_symbols:
                         try:
                             mm = market_master.analyze(sym, window=100)
@@ -752,14 +771,15 @@ class AutoTrader:
                 # BUT: overwhelming evidence (z > 3.0) fires on the spot —
                 # speed bots win because they don't wait for confirmations.
                 required_ticks = TIGHT_CONFIRM_TICKS if self.tight_marking else 2
+                hev = risk_guard.mode == "HEV"
                 overwhelming = (
                     best_plays
                     and abs(best_plays[0].get("z") or 0.0) >= 3.0
                     and best_plays[0].get("ev", 0) >= 0.05
                     and not self.tight_marking
                 )
-                if overwhelming:
-                    required_ticks = 1  # fire on the spot — evidence is overwhelming
+                if hev or overwhelming:
+                    required_ticks = 1  # HEV / overwhelming: fire on the spot
                 if self.tight_marking and best_plays:
                     proven = [p for p in best_plays if abs(p.get("z") or 0.0) >= TIGHT_MIN_Z]
                     if len(proven) < len(best_plays):
@@ -808,14 +828,18 @@ class AutoTrader:
                     coach_approved = True
                     self._log("HYBRID: play approved — CF fires")
                 elif risk_guard.needs_approval() and best_plays and self.confirmation_ticks >= required_ticks:
-                    # COACH mode: the CF proposes, the manager confirms.
+                    # COACH mode: the team's board votes, the manager confirms.
+                    # The approval carries the full board verdict — the manager
+                    # sees WHY the team voted PLAY before he pulls the trigger.
                     if self._coach_pending_id is None:
                         item = risk_guard.queue_approval({
                             "symbol": best_symbol,
                             "plays": [{"name": p["name"], "ev": p.get("ev"), "z": p.get("z")} for p in best_plays],
+                            "board": (self.current_recommendation or {}).get("board", []),
+                            "team": best_team,
                         })
                         self._coach_pending_id = item["id"]
-                        self._log(f"COACH mode: play proposed ({best_plays[0]['name']}) — waiting for your confirmation")
+                        self._log(f"COACH mode: team voted PLAY on {best_plays[0]['name']} — waiting for your confirmation")
                         telegram_notifier.send_risk_alert(
                             f"Coach mode: {best_symbol} {best_plays[0]['name']} needs your approval"
                         )

@@ -26,7 +26,7 @@ from app.services.persistence import settings_store
 _STATE_KEY = "risk_guard_state"
 _lock = threading.Lock()
 
-MODES = ("FULL_AUTO", "COACH", "FULL_MANUAL", "HYBRID", "PHEV")
+MODES = ("FULL_AUTO", "COACH", "FULL_MANUAL", "HEV", "HYBRID", "PHEV")
 
 
 def _utcnow() -> str:
@@ -286,6 +286,15 @@ class RiskGuard:
             "max_trades_per_hour": 4, "streak_halving": True,
             "trail_arm": 100.0, "trail_pct": 0.4, "auto_kill_drawdown_pct": 0.08,
             "escalate_after_losses": 2,
+        },
+        "HEV": {
+            # Hybrid electric: the speed-bot preset. Fires everything that
+            # passes significance, no rotation cooldown, no benching — but
+            # the Guard's dollar limits still own the gun.
+            "daily_loss_limit": 500.0, "session_take_profit": 0.0,
+            "max_trades_per_hour": 30, "streak_halving": False,
+            "trail_arm": 0.0, "trail_pct": 0.5, "auto_kill_drawdown_pct": 0.0,
+            "escalate_after_losses": 0,
         },
     }
 

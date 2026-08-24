@@ -73,6 +73,8 @@ export default function VirtualBankPanel({ refreshMs = 4000 }: { refreshMs?: num
           onClick={() => act(() => apiPost("/guard/mode", { mode: "COACH" }), "Mode: COACH")}>COACH</Btn>
         <Btn small variant="secondary" title="CF advises only"
           onClick={() => act(() => apiPost("/guard/mode", { mode: "FULL_MANUAL" }), "Mode: FULL_MANUAL")}>MANUAL</Btn>
+        <Btn small variant="secondary" title="Speed bot: fires everything significant, Guard still owns the gun"
+          onClick={() => act(async () => { await apiPost("/guard/mode", { mode: "HEV" }); await apiPost("/guard/preset/HEV"); }, "Mode: HEV — speed bot with brakes")}>HEV</Btn>
         <Btn small variant="secondary" title="Speed of the bots, brakes of the Guard"
           onClick={() => act(() => apiPost("/guard/mode", { mode: "HYBRID" }), "Mode: HYBRID")}>HYBRID</Btn>
         <Btn small variant="primary" title="Plug-in hybrid: fewer, bigger, cleaner strikes"
@@ -137,10 +139,17 @@ export default function VirtualBankPanel({ refreshMs = 4000 }: { refreshMs?: num
             ⏳ Waiting for your call ({pending.length})
           </div>
           {pending.map((a: any) => (
-            <div key={a.id} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "0.78rem", marginBottom: 4 }}>
-              <span style={{ flex: 1 }}>{a.play?.symbol} {a.play?.plays?.[0]?.name}</span>
-              <Btn small variant="success" onClick={() => act(() => apiPost(`/guard/approvals/${a.id}`, { approve: true }), "Approved — CF fires")}>✓</Btn>
-              <Btn small variant="danger" onClick={() => act(() => apiPost(`/guard/approvals/${a.id}`, { approve: false }), "Rejected")}>✗</Btn>
+            <div key={a.id} style={{ fontSize: "0.78rem", marginBottom: 6, borderLeft: "2px solid #F5C518", paddingLeft: 8 }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 3 }}>
+                <span style={{ flex: 1, fontWeight: 700 }}>{a.play?.symbol} {a.play?.plays?.[0]?.name}</span>
+                <Btn small variant="success" onClick={() => act(() => apiPost(`/guard/approvals/${a.id}`, { approve: true }), "Approved — CF fires")}>✓</Btn>
+                <Btn small variant="danger" onClick={() => act(() => apiPost(`/guard/approvals/${a.id}`, { approve: false }), "Rejected")}>✗</Btn>
+              </div>
+              {(a.play?.board ?? []).slice(0, 3).map((b: any, i: number) => (
+                <div key={i} style={{ color: "#8b949e", fontSize: "0.72rem" }}>
+                  {b.contract}: {b.verdict === "PLAY" ? "✅" : "🚫"} {b.reason || "whole team agrees"}
+                </div>
+              ))}
             </div>
           ))}
         </div>
