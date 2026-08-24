@@ -23,8 +23,11 @@ export default function RiskEngine({ refreshMs = 3000 }: { refreshMs?: number })
   }, [refreshMs]);
 
   const balance = status?.balance ?? 0;
-  const stake = balance * 0.1;
-  const stopLoss = balance * 0.2;
+  // Stake is 10% of the SPENDABLE balance — the vault is invisible to the
+  // GK, so the stake never counts protected profit. Backend computes the
+  // same number; the panel only displays what the backend decided.
+  const stake = status?.current_stake ?? (status?.stake_base ?? balance) * 0.1;
+  const stopLoss = (status?.stake_base ?? balance) * 0.2;
   // Manager's ruling: the daily profit target is ALWAYS 500% of the current
   // balance — it rises the moment the balance rises. Not less, not more.
   const profitTarget = status?.gk?.profit_target ?? balance * 5;

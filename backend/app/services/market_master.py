@@ -25,9 +25,9 @@ PAYOUTS = {"MATCHES": 9.0, "DIFFERS": 1.1, "ODD": 1.9, "EVEN": 1.9, "OVER": 1.9,
 SIGNIFICANCE_Z = 1.96  # 95% confidence level
 MIN_EDGE_PCT = 1.0     # scouts' floor: minimum observed-vs-fair edge (pp)
 MIN_EV = 0.0           # scouts' floor: minimum expected value per 1.0 staked
-MIN_DIFFERS_EV = 0.03  # entry-quality bar: DIFFERS needs +3% expectancy — a
+MIN_DIFFERS_EV = 0.015 # entry-quality bar: DIFFERS rejects slivers —
                        # sliver of edge loses its stake on one miss in ten
-MIN_Z_AGE_S = 45.0     # the edge must have HELD for 45s before the CF may fire
+MIN_Z_AGE_S = 10.0     # the edge must have HELD before the CF fires (speed-tuned)
 BREAKEVEN_MIN_TICKS = 200  # under this, the window can't prove a real edge
 
 

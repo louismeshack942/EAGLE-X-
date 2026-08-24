@@ -105,7 +105,7 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
     top = plays[0]
     if top.get("type") == "DIFFERS" and top.get("digit") is not None:
         table = next(
-            (t for t in scout_svc.scan_tables([symbol]).get("tables", [])
+            (t for t in scout_svc.cached_scan([symbol]).get("tables", [])
              if t["symbol"] == symbol),
             None,
         )
@@ -793,7 +793,7 @@ class AutoTrader:
             "running": self.running,
             "mode": self.mode,
             "balance": round(self.balance, 2),
-            "current_stake": compute_stake(self.balance),
+            "current_stake": compute_stake(self._stake_base()),  # vault invisible to the GK
             "daily_pnl": round(self.daily_pnl, 2),
             "trades_today": self.trades_today,
             "consecutive_losses": self.consecutive_losses,

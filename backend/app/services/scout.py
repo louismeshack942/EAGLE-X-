@@ -34,6 +34,7 @@ STALE_FEED_S = 15.0   # a table with no tick for 15s is a dead table
 # z-trend memory: (symbol, digit) -> deque of (ts, z)
 _z_history: dict = {}
 _Z_HISTORY_LEN = 120
+_TABLE_CACHE_S = 20.0   # scan_tables is expensive; keep verdicts warm 20s
 
 
 def _note_z(symbol: str, digit: int, z: float) -> None:
@@ -260,6 +261,22 @@ def scan_tables(symbols: list[str], window: int = 100, queue=None) -> dict:
         "summary": summary,
         "scanned": len(tables),
     }
+
+
+_table_cache: dict = {}
+
+
+def cached_scan(symbols: list[str], window: int = 100, queue=None) -> dict:
+    """scan_tables with a 20s warm cache. The precision gate asks for one
+    symbol per check — this keeps the decision at full speed."""
+    key = tuple(sorted(symbols)) + (window,)
+    now = time.time()
+    hit = _table_cache.get(key)
+    if hit and now - hit["ts"] < _TABLE_CACHE_S:
+        return hit["data"]
+    data = scan_tables(list(symbols), window, queue)
+    _table_cache[key] = {"ts": now, "data": data}
+    return data
 
 
 def heatmap(symbols: list[str], window: int = 100, queue=None) -> dict:

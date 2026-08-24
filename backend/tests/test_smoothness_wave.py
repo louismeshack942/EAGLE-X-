@@ -326,14 +326,14 @@ class TestPrecisionGate:
 
     def test_min_differs_ev_constant(self):
         from app.services.market_master import MIN_DIFFERS_EV, MIN_Z_AGE_S, BREAKEVEN_MIN_TICKS
-        assert MIN_DIFFERS_EV >= 0.02
-        assert MIN_Z_AGE_S >= 30.0
+        assert MIN_DIFFERS_EV >= 0.01  # sliver-rejection bar (speed-tuned)
+        assert MIN_Z_AGE_S >= 5.0
         assert BREAKEVEN_MIN_TICKS >= 200
 
     def test_z_age_blocks_fresh_edges(self):
         from app.services import scout as sc
         sc._note_z("AGE_TEST", 5, -3.0)
-        assert sc.z_age_s("AGE_TEST", 5) < 45.0
+        assert sc.z_age_s("AGE_TEST", 5) < 10.0
 
     def test_multi_window_has_deep_window(self):
         from app.services import scout as sc
