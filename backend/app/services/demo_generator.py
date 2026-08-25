@@ -31,6 +31,7 @@ class DemoGenerator:
         # seeds keyed by symbol so each symbol gets its own deterministic stream
         self._prices: dict[str, float] = {}
         self._rngs: dict[str, random.Random] = {}
+        self._digits: dict[str, int] = {}
 
     def _get_rng(self, symbol: str) -> random.Random:
         if symbol not in self._rngs:
@@ -50,6 +51,11 @@ class DemoGenerator:
         factor = 1 + self.drift * dt - 0.5 * self.volatility**2 * dt + self.volatility * (dt**0.5) * z
         new_price = max(0.0001, price * factor)
         self._prices[symbol] = new_price
+        # The GBM step is far smaller than the 4th decimal, so rounding alone
+        # freezes the last digit (0 never appears) and manufactures fake
+        # "OVER 0" edges in every digit analytic. Track a uniform digit per
+        # tick alongside the price so demo analytics stay honest.
+        self._digits[symbol] = rng.randint(0, 9)
         return new_price
 
     async def stream(self, symbol: str) -> AsyncGenerator[Tick, None]:
@@ -62,6 +68,7 @@ class DemoGenerator:
                 timestamp=datetime.now(timezone.utc),
                 provider="demo",
                 quality=100,
-                raw={"synthetic": True, "seed": self.seed},
+                raw={"synthetic": True, "seed": self.seed,
+                     "digit": self._digits[symbol]},
             )
             await asyncio.sleep(self.interval_ms / 1000.0)

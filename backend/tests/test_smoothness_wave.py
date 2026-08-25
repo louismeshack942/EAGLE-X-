@@ -357,15 +357,26 @@ class TestDiffersPriority:
             ],
         }
 
+    # A fresh symbol sandbox: select_plays derives its precision gates from
+    # the shared tick_queue per symbol. Feeding another symbol (a sibling
+    # test) ages that symbol's z-thread and poisons the OVER/DIFFERS ladder
+    # this test sets up — so build the starved table on an isolated symbol.
+    SYMBOL = "R_100_DIFFERS_GATED"
+
     def test_differs_outranks_over_on_gated_table(self):
         from app.core.queue import tick_queue
         from app.models.tick import Tick
         import random
         from app.services.auto_trader import select_plays
         rng = random.Random(9)
-        for i in range(600):
-            tick_queue.push(Tick(symbol='R_100', quote=100.0 + rng.randrange(1, 10) / 10))
-        plays = select_plays(self._mm(), 'R_100')
+        # digit 0 starved across the full window — the stamped digit channel
+        # (same as the demo generator) keeps 0 absent at every gate depth.
+        for i in range(2000):
+            d = rng.randrange(1, 10)
+            tick_queue.push(Tick(symbol=self.SYMBOL,
+                                 quote=100.0 + rng.randrange(1, 10) / 10,
+                                 raw={"digit": d}))
+        plays = select_plays(self._mm(), self.SYMBOL)
         assert plays and plays[0]['type'] == 'DIFFERS'
 
     def test_over_leads_when_no_differs_passes(self):

@@ -15,7 +15,12 @@ class Tick(BaseModel):
 
     @property
     def digit(self) -> int:
-        """Last digit of the quote (final digit of the price string)."""
+        """Last digit of the quote at its own decimal precision, matching how
+        Deriv digit contracts read the final displayed digit. Sources may
+        carry an authoritative digit in raw["digit"] when their quote is a
+        rounded float whose trailing zeros cannot be recovered (demo feed)."""
+        if self.raw and self.raw.get("digit") is not None:
+            return int(self.raw["digit"])
         s = f"{self.quote:.10f}".rstrip("0")
         if "." in s:
             frac = s.split(".")[1]
