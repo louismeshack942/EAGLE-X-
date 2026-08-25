@@ -214,3 +214,20 @@ RNG_NOTE: stats are descriptive, not predictive.
 Endpoints: /pro-trader/scan (registered before /pro-trader/{symbol}),
 /pro-trader/signal/{symbol}, /pro-trader/{symbol}.
 Tests: tests/test_pro_trader.py (15 tests; 208 total).
+
+## Permanent live-data fix (2026-08-25)
+
+Root cause of the recurring DEMO DATA after restarts: Render's filesystem is
+ephemeral, so the token vault file dies with every restart. Fixed permanently:
+
+- `main.py _bootstrap_env_token()`: at boot, DERIV_API_TOKEN (+DERIV_PAT_APP_ID
+  for pat_ tokens) is validated via the PAT REST flow and the vault is filled
+  BEFORE the stream starts — first connection is live. Both env vars are set
+  on the Render service (never in the repo).
+- `deriv_client.stream_lifecycle`: with a token configured, demo ticks are
+  NEVER emitted — failures give an honest "reconnecting to live feed" state
+  with 15-20s re-probes. Demo only exists when there is no token at all.
+- `deriv_trader._url`: PAT flow active + OTP mint failure raises instead of
+  degrading to the geo-blocked generic endpoint (the silent demo slide).
+- Verified: fresh deploy AND a hard restart both come up LIVE DATA with zero
+  manual steps. Suite: 241 passed.
