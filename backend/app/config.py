@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"
     deriv_app_id: int = 1089
     deriv_api_token: str = ""
+    # App id that owns the PAT token (developers.deriv.com). Required for the
+    # boot-time auto-connect: DERIV_API_TOKEN + DERIV_PAT_APP_ID together make
+    # the live feed survive every restart without manual reconnects.
+    deriv_pat_app_id: str = ""
     # Full digit-trading board: every synthetic that offers digit contracts.
     # A wider board means more tables the truth gate can find a real skew on.
     deriv_active_symbols: str = (

@@ -202,19 +202,39 @@ async def stream_lifecycle(
     """
     client = DerivClient()
     while True:
+        # Live-only mode: once a token is configured (env or vault), demo
+        # ticks are NEVER emitted — a fake tape is worse than an honest
+        # "reconnecting" state. Without any token, demo is all there is.
+        token_configured = bool(await resolve_token())
         try:
             async for tick in client.stream(symbols):
                 on_tick(tick)
         except GeoRestrictedError as exc:
-            LIVE_STATE.mode = "demo"
-            LIVE_STATE.connected = False
-            LIVE_STATE.last_error = str(exc)
-            await _demo_with_live_retry(symbols, on_tick, demo_factory, probe_after=300.0)
+            # The geo block only hits the generic endpoint; with a token the
+            # account OTP path bypasses it, so re-probe fast instead of
+            # parking in demo for 5 minutes.
+            probe = 20.0 if token_configured else 300.0
+            if token_configured:
+                LIVE_STATE.mode = "live"  # intent: live-only, never demo
+                LIVE_STATE.connected = False
+                LIVE_STATE.last_error = f"reconnecting to live feed: {exc}"
+                await asyncio.sleep(probe)
+            else:
+                LIVE_STATE.mode = "demo"
+                LIVE_STATE.connected = False
+                LIVE_STATE.last_error = str(exc)
+                await _demo_with_live_retry(symbols, on_tick, demo_factory, probe_after=probe)
         except Exception as exc:  # noqa: BLE001
-            LIVE_STATE.mode = "demo"
-            LIVE_STATE.connected = False
-            LIVE_STATE.last_error = str(exc)
-            await _demo_with_live_retry(symbols, on_tick, demo_factory, probe_after=20.0)
+            if token_configured:
+                LIVE_STATE.mode = "live"  # intent: live-only, never demo
+                LIVE_STATE.connected = False
+                LIVE_STATE.last_error = f"reconnecting to live feed: {exc}"
+                await asyncio.sleep(15.0)
+            else:
+                LIVE_STATE.mode = "demo"
+                LIVE_STATE.connected = False
+                LIVE_STATE.last_error = str(exc)
+                await _demo_with_live_retry(symbols, on_tick, demo_factory, probe_after=20.0)
 
 
 async def _demo_with_live_retry(symbols, on_tick, demo_factory, probe_after: float) -> None:

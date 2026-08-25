@@ -75,9 +75,55 @@ def _on_tick(tick: Tick) -> None:
     tick_recorder.record(tick)
 
 
+async def _bootstrap_env_token() -> None:
+    """Permanent live-data fix: connect DERIV_API_TOKEN at boot.
+
+    Render's filesystem is ephemeral — the token vault file does not survive
+    a restart, so without this every reboot booted tokenless, hit the
+    geo-blocked generic endpoint and served DEMO data until someone manually
+    reconnected. Env vars DO survive: validate the PAT via the REST flow,
+    mint the OTP websocket URL and fill the vault BEFORE the first stream
+    attempt, so the very first connection is live.
+    """
+    token = settings.deriv_api_token.strip()
+    if not token:
+        return
+    if await VAULT.get():
+        logger.info("vault already holds a token — boot connect skipped")
+        return
+    from app.api.auth import _pat_validate
+    for attempt in range(4):
+        try:
+            if token.startswith("pat_"):
+                info = await _pat_validate(token, settings.deriv_pat_app_id or None)
+                await VAULT.set(
+                    token,
+                    loginid=info.get("loginid"),
+                    currency=info.get("currency"),
+                    account_id=info.get("account_id"),
+                    ws_url=info.get("ws_url"),
+                    app_id=info.get("app_id"),
+                    accounts=info.get("accounts"),
+                )
+                if info.get("balance") is not None:
+                    await VAULT.set_balance(float(info["balance"]))
+                logger.info("boot: env PAT connected — account %s (%s)",
+                            info.get("loginid"), info.get("currency"))
+            else:
+                await VAULT.set(token)
+                logger.info("boot: env legacy token stored in vault")
+            return
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("boot: env token connect attempt %d failed: %s", attempt + 1, exc)
+            if attempt < 3:
+                await asyncio.sleep(2 * (attempt + 1))
+    logger.error("boot: env token connect FAILED after 4 attempts — live feed will keep retrying")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _ingestion_task
+    await _bootstrap_env_token()
     demo_factory = lambda: DemoGenerator(
         seed=settings.demo_seed,
         start_price=settings.demo_start_price,

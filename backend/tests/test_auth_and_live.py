@@ -447,3 +447,128 @@ def test_auto_play_duration_is_short():
     src = inspect.getsource(market_master)
     assert '"duration_seconds": 5' in src
     assert '"duration_seconds": 60' not in src
+
+
+@pytest.mark.asyncio
+async def test_trader_url_refuses_generic_when_pat_flow_active(monkeypatch):
+    """PAT flow active but OTP mint failing: the geo-blocked generic endpoint
+    must NOT be used — that's the silent slide into demo data. Raise and let
+    the caller retry instead."""
+    trader = DerivTrader()
+    try:
+        await VAULT.set("pat_abc123", account_id="CR999", app_id="4521")  # no stored ws_url
+        async def no_mint(self, token):
+            return None
+        monkeypatch.setattr(DerivTrader, "_mint_fresh_otp", no_mint)
+        with pytest.raises(ConnectionError):
+            await trader._url("pat_abc123")
+    finally:
+        await VAULT.clear()
+
+
+_REAL_SLEEP = asyncio.sleep
+
+
+async def _fast_sleep(_seconds):
+    await _REAL_SLEEP(0)
+
+
+@pytest.mark.asyncio
+async def test_stream_lifecycle_never_emits_demo_when_token_configured(monkeypatch):
+    """With a token configured, a live-stream failure must produce an honest
+    reconnect — never demo ticks."""
+    from app.services import deriv_client
+
+    async def fake_token():
+        return "pat_abc123"
+    monkeypatch.setattr(deriv_client, "resolve_token", fake_token)
+
+    async def boom(self, symbols):
+        raise ConnectionError("no live")
+        yield  # pragma: no cover - makes this an async generator
+    monkeypatch.setattr(deriv_client.DerivClient, "stream", boom)
+    monkeypatch.setattr(deriv_client.asyncio, "sleep", _fast_sleep)
+
+    ticks, demo_built = [], []
+
+    def demo_factory():
+        demo_built.append(True)
+        raise AssertionError("demo generator must never be built when a token is configured")
+
+    task = asyncio.create_task(deriv_client.stream_lifecycle(["R_100"], ticks.append, demo_factory))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert ticks == []
+    assert demo_built == []
+    assert deriv_client.LIVE_STATE.mode == "live"
+    assert "reconnecting to live feed" in (deriv_client.LIVE_STATE.last_error or "")
+
+
+@pytest.mark.asyncio
+async def test_stream_lifecycle_uses_demo_without_token(monkeypatch):
+    """No token anywhere -> demo fallback remains (nothing else is possible)."""
+    from app.services import deriv_client
+
+    async def no_token():
+        return ""
+    monkeypatch.setattr(deriv_client, "resolve_token", no_token)
+
+    async def boom(self, symbols):
+        raise ConnectionError("no live")
+        yield
+    monkeypatch.setattr(deriv_client.DerivClient, "stream", boom)
+
+    class FakeDemo:
+        async def stream(self, symbol):
+            raise TimeoutError("probe")  # ends _demo_with_live_retry fast
+            yield
+
+    ticks = []
+    task = asyncio.create_task(deriv_client.stream_lifecycle(["R_100"], ticks.append, lambda: FakeDemo()))
+    await asyncio.sleep(0.1)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert deriv_client.LIVE_STATE.mode == "demo"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_env_token_connects_pat_at_boot(monkeypatch):
+    """The permanent fix: DERIV_API_TOKEN in the environment fills the vault
+    at boot — restarts no longer boot tokenless into demo data."""
+    from app import main as main_module
+    await VAULT.clear()
+    monkeypatch.setattr(main_module.settings, "deriv_api_token", "pat_envtoken")
+    monkeypatch.setattr(main_module.settings, "deriv_pat_app_id", "4521")
+
+    async def fake_validate(token, app_id):
+        assert token == "pat_envtoken" and app_id == "4521"
+        return {
+            "loginid": "DOT94300575", "currency": "USD", "balance": "100.0",
+            "account_id": "DOT94300575",
+            "ws_url": "wss://api.derivws.com/trading/v1/options/ws/demo?otp=boot",
+            "app_id": "4521", "accounts": [],
+        }
+    monkeypatch.setattr("app.api.auth._pat_validate", fake_validate)
+    try:
+        await main_module._bootstrap_env_token()
+        assert await VAULT.get() == "pat_envtoken"
+        assert await VAULT.get_account_id() == "DOT94300575"
+        assert await VAULT.get_ws_url() is not None
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_env_token_noop_without_env(monkeypatch):
+    from app import main as main_module
+    await VAULT.clear()
+    monkeypatch.setattr(main_module.settings, "deriv_api_token", "")
+    await main_module._bootstrap_env_token()
+    assert await VAULT.get() is None

@@ -101,6 +101,15 @@ class DerivTrader:
             ws_url = await VAULT.get_ws_url()
             if ws_url:
                 return ws_url
+            if await VAULT.get_account_id():
+                # PAT flow is active but OTP minting failed. The generic
+                # endpoint is geo-blocked for this deployment — falling back
+                # to it guarantees InvalidSymbol and a silent slide into demo
+                # data. Refuse instead; the caller retries shortly.
+                raise ConnectionError(
+                    "OTP mint failed and the generic endpoint is geo-blocked — "
+                    "retrying rather than degrading to demo data"
+                )
         # deriv_ws_url already points at the websockets/v3 path; appending
         # "/websocket" would 404 (Deriv redirects that to an HTML page).
         return f"{self.settings.deriv_ws_url.rstrip('/')}?app_id={self.settings.deriv_app_id}&l=EN"
