@@ -109,6 +109,32 @@ class TestProvenEdges:
                    for c in e300["contracts"])
         assert ("MATCHES", 7) not in eng.proven_edges("TRUTH_FLUKE")
 
+    def test_persistent_hot_digit_proves_matches(self):
+        # MATCHES is not banned — it must EARN its way through the gate.
+        # digit 4 lands every 4th tick (~30% after filler) — far above the
+        # 11.11% breakeven for the 9.0 payout, significant in every window.
+        eng = TruthEngine()
+        digits = [4 if i % 4 == 0 else i % 10 for i in range(1600)]
+        _feed("TRUTH_HOT4", digits)
+        assert ("MATCHES", 4) in eng.proven_edges("TRUTH_HOT4")
+
+    def test_parity_skew_can_be_proven(self):
+        # ODD/EVEN were hardcoded FAIR (could never fire). Now the tape is
+        # the referee: an all-odd tape is a real parity skew, and ODD beats
+        # the 1.9 payout's 52.6% breakeven.
+        eng = TruthEngine()
+        _feed("TRUTH_PARITY", [[1, 3, 5, 7, 9][i % 5] for i in range(1500)])
+        proven = eng.proven_edges("TRUTH_PARITY")
+        assert ("ODD", None) in proven
+        assert ("EVEN", None) not in proven
+
+    def test_fair_parity_proves_nothing(self):
+        eng = TruthEngine()
+        _feed("TRUTH_PARITY_FAIR", [i % 10 for i in range(1500)])
+        proven = eng.proven_edges("TRUTH_PARITY_FAIR")
+        assert ("ODD", None) not in proven
+        assert ("EVEN", None) not in proven
+
 
 # ---------------- projection ----------------
 

@@ -17,7 +17,13 @@ class Settings(BaseSettings):
     deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"
     deriv_app_id: int = 1089
     deriv_api_token: str = ""
-    deriv_active_symbols: str = "R_10,R_25,R_50,R_75,R_100,1HZ100V,1HZ200V,1HZ300V"
+    # Full digit-trading board: every synthetic that offers digit contracts.
+    # A wider board means more tables the truth gate can find a real skew on.
+    deriv_active_symbols: str = (
+        "R_10,R_25,R_50,R_75,R_100,"
+        "1HZ10V,1HZ25V,1HZ30V,1HZ50V,1HZ75V,"
+        "1HZ100V,1HZ150V,1HZ200V,1HZ250V,1HZ300V"
+    )
     # OAuth: public client, no secret. Register your own app at api.deriv.com
     # and set DERIV_APP_ID for a branded OAuth screen.
     deriv_oauth_url: str = "https://auth.deriv.com/oauth2/auth"

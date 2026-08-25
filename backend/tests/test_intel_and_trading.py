@@ -178,26 +178,31 @@ def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT", significant=True, observe
 
 
 class TestTeamDecision:
-    def test_team_decides_not_the_cf(self):
-        """DIFFERS is the only sustainable edge — when one passes every gate,
-        it outranks the coin-flip tables regardless of their bigger EV."""
+    def test_ev_ranks_the_menu_truth_gate_decides(self):
+        """No contract type gets a bye: the squad ranks by EV alone and the
+        truth gate (all-windows proven_edges) is the final arbiter at fire
+        time. A higher-EV OVER leads the menu; a sub-breakeven MATCHES never
+        makes it on."""
         mm = _mm(contracts=[
-            _c("OVER 1", 0.88, 8.0),         # big EV, but a coin flip
-            _c("MATCHES on 6", 0.71, 9.0),   # 10% lottery
-            _c("DIFFERS on 3", 0.09, 5.0),   # the real 90% edge — leads now
+            _c("OVER 1", 0.88, 8.0),         # highest EV leads now
+            _c("MATCHES on 6", 0.71, 9.0),   # no observed_pct -> below breakeven, benched
+            _c("DIFFERS on 3", 0.09, 5.0),   # real but too far behind the leader
         ])
         plays = select_plays(mm, "R_100")
-        assert len(plays) == 2  # FLUID_MAX_PLAYS
-        assert plays[0]["name"] == "DIFFERS on 3"  # the sustainable edge leads the line
-        assert plays[1]["name"] == "OVER 1"        # fluid second, still team-approved
+        assert plays[0]["name"] == "OVER 1"   # EV leads the menu
+        assert all(p["type"] != "MATCHES" for p in plays)  # lottery stays benched
+        assert all(p["name"] != "DIFFERS on 3" for p in plays)  # pair-ratio: 0.09 < 75% of 0.88
 
     def test_every_contract_type_is_eligible(self):
-        # MATCHES at <15% observed is a lottery ticket the CF refuses to buy.
-        # Every other contract type still passes the vote when the team agrees.
+        # Every contract type passes the vote when the team agrees — the
+        # truth gate, not a type ban, decides what may fire.
         for name in ("DIFFERS on 3", "ODD", "EVEN", "OVER 4", "UNDER 5"):
             plays = select_plays(_mm(contracts=[_c(name, 0.10, 5.0)]), "R_100")
             assert plays and plays[0]["name"] == name, f"{name} benched despite full team approval"
-        # MATCHES at 15%+ observed is still eligible (the ban only blocks slivers)
+        # MATCHES below the 11.11% breakeven can NEVER be an edge — cheap skip.
+        plays = select_plays(_mm(contracts=[_c("MATCHES on 6", 0.71, 9.0, observed_pct=11.0)]), "R_100")
+        assert plays == []
+        # MATCHES above breakeven is eligible — the truth gate decides the rest.
         plays = select_plays(_mm(contracts=[_c("MATCHES on 6", 0.71, 9.0, observed_pct=16.0)]), "R_100")
         assert plays and plays[0]["name"] == "MATCHES on 6"
 

@@ -341,8 +341,10 @@ class TestPrecisionGate:
         assert 2000 in out["windows"]
 
 
-class TestDiffersPriority:
-    """The CF must finish the starving digit, not the coin flip."""
+class TestEVRanking:
+    """The squad ranks by EV alone; the truth gate decides what may fire.
+    (Was TestDiffersPriority — the DIFFERS-first sort bias was removed so
+    every contract type competes honestly.)"""
 
     def _mm(self):
         return {
@@ -363,7 +365,7 @@ class TestDiffersPriority:
     # this test sets up — so build the starved table on an isolated symbol.
     SYMBOL = "R_100_DIFFERS_GATED"
 
-    def test_differs_outranks_over_on_gated_table(self):
+    def test_ev_leads_the_menu_on_gated_table(self):
         from app.core.queue import tick_queue
         from app.models.tick import Tick
         import random
@@ -377,6 +379,33 @@ class TestDiffersPriority:
                                  quote=100.0 + rng.randrange(1, 10) / 10,
                                  raw={"digit": d}))
         plays = select_plays(self._mm(), self.SYMBOL)
+        # EV ranks the menu now: OVER 1 (0.86) leads, and the pair-ratio
+        # rule drops the far-behind DIFFERS (0.078 < 75% of 0.86). The truth
+        # gate — not the sort order — decides what may actually fire.
+        assert plays and plays[0]['type'] == 'OVER'
+
+    def test_differs_still_gated_when_it_leads(self):
+        """When DIFFERS carries the top EV, the table-level precision gates
+        (chi-square, multi-window, momentum, z-age) still apply to it."""
+        from app.core.queue import tick_queue
+        from app.models.tick import Tick
+        import random
+        from app.services.auto_trader import select_plays
+        rng = random.Random(9)
+        for i in range(2000):
+            d = rng.randrange(1, 10)  # digit 0 starved at every depth
+            tick_queue.push(Tick(symbol=self.SYMBOL,
+                                 quote=100.0 + rng.randrange(1, 10) / 10,
+                                 raw={"digit": d}))
+        mm = {
+            'data_quality': 85, 'signal': 'STRONG_DATA_SUPPORT', 'anomaly_count': 0,
+            'contracts': [], 'all_contracts': [
+                {'name': 'DIFFERS on 0', 'type': 'DIFFERS', 'digit': 0, 'ev': 0.90,
+                 'observed_edge': 8.0, 'confidence': 90, 'evidence': 'STRONG_DATA_SUPPORT',
+                 'significant': True, 'z': 3.33},
+            ],
+        }
+        plays = select_plays(mm, self.SYMBOL)
         assert plays and plays[0]['type'] == 'DIFFERS'
 
     def test_over_leads_when_no_differs_passes(self):
@@ -470,10 +499,11 @@ class TestCorrelationBan:
             ],
         }
         plays = select_plays(mm, 'R_100')
-        # at most ONE of them — they both lose on digit 0
+        # at most ONE of them — they both lose on digit 0. EV ranks the
+        # menu now, so the survivor is the bigger-paying OVER 1.
         assert len(plays) <= 1
         if plays:
-            assert plays[0]['name'] == 'DIFFERS on 0'
+            assert plays[0]['name'] == 'OVER 1'
 
     def test_uncorrelated_pair_still_allowed(self):
         from app.services.auto_trader import select_plays

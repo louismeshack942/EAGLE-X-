@@ -151,13 +151,21 @@ class TruthEngine:
                     "verdict": _verdict(margin, ev, sig),
                 })
 
-        # ODD / EVEN coin flips.
+        # ODD / EVEN — fair coin flips by design, but the tape is the
+        # referee: if parity itself is skewed (z >= 1.96 pooled across the
+        # five odd digits vs their 50% fair share), the skew is real and
+        # the payout's 52.6% breakeven can be beaten. No skew -> FAIR, and
+        # the CF stays benched off them.
         odd_wr = sum(est[d] for d in range(1, 10, 2))
-        for ctype, wr_obs in (("ODD", odd_wr), ("EVEN", 100.0 - odd_wr)):
+        n = analysis.get("n", 0)
+        den = math.sqrt(n * 0.5 * 0.5) if n else 1.0
+        odd_z = ((odd_wr / 100.0) * n - n * 0.5) / den if den else 0.0
+        for ctype, wr_obs, z_eff in (("ODD", odd_wr, odd_z), ("EVEN", 100.0 - odd_wr, -odd_z)):
             payout = PAYOUTS[ctype]
             be = _breakeven(payout)
             margin = round(wr_obs - be, 2)
             ev = round(wr_obs / 100.0 * payout - 1.0, 4)
+            sig = z_eff >= SIGNIFICANCE_Z
             contracts.append({
                 "name": ctype,
                 "type": ctype,
@@ -167,9 +175,9 @@ class TruthEngine:
                 "observed_wr": round(wr_obs, 2),
                 "margin_pp": margin,
                 "ev": ev,
-                "z": 0.0,
-                "significant": False,
-                "verdict": _verdict(margin, ev, False),
+                "z": round(z_eff, 2),
+                "significant": sig,
+                "verdict": _verdict(margin, ev, sig),
             })
 
         best = max(contracts, key=lambda c: c["ev"], default=None)

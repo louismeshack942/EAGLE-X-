@@ -54,6 +54,9 @@ TIGHT_MIN_Z = 2.5            # after a benching: stronger proof than the 1.96 fl
 MAX_ANOMALIES = 3            # physio room: too many anomalies, nobody plays
 DECISION_HISTORY_LEN = 20    # recent team decisions surfaced in status
 STRIKE_ROTATION_S = 30.0     # don't repeat the exact same strike for 30s
+MATCHES_MIN_OBSERVED = 12.0  # breakeven for the 9.0 payout is 11.11% — under
+                             # this a MATCHES can never be an edge; over it,
+                             # the truth gate is the arbiter, not a hard ban
 
 
 PHEV_MIN_Z = 2.8             # PHEV: stronger proof than the standard 1.96
@@ -114,9 +117,12 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
     anomalies = mm.get("anomaly_count", 0) or 0
     if "STRONG" not in sig or dq < 70 or anomalies > MAX_ANOMALIES:
         return []
+    # No type gets a bye: every contract competes on expected value alone.
+    # The truth gate (all-windows proven_edges) is the final arbiter of what
+    # may actually fire — the squad just ranks the menu honestly.
     contracts = sorted(
         mm.get("all_contracts") or mm.get("contracts") or [],
-        key=lambda c: (c.get("type") == "DIFFERS", c.get("ev", -1)), reverse=True,
+        key=lambda c: c.get("ev", -1), reverse=True,
     )
     phev = risk_guard.mode == "PHEV"
     hev = risk_guard.mode == "HEV"
@@ -127,10 +133,11 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         edge = c.get("observed_edge", 0.0) or 0.0
         if parity and c.get("type") == "DIFFERS":
             continue  # PARITY: no DIFFERS — only OVER/UNDER/ODD/EVEN/MATCHES
-        # MATCHES ban applies to EVERY mode: a 10% lottery ticket at 9.0
-        # payout needs >11.1% observed to break even. The CF was bleeding
-        # -$1/MATCHES. Nobody bets the lottery.
-        if c.get("type") == "MATCHES" and (c.get("observed_pct", 0) or 0.0) < 15.0:
+        # MATCHES pre-filter (every mode): the 9.0 payout demands 11.11%
+        # observed just to break even, so anything under that cannot EVER be
+        # an edge — skip it cheaply. Above breakeven, the truth gate decides
+        # (Bayes-shrunk, all windows); the squad no longer hard-bans at 15%.
+        if c.get("type") == "MATCHES" and (c.get("observed_pct", 0) or 0.0) < MATCHES_MIN_OBSERVED:
             continue
         if hev:
             # HEV: the speed bot. Only the 95% significance gate and a real
