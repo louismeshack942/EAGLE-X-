@@ -81,6 +81,35 @@ class TestExpectancy:
         assert "note" in board
 
 
+class TestProvenEdges:
+    def test_persistent_skew_is_proven(self):
+        eng = TruthEngine()
+        _feed("TRUTH_PERSIST", [(i % 9) + 1 for i in range(1500)])  # 0 absent
+        assert ("DIFFERS", 0) in eng.proven_edges("TRUTH_PERSIST")
+
+    def test_fair_tape_proves_nothing(self):
+        eng = TruthEngine()
+        _feed("TRUTH_PFAIR", [i % 10 for i in range(1500)])
+        assert eng.proven_edges("TRUTH_PFAIR") == set()
+
+    def test_thin_tape_proves_nothing(self):
+        eng = TruthEngine()
+        _feed("TRUTH_PTHIN", [i % 10 for i in range(40)])  # below min_ticks
+        assert eng.proven_edges("TRUTH_PTHIN") == set()
+
+    def test_single_window_fluke_is_not_proven(self):
+        eng = TruthEngine()
+        # uniform history, then a recent 300-tick window where digit 7 is
+        # overfed. w=300 calls MATCHES 7 an EDGE; w=1000 dilutes it away.
+        old = [i % 10 for i in range(1200)]
+        recent = [7] * 45 + [(i % 9) if (i % 9) != 7 else 8 for i in range(255)]
+        _feed("TRUTH_FLUKE", old + recent)
+        e300 = eng.expectancy("TRUTH_FLUKE", window=300)
+        assert any(c["type"] == "MATCHES" and c["digit"] == 7 and c["verdict"] == "EDGE"
+                   for c in e300["contracts"])
+        assert ("MATCHES", 7) not in eng.proven_edges("TRUTH_FLUKE")
+
+
 # ---------------- projection ----------------
 
 class TestProjection:

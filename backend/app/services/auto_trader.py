@@ -851,27 +851,22 @@ class AutoTrader:
                         self._coach_pending_id = None  # no queue — the vote IS the confirmation
                 if best_plays and self.confirmation_ticks >= required_ticks:
                     # TRUTH GATE (final arbiter): the CF's own confidence is
-                    # advisory. Before any stake fires, ask the Truth Engine
-                    # whether this exact symbol+contract has a REAL edge
-                    # against its breakeven win rate. No EDGE -> physically
+                    # advisory. Before any stake fires, the Truth Engine must
+                    # confirm this exact symbol+contract has a PROVEN edge —
+                    # one that survives ALL of the 100/300/1000-tick windows,
+                    # not a single-window fluke. No proven edge -> physically
                     # cannot fire, no matter how confident the squad feels.
-                    # This is what stops MATCHES/OVER/UNDER coin flips and
-                    # 90%-win-rate-but-bleeding DIFFERS from ever firing.
-                    verdict = truth_engine.expectancy(best_symbol, window=300)
-                    lab = {
-                        (c["type"], c.get("digit")): c
-                        for c in verdict.get("contracts", [])
-                    }
+                    proven = truth_engine.proven_edges(best_symbol)
                     best_plays = [
                         p for p in best_plays
-                        if (lab.get((p.get("type"), p.get("digit"))) or {}).get("verdict") == "EDGE"
+                        if (p.get("type"), p.get("digit")) in proven
                     ]
                     if not best_plays:
                         self._log(
-                            f"Truth gate: {best_symbol} holds no real edge right now — the CF refuses to fire"
+                            f"Truth gate: {best_symbol} holds no PROVEN edge (all windows) — the CF refuses to fire"
                         )
                         self.no_trade_reasons[best_symbol] = (
-                            "truth gate: no contract beats its breakeven win rate"
+                            "truth gate: no edge survives the 100/300/1000-tick windows"
                         )
                         await asyncio.sleep(3.0)
                         continue

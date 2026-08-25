@@ -53,6 +53,33 @@ def _verdict(margin_pp: float, ev: float, significant: bool) -> str:
 class TruthEngine:
     """Computes honest expectancy per contract from the live tape."""
 
+    def proven_edges(self, symbol: str, windows=(100, 300, 1000), min_ticks: int = 50) -> set[tuple]:
+        """(type, digit) pairs that are EDGE in EVERY window with enough data.
+
+        A single 300-tick window manufactures flukes — some digit always looks
+        overfed by chance. An edge the CF may fire on must survive all three
+        windows simultaneously. min_ticks is a thin-tape floor only (it must
+        stay below the smallest window, or every call is a blanket ban).
+        Returns an empty set when the tape is thin or the market is fair —
+        the correct, capital-preserving answer.
+        """
+        proven: set[tuple] = set()
+        first = True
+        for w in windows:
+            e = self.expectancy(symbol, window=w)
+            if e.get("n_ticks", 0) < min_ticks:
+                return set()  # not enough data to trust any edge
+            keys = {
+                (c["type"], c.get("digit"))
+                for c in e.get("contracts", [])
+                if c["verdict"] == "EDGE"
+            }
+            proven = keys if first else (proven & keys)
+            first = False
+            if not proven:
+                return set()
+        return proven
+
     def expectancy(self, symbol: str, window: int = 300) -> dict:
         analysis = digit_engine.get_digit_analysis(symbol, window)
         freq = analysis.get("frequency") or {}
