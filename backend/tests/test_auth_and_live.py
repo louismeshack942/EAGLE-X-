@@ -572,3 +572,79 @@ async def test_bootstrap_env_token_noop_without_env(monkeypatch):
     monkeypatch.setattr(main_module.settings, "deriv_api_token", "")
     await main_module._bootstrap_env_token()
     assert await VAULT.get() is None
+
+
+@pytest.mark.asyncio
+async def test_trader_url_resolves_env_token_when_none_passed(monkeypatch):
+    """A PAT token from the env must take the OTP path even when _url is
+    called with no token at all — never the legacy generic endpoint."""
+    trader = DerivTrader()
+    try:
+        await VAULT.set(
+            "pat_envtok",
+            account_id="CR999",
+            ws_url="wss://api.derivws.com/trading/v1/options/ws/real?otp=zzz",
+            app_id="4521",
+        )
+        monkeypatch.setattr(trader.settings, "deriv_api_token", "pat_envtok")
+        async def no_mint(self, token):
+            return None
+        monkeypatch.setattr(DerivTrader, "_mint_fresh_otp", no_mint)
+        url = await trader._url(None)
+        assert url == "wss://api.derivws.com/trading/v1/options/ws/real?otp=zzz"
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_trader_url_revalidates_pat_when_vault_cleared(monkeypatch):
+    """If the vault lost the PAT fields (ephemeral FS), _url re-validates
+    via the REST flow instead of degrading to the geo-blocked endpoint."""
+    trader = DerivTrader()
+    calls = {}
+    try:
+        await VAULT.clear()
+        async def fake_validate(token, app_id):
+            calls["token"] = token
+            return {
+                "loginid": "CR999", "currency": "USD", "account_id": "CR999",
+                "ws_url": "wss://api.derivws.com/trading/v1/options/ws/real?otp=rv",
+                "app_id": "4521", "accounts": [],
+            }
+        monkeypatch.setattr("app.api.auth._pat_validate", fake_validate)
+        async def no_mint(self, token):
+            return None
+        monkeypatch.setattr(DerivTrader, "_mint_fresh_otp", no_mint)
+        url = await trader._url("pat_revive")
+        assert url.endswith("otp=rv")
+        assert calls["token"] == "pat_revive"
+        assert await VAULT.get() == "pat_revive"
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_place_trade_never_raises(monkeypatch):
+    """place_trade returns a structured error dict even when connecting
+    fails outright — /trade must answer JSON, never a 500."""
+    trader = DerivTrader()
+    try:
+        await VAULT.clear()
+        async def boom(self, token=None):
+            raise ConnectionError("OTP mint failed")
+        monkeypatch.setattr(DerivTrader, "_url", boom)
+        result = await trader.place_trade(
+            symbol="R_100", contract_type="DIGITDIFF", amount=1.0,
+            duration=5, api_token="pat_x", digit=0,
+        )
+        assert result["status"] == "error"
+        assert result["step"] == "connect"
+        assert "OTP mint failed" in result["error"]
+        result = await trader.place_trade(
+            symbol="R_100", contract_type="DIGITDIFF", amount=1.0,
+            duration=5, api_token="", digit=0,
+        )
+        assert result["status"] == "error"
+        assert result["step"] == "connect"
+    finally:
+        await VAULT.clear()

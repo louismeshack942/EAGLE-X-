@@ -19,6 +19,7 @@ export default function TradePlanner() {
 
   const place = async () => {
     setBusy(true);
+    setResult(null);
     try {
       const r = await apiPost<any>("/trade", {
         symbol,
@@ -29,7 +30,10 @@ export default function TradePlanner() {
       });
       setResult(r);
       setError(null);
-    } catch (e: any) { setError(String(e.message ?? e)); }
+    } catch (e: any) {
+      setResult({ status: "error", step: "network", error: String(e.message ?? e) });
+      setError(null);
+    }
     finally { setBusy(false); }
   };
 
@@ -59,10 +63,43 @@ export default function TradePlanner() {
         <input value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="Dur (t)" style={{ width: 70, background: "#010409", color: "#c9d1d9", border: "1px solid #30363d", borderRadius: 4, padding: "4px 8px" }} />
       </div>
       <div style={{ marginTop: 8 }}>
-        <Btn small variant="primary" disabled={busy} onClick={place}>PLACE TRADE</Btn>
+        <Btn small variant="primary" disabled={busy} onClick={place}>
+          {busy ? "PLACING — SETTLING…" : "PLACE TRADE"}
+        </Btn>
       </div>
-      {result && (
-        <pre style={{ marginTop: 6, fontSize: "0.7rem", color: "#8b949e" }}>{JSON.stringify(result, null, 2)}</pre>
+      {busy && (
+        <div style={{ marginTop: 6, fontSize: "0.75rem", color: "#d29922" }}>
+          ⏳ Order sent to Deriv — waiting for the contract to settle ({duration}t)…
+        </div>
+      )}
+      {result && result.status === "success" && (
+        <div style={{
+          marginTop: 8, padding: "8px 10px", borderRadius: 6,
+          background: result.won ? "#0d2818" : "#3d1215",
+          border: `1px solid ${result.won ? "#3fb950" : "#f85149"}`,
+        }}>
+          <div style={{ color: result.won ? "#3fb950" : "#f85149", fontWeight: 700, fontSize: "0.85rem" }}>
+            {result.won
+              ? `✓ ACCEPTED — WON ${fmtUsd(Math.abs(Number(result.pnl ?? 0)))}`
+              : `✓ ACCEPTED — LOST −${fmtUsd(Math.abs(Number(result.pnl ?? 0)))}`}
+          </div>
+          <div style={{ color: "#8b949e", fontSize: "0.7rem", marginTop: 2 }}>
+            {symbol} {contract}{needsDigit ? ` ${digit}` : ""} · stake {fmtUsd(Number(stake))} · settled live on Deriv
+          </div>
+        </div>
+      )}
+      {result && result.status !== "success" && (
+        <div style={{
+          marginTop: 8, padding: "8px 10px", borderRadius: 6,
+          background: "#2d1f00", border: "1px solid #d29922",
+        }}>
+          <div style={{ color: "#d29922", fontWeight: 700, fontSize: "0.85rem" }}>
+            ✗ REJECTED — {String(result.error ?? "unknown error")}
+          </div>
+          <div style={{ color: "#8b949e", fontSize: "0.7rem", marginTop: 2 }}>
+            failed at: {String(result.step ?? "?")} · no money moved
+          </div>
+        </div>
       )}
     </Card>
   );

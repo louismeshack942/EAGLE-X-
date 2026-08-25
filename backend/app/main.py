@@ -491,6 +491,20 @@ async def trade(body: TradeBody):
         duration_unit=body.duration_unit,
         digit=body.digit,
     )
+    if result.get("status") == "success":
+        # Manual trades belong in the journal too — the manager's own P&L
+        # feeds the same truth the CF is judged by.
+        journal_engine.add_entry(
+            market=body.symbol,
+            contract=body.direction,
+            digit=body.digit,
+            stake=body.amount,
+            result="win" if result.get("won") else "loss",
+            pnl=float(result.get("pnl", 0.0)),
+            data_quality=0.0,
+            evidence_score=0.0,
+            mode="manual",
+        )
     if tilt:
         result["tilt_warning"] = tilt
     return result

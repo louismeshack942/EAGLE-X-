@@ -91,9 +91,27 @@ class DerivTrader:
         return None
 
     async def _url(self, token: Optional[str] = None) -> str:
-        """Pick the websocket endpoint. For a PAT token vaulted at connect
-        time, mint a FRESH OTP URL per connection (the stored one is a
-        fallback). Legacy tokens use the classic websockets/v3 endpoint."""
+        """Pick the websocket endpoint. Resolves the token itself (argument →
+        vault → env). A PAT token ALWAYS goes through the account OTP URL —
+        the legacy endpoint rejects PATs at authorize ("The token is
+        invalid") and is geo-blocked for this deployment anyway. Legacy
+        tokens use the classic websockets/v3 endpoint."""
+        token = (token or await VAULT.get() or self.settings.deriv_api_token or "").strip()
+        if token.startswith("pat_"):
+            if await VAULT.get() != token or not await VAULT.get_account_id():
+                # Vault cleared (ephemeral FS) or never bootstrapped for this
+                # token — re-validate via the REST flow so OTP minting works.
+                await self._revalidate_pat(token)
+            fresh = await self._mint_fresh_otp(token)
+            if fresh:
+                return fresh
+            ws_url = await VAULT.get_ws_url()
+            if ws_url:
+                return ws_url
+            raise ConnectionError(
+                "OTP mint failed and a PAT token cannot use the legacy "
+                "endpoint — retrying rather than degrading"
+            )
         if token and await VAULT.get() == token:
             fresh = await self._mint_fresh_otp(token)
             if fresh:
@@ -101,18 +119,25 @@ class DerivTrader:
             ws_url = await VAULT.get_ws_url()
             if ws_url:
                 return ws_url
-            if await VAULT.get_account_id():
-                # PAT flow is active but OTP minting failed. The generic
-                # endpoint is geo-blocked for this deployment — falling back
-                # to it guarantees InvalidSymbol and a silent slide into demo
-                # data. Refuse instead; the caller retries shortly.
-                raise ConnectionError(
-                    "OTP mint failed and the generic endpoint is geo-blocked — "
-                    "retrying rather than degrading to demo data"
-                )
         # deriv_ws_url already points at the websockets/v3 path; appending
         # "/websocket" would 404 (Deriv redirects that to an HTML page).
         return f"{self.settings.deriv_ws_url.rstrip('/')}?app_id={self.settings.deriv_app_id}&l=EN"
+
+    async def _revalidate_pat(self, token: str) -> None:
+        """Refill the vault's PAT fields (account_id, OTP ws_url) from the
+        REST API — the same validation the connect endpoint performs."""
+        from app.api.auth import _pat_validate
+        app_id = await VAULT.get_app_id() or self.settings.deriv_pat_app_id or None
+        info = await _pat_validate(token, app_id)
+        await VAULT.set(
+            token,
+            loginid=info.get("loginid"),
+            currency=info.get("currency"),
+            account_id=info.get("account_id"),
+            ws_url=info.get("ws_url"),
+            app_id=info.get("app_id") or app_id,
+            accounts=info.get("accounts"),
+        )
 
     @staticmethod
     def _needs_authorize(url: str) -> bool:
@@ -199,13 +224,40 @@ class DerivTrader:
         Returns {"status": "success", "won": bool, "pnl": float, ...} with the
         REAL settled result, or {"status": "error", "step": ..., "error": ...}
         if any step failed — an error never masquerades as a win or a loss.
+        NEVER raises: callers (the /trade endpoint, the CF loop) must get a
+        structured rejection, not a 500 or a dead task.
         """
+        try:
+            return await self._execute_trade(
+                symbol=symbol, contract_type=contract_type, amount=amount,
+                duration=duration, api_token=api_token,
+                duration_unit=duration_unit, digit=digit,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "step": "execute", "error": str(exc)}
+
+    async def _execute_trade(
+        self,
+        symbol: str,
+        contract_type: str,
+        amount: float,
+        duration: int,
+        api_token: str,
+        duration_unit: str = "t",
+        digit: Optional[int] = None,
+    ) -> dict:
         try:
             contract_fields = deriv_contract_params(contract_type, digit)
         except ValueError as exc:
             return {"status": "error", "step": "validate", "error": str(exc)}
 
-        url = await self._url(api_token)
+        api_token = (api_token or await VAULT.get() or self.settings.deriv_api_token or "").strip()
+        if not api_token:
+            return {"status": "error", "step": "connect", "error": "No Deriv token configured"}
+        try:
+            url = await self._url(api_token)
+        except Exception as exc:  # noqa: BLE001 — a failed connect is a clean rejection, never a 500
+            return {"status": "error", "step": "connect", "error": str(exc)}
         async with websockets.connect(url, ping_interval=20, open_timeout=10) as ws:
             if self._needs_authorize(url):
                 auth_msg = await self._send_recv(ws, {"authorize": api_token})

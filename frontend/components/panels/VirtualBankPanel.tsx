@@ -17,6 +17,8 @@ export default function VirtualBankPanel({ refreshMs = 4000 }: { refreshMs?: num
   const [amount, setAmount] = useState("10");
   const [stake, setStake] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
+  const [msgOk, setMsgOk] = useState(true);
+  const [acting, setActing] = useState(false);
 
   const load = async () => {
     try {
@@ -39,8 +41,11 @@ export default function VirtualBankPanel({ refreshMs = 4000 }: { refreshMs?: num
   }, [refreshMs]);
 
   const act = async (fn: () => Promise<any>, note: string) => {
-    try { await fn(); setMsg(note); await load(); }
-    catch (e: any) { setMsg(String(e.message ?? e)); }
+    if (acting) return;
+    setActing(true);
+    try { await fn(); setMsg(`✓ ${note}`); setMsgOk(true); await load(); }
+    catch (e: any) { setMsg(`✗ ${String(e.message ?? e)}`); setMsgOk(false); }
+    finally { setActing(false); }
   };
 
   const killed = Boolean(guard?.killed);
@@ -67,28 +72,36 @@ export default function VirtualBankPanel({ refreshMs = 4000 }: { refreshMs?: num
             ✅ RELEASE
           </Btn>
         )}
-        <Btn small variant="secondary" title="CF trades freely"
+        <Btn small variant={mode === "FULL_AUTO" ? "primary" : "secondary"} title="CF trades freely"
+          disabled={acting}
           onClick={() => act(() => apiPost("/guard/mode", { mode: "FULL_AUTO" }), "Mode: FULL_AUTO")}>AUTO</Btn>
-        <Btn small variant="secondary" title="CF proposes, you confirm"
+        <Btn small variant={mode === "COACH" ? "primary" : "secondary"} title="CF proposes, you confirm"
+          disabled={acting}
           onClick={() => act(() => apiPost("/guard/mode", { mode: "COACH" }), "Mode: COACH")}>COACH</Btn>
-        <Btn small variant="secondary" title="CF advises only"
+        <Btn small variant={mode === "FULL_MANUAL" ? "primary" : "secondary"} title="CF advises only"
+          disabled={acting}
           onClick={() => act(() => apiPost("/guard/mode", { mode: "FULL_MANUAL" }), "Mode: FULL_MANUAL")}>MANUAL</Btn>
-        <Btn small variant="secondary" title="Speed bot: fires everything significant, Guard still owns the gun"
+        <Btn small variant={mode === "HEV" ? "primary" : "secondary"} title="Speed bot: fires everything significant, Guard still owns the gun"
+          disabled={acting}
           onClick={() => act(async () => { await apiPost("/guard/mode", { mode: "HEV" }); await apiPost("/guard/preset/HEV"); }, "Mode: HEV — speed bot with brakes")}>HEV</Btn>
-        <Btn small variant="secondary" title="Speed of the bots, brakes of the Guard"
+        <Btn small variant={mode === "HYBRID" ? "primary" : "secondary"} title="Speed of the bots, brakes of the Guard"
+          disabled={acting}
           onClick={() => act(() => apiPost("/guard/mode", { mode: "HYBRID" }), "Mode: HYBRID")}>HYBRID</Btn>
-        <Btn small variant="secondary" title="OVER/UNDER/ODD/EVEN/MATCHES only — no DIFFERS"
+        <Btn small variant={mode === "PARITY" ? "primary" : "secondary"} title="OVER/UNDER/ODD/EVEN/MATCHES only — no DIFFERS"
+          disabled={acting}
           onClick={() => act(async () => { await apiPost("/guard/mode", { mode: "PARITY" }); await apiPost("/guard/preset/PARITY"); }, "Mode: PARITY — no DIFFERS")}>PARITY</Btn>
-        <Btn small variant="primary" title="Plug-in hybrid: fewer, bigger, cleaner strikes"
+        <Btn small variant={mode === "PHEV" ? "primary" : "secondary"} title="Plug-in hybrid: fewer, bigger, cleaner strikes"
+          disabled={acting}
           onClick={() => act(async () => { await apiPost("/guard/mode", { mode: "PHEV" }); await apiPost("/guard/preset/PHEV"); }, "Mode: PHEV — engine only runs when the market is charging")}>PHEV</Btn>
       </div>
+      {acting && <div style={{ color: "#d29922", fontSize: "0.75rem", marginBottom: 6 }}>⏳ applying…</div>}
 
       {killed && (
         <div style={{ color: "#f85149", fontSize: "0.8rem", marginBottom: 6 }}>
           🛑 {guard?.kill_reason} — nobody plays until you release.
         </div>
       )}
-      {msg && <div style={{ color: "#8b949e", fontSize: "0.75rem", marginBottom: 6 }}>{msg}</div>}
+      {msg && <div style={{ color: msgOk ? "#3fb950" : "#f85149", fontSize: "0.75rem", marginBottom: 6, fontWeight: 600 }}>{msg}</div>}
 
       {/* Manual stake — the manager sets the bullet size himself */}
       <div style={{ display: "flex", gap: 6, marginBottom: 8, alignItems: "center", borderTop: "1px solid #21262d", paddingTop: 8 }}>
