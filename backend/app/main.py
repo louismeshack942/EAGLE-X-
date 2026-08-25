@@ -53,6 +53,8 @@ from app.services.virtual_bank import virtual_bank
 from app.services.telegram import telegram_notifier
 from app.services.technical import technical_engine
 from app.services.token_vault import VAULT
+from app.services.tick_recorder import tick_recorder
+from app.services.truth_engine import truth_engine
 from app.api.auth import router as auth_router
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,7 @@ async def _refresh_account_snapshot() -> None:
 
 def _on_tick(tick: Tick) -> None:
     tick_queue.push(tick)
+    tick_recorder.record(tick)
 
 
 @asynccontextmanager
@@ -749,6 +752,42 @@ def journal_add(entry: dict):
         mode=entry.get("mode", "paper"),
         analysis_snapshot=entry.get("analysis_snapshot"),
     )
+
+
+# ---------------- Analysis Lab (Truth Engine) ----------------
+@app.get("/lab/edge-board")
+def lab_edge_board(window: int = 300):
+    return truth_engine.edge_board(settings.active_symbols, window=min(window, 2000))
+
+
+@app.get("/lab/expectancy/{symbol}")
+def lab_expectancy(symbol: str, window: int = 300):
+    return truth_engine.expectancy(symbol, window=min(window, 2000))
+
+
+@app.get("/lab/projection/{symbol}")
+def lab_projection(symbol: str, bankroll: float = 100.0, trades_per_day: float = 50.0, window: int = 300):
+    return truth_engine.projection(symbol, bankroll=bankroll, trades_per_day=trades_per_day, window=min(window, 2000))
+
+
+@app.get("/lab/reconcile")
+def lab_reconcile(user_id: str = "default"):
+    return truth_engine.reconcile_journal(user_id=user_id)
+
+
+@app.get("/lab/recordings")
+def lab_recordings():
+    return tick_recorder.stats()
+
+
+@app.get("/lab/recordings/{symbol}")
+def lab_recording(symbol: str, limit: int = 200):
+    return {"symbol": symbol, "ticks": tick_recorder.load(symbol, limit=min(limit, 5000))}
+
+
+@app.delete("/lab/recordings/{symbol}")
+def lab_recording_purge(symbol: str):
+    return {"removed": tick_recorder.purge(symbol)}
 
 
 # ---------------- Backtest ----------------

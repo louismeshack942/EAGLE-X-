@@ -24,6 +24,7 @@ import PortfolioManager from "@/components/panels/PortfolioManager";
 import RiskDashboard from "@/components/panels/RiskDashboard";
 import PerformanceAnalytics, { DiversificationAnalyzer } from "@/components/panels/PerformanceAnalytics";
 import ClubPanel from "@/components/panels/ClubPanel";
+import AnalysisLab from "@/components/panels/AnalysisLab";
 import VirtualBankPanel from "@/components/panels/VirtualBankPanel";
 import SessionRoom from "@/components/panels/SessionRoom";
 import TraderScriptPanel from "@/components/panels/TraderScriptPanel";
@@ -126,6 +127,11 @@ export default function Dashboard() {
           <DerivConnect />
           <TradePlanner />
           <AutoTraderPanel />
+        </div>
+
+        <SectionHeader emoji="🔬" title="Analysis Lab" sub="The Truth Engine — real edge or no trade" />
+        <div className="main-grid">
+          <AnalysisLab />
         </div>
 
         <SectionHeader emoji="📣" title="The Club" sub="Manager · Board · News · Fans · Alerts" />
