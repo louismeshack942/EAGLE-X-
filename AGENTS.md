@@ -1,5 +1,40 @@
 # EAGLE-X — Agent Notes
 
+## Real-data mission (2026-08-25) — geo-block defeated
+
+**Root cause of every phantom edge:** the generic Deriv endpoint
+(`wss://ws.derivws.com/websockets/v3`) geo-blocks whole regions — it served
+ZERO synthetic symbols to BOTH the DE (Render/Frankfurt) egress and a US
+sandbox. `/status` showed `clients_country: de` + "Deriv serves no symbols to
+country 'de'". The system silently fell back to DemoGenerator (GBM) ticks, so
+the Truth Engine computed "edges" on a near-random walk and the CF fired
+MATCHES lottery tickets (the -8 session). The repo note "frankfurt works" is
+OUTDATED.
+
+**The fix (works):** route the market-data WS through the account OTP URL
+(`wss://api.derivws.com/trading/v1/options/ws/<demo|real>?otp=...`). Deriv
+decides symbol availability by ACCOUNT there, not egress IP — the same IP
+that got InvalidSymbol on the generic endpoint streams real ticks (R_100
+quote 605.83) once the OTP URL is used.
+- `DerivClient._connect` now resolves its URL via `deriv_trader._url(token)`,
+  which mints a FRESH single-use OTP per connection (needs `account_id` +
+  `app_id` in the vault) and falls back to the generic endpoint when no
+  account is connected.
+- Fixed trader fallback URL: was `deriv_ws_url + "/websocket"` (Deriv 404s
+  that -> forced demo on fresh boots); now `deriv_ws_url + "?app_id=..."`.
+- After GeoRestrictedError the demo loop re-probes live every 300s — after
+  connecting the token, live mode resumes within ~5 min (watch /status).
+
+**Tighter gate:** CF may only fire on `truth_engine.proven_edges(symbol)` =
+an EDGE that survives ALL of the 100/300/1000-tick windows (min_ticks=50 is
+a thin-tape floor only; 200 would blanket-ban). Single-window flukes (the
+exact MATCHES bug) are refused. Regression tests in TestProvenEdges.
+Suite: 232 passed. Live commit: 8f9cb5d.
+
+**To get live data on a fresh boot:** the token must be connected BEFORE the
+first stream probe, else it parks in demo for 300s. Connect via
+POST /auth/token {token, app_id} early, or just wait for the re-probe.
+
 ## Architecture (single-service, since 2026-08-21 rebuild)
 
 ONE service. The FastAPI backend serves the statically-exported Next.js
