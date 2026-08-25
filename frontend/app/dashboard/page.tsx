@@ -25,6 +25,7 @@ import RiskDashboard from "@/components/panels/RiskDashboard";
 import PerformanceAnalytics, { DiversificationAnalyzer } from "@/components/panels/PerformanceAnalytics";
 import ClubPanel from "@/components/panels/ClubPanel";
 import AnalysisLab from "@/components/panels/AnalysisLab";
+import EdgeBanner from "@/components/panels/EdgeBanner";
 import VirtualBankPanel from "@/components/panels/VirtualBankPanel";
 import SessionRoom from "@/components/panels/SessionRoom";
 import TraderScriptPanel from "@/components/panels/TraderScriptPanel";
@@ -105,6 +106,8 @@ export default function Dashboard() {
           <span><strong>Disconnected</strong> — {error}. The dashboard will retry automatically.</span>
         </div>
       )}
+
+      <EdgeBanner />
 
       {!error && status?.last_error && (
         <div className="banner banner-warn">

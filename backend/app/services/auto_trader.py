@@ -29,6 +29,7 @@ from app.services.market_master import (
     market_master,
 )
 from app.services import scout as scout_svc
+from app.services.truth_engine import truth_engine
 from app.services.money_management import (
     check_hard_stops,
     compute_stake,
@@ -849,6 +850,31 @@ class AutoTrader:
                         self._log(f"COACH: team voted PLAY on {best_plays[0]['name']} — firing automatically")
                         self._coach_pending_id = None  # no queue — the vote IS the confirmation
                 if best_plays and self.confirmation_ticks >= required_ticks:
+                    # TRUTH GATE (final arbiter): the CF's own confidence is
+                    # advisory. Before any stake fires, ask the Truth Engine
+                    # whether this exact symbol+contract has a REAL edge
+                    # against its breakeven win rate. No EDGE -> physically
+                    # cannot fire, no matter how confident the squad feels.
+                    # This is what stops MATCHES/OVER/UNDER coin flips and
+                    # 90%-win-rate-but-bleeding DIFFERS from ever firing.
+                    verdict = truth_engine.expectancy(best_symbol, window=300)
+                    lab = {
+                        (c["type"], c.get("digit")): c
+                        for c in verdict.get("contracts", [])
+                    }
+                    best_plays = [
+                        p for p in best_plays
+                        if (lab.get((p.get("type"), p.get("digit"))) or {}).get("verdict") == "EDGE"
+                    ]
+                    if not best_plays:
+                        self._log(
+                            f"Truth gate: {best_symbol} holds no real edge right now — the CF refuses to fire"
+                        )
+                        self.no_trade_reasons[best_symbol] = (
+                            "truth gate: no contract beats its breakeven win rate"
+                        )
+                        await asyncio.sleep(3.0)
+                        continue
                     # Stake sizing. Manual mode: the manager's exact amount,
                     # capped only by what's spendable — no Kelly, no 10% rule,
                     # no drawdown scaling, no streak halving. The manager owns
