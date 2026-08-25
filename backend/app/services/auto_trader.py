@@ -126,6 +126,11 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         edge = c.get("observed_edge", 0.0) or 0.0
         if parity and c.get("type") == "DIFFERS":
             continue  # PARITY: no DIFFERS — only OVER/UNDER/ODD/EVEN/MATCHES
+        # MATCHES ban applies to EVERY mode: a 10% lottery ticket at 9.0
+        # payout needs >11.1% observed to break even. The CF was bleeding
+        # -$1/MATCHES. Nobody bets the lottery.
+        if c.get("type") == "MATCHES" and (c.get("observed_pct", 0) or 0.0) < 15.0:
+            continue
         if hev:
             # HEV: the speed bot. Only the 95% significance gate and a real
             # positive EV stand between the market and the trigger — no z

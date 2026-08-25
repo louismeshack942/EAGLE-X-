@@ -162,7 +162,7 @@ def _mm(signal="STRONG_DATA_SUPPORT", dq=88.0, contracts=None, anomalies=0):
     }
 
 
-def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT", significant=True):
+def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT", significant=True, observed_pct=None):
     return {
         "name": name,
         "type": name.split(" ")[0],
@@ -173,6 +173,7 @@ def _c(name, ev, edge, evidence="STRONG_DATA_SUPPORT", significant=True):
         "z": 2.5 if significant else 0.5,
         "significant": significant,
         "evidence": evidence,
+        **({"observed_pct": observed_pct} if observed_pct is not None else {}),
     }
 
 
@@ -191,9 +192,14 @@ class TestTeamDecision:
         assert plays[1]["name"] == "OVER 1"        # fluid second, still team-approved
 
     def test_every_contract_type_is_eligible(self):
-        for name in ("DIFFERS on 3", "MATCHES on 6", "ODD", "EVEN", "OVER 4", "UNDER 5"):
+        # MATCHES at <15% observed is a lottery ticket the CF refuses to buy.
+        # Every other contract type still passes the vote when the team agrees.
+        for name in ("DIFFERS on 3", "ODD", "EVEN", "OVER 4", "UNDER 5"):
             plays = select_plays(_mm(contracts=[_c(name, 0.10, 5.0)]), "R_100")
             assert plays and plays[0]["name"] == name, f"{name} benched despite full team approval"
+        # MATCHES at 15%+ observed is still eligible (the ban only blocks slivers)
+        plays = select_plays(_mm(contracts=[_c("MATCHES on 6", 0.71, 9.0, observed_pct=16.0)]), "R_100")
+        assert plays and plays[0]["name"] == "MATCHES on 6"
 
     def test_two_equal_plays_split(self):
         """Two strong positive-EV plays -> both play, stake splits."""
