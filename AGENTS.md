@@ -130,3 +130,21 @@ rate -5%) + ffmpeg into MP4. Never espeak. `/videos/*.mp4` served statically;
 
 `louismeshack942/EAGLE-X-` (trailing dash). `eaglex` repo was empty; `eagle-ai`
 is an unrelated older project — its Render services must stay suspended.
+
+## Pro Trader layer (2026-08-25)
+
+backend/app/services/pro_trader.py — additive statistical decision engine
+(ChatGPT-derived spec). Reuses tick_queue; pure-math only (no scipy):
+chi-square survival via regularized incomplete gamma, Benjamini-Hochberg FDR
+over all digit x window tests, Wilson lower-bound confidence, Dirichlet-smoothed
+contract probabilities, gap/streak/entropy/transition/autocorrelation features,
+time-chunked edge-decay slope. Hard gates: sample>=100, FDR p<0.05,
+Wilson LB > breakeven, EV >= 0.03, multi-window stability, data quality,
+latency <=500ms, edge not decaying. Composite signal_score never overrides
+gates. Default payouts are assumptions — live path must re-price via Deriv
+proposal and re-run gates (payouts= param). Every response carries
+RNG_NOTE: stats are descriptive, not predictive.
+
+Endpoints: /pro-trader/scan (registered before /pro-trader/{symbol}),
+/pro-trader/signal/{symbol}, /pro-trader/{symbol}.
+Tests: tests/test_pro_trader.py (15 tests; 208 total).

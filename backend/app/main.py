@@ -43,6 +43,7 @@ from app.services.persistence import (
     replay_engine,
     settings_store,
 )
+from app.services.pro_trader import pro_trader
 from app.services.strategy_engine import StrategyConfig, strategy_engine
 from app.services import scout as scout_svc
 from app.services import season as season_svc
@@ -269,6 +270,21 @@ def market_master_route(symbol: str, window: int = 100):
 @app.get("/scan-all")
 def scan_all(window: int = 100):
     return intelligence_engine.scan_all(settings.active_symbols, window)
+
+
+@app.get("/pro-trader/scan")
+def pro_trader_scan():
+    return pro_trader.scan(settings.active_symbols)
+
+
+@app.get("/pro-trader/signal/{symbol}")
+def pro_trader_signal(symbol: str):
+    return pro_trader.signal(symbol)
+
+
+@app.get("/pro-trader/{symbol}")
+def pro_trader_board(symbol: str):
+    return pro_trader.board(symbol)
 
 
 @app.get("/quick-signals")
