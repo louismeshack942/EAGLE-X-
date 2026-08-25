@@ -12,7 +12,6 @@ export default function TradePlanner() {
   const [digit, setDigit] = useState("5");
   const [stake, setStake] = useState("1");
   const [duration, setDuration] = useState("5");
-  const [token, setToken] = useState("");
   const [result, setResult] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +26,6 @@ export default function TradePlanner() {
         amount: Number(stake),
         duration: Number(duration),
         digit: needsDigit ? Number(digit) : undefined,
-        api_token: token || undefined,
       });
       setResult(r);
       setError(null);
@@ -45,7 +43,9 @@ export default function TradePlanner() {
       <Row label="Duration (s)" value={duration} />
       <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
         <select value={symbol} onChange={(e) => setSymbol(e.target.value)} style={{ background: "#010409", color: "#c9d1d9", border: "1px solid #30363d", borderRadius: 4, padding: "4px 8px" }}>
-          {["R_10", "R_25", "R_50", "R_75", "R_100"].map((s) => <option key={s}>{s}</option>)}
+          {["R_10", "R_25", "R_50", "R_75", "R_100",
+            "1HZ10V", "1HZ25V", "1HZ30V", "1HZ50V", "1HZ75V",
+            "1HZ100V", "1HZ150V", "1HZ200V", "1HZ250V", "1HZ300V"].map((s) => <option key={s}>{s}</option>)}
         </select>
         <select value={contract} onChange={(e) => setContract(e.target.value)} style={{ background: "#010409", color: "#c9d1d9", border: "1px solid #30363d", borderRadius: 4, padding: "4px 8px" }}>
           {CONTRACTS.map((c) => <option key={c}>{c}</option>)}
@@ -58,7 +58,6 @@ export default function TradePlanner() {
         <input value={stake} onChange={(e) => setStake(e.target.value)} placeholder="Stake" style={{ width: 70, background: "#010409", color: "#c9d1d9", border: "1px solid #30363d", borderRadius: 4, padding: "4px 8px" }} />
         <input value={duration} onChange={(e) => setDuration(e.target.value)} placeholder="Dur (t)" style={{ width: 70, background: "#010409", color: "#c9d1d9", border: "1px solid #30363d", borderRadius: 4, padding: "4px 8px" }} />
       </div>
-      <input value={token} onChange={(e) => setToken(e.target.value)} placeholder="Deriv API token (optional override)" style={{ marginTop: 6, width: "100%", background: "#010409", color: "#c9d1d9", border: "1px solid #30363d", borderRadius: 4, padding: "4px 8px" }} />
       <div style={{ marginTop: 8 }}>
         <Btn small variant="primary" disabled={busy} onClick={place}>PLACE TRADE</Btn>
       </div>

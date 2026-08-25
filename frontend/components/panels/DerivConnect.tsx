@@ -4,21 +4,17 @@ import { apiGet, apiPost, apiDel, API_BASE } from "@/lib/api";
 import { Card, Row, Btn, Pill } from "@/components/ui";
 
 /**
- * Connect the owner's personal Deriv account — WITHOUT pasting a token
- * into chat. Two paths:
- *   1. OAuth: "CONNECT WITH DERIV" opens Deriv's own login in a new tab;
- *      Deriv redirects back through the backend which stores the token.
- *   2. Manual: paste a token into the form (over HTTPS); it goes straight
- *      to the backend, gets validated, and is never displayed.
+ * Deriv account status. The token is configured server-side (env vars) and
+ * the backend connects it automatically at every boot — there is nothing to
+ * paste here. The panel shows the connected account, lets the owner switch
+ * between accounts on the token, and offers Deriv's own OAuth login as an
+ * alternative (no token pasting anywhere).
  */
 export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number }) {
   const [acct, setAcct] = useState<any>(null);
   const [accounts, setAccounts] = useState<any[]>([]);
-  const [token, setToken] = useState("");
-  const [appId, setAppId] = useState("");
   const [oauthAppId, setOauthAppId] = useState("");
   const [oauthCustom, setOauthCustom] = useState(false);
-  const [showTokenForm, setShowTokenForm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -88,31 +84,6 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
     return () => clearInterval(t);
   }, [refreshMs]);
 
-  const connectManual = async () => {
-    if (!token.trim()) return;
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r = await apiPost<any>("/auth/token", {
-        token: token.trim(),
-        ...(appId.trim() ? { app_id: appId.trim() } : {}),
-      });
-      if (r.connected) {
-        setMsg(`Connected: ${r.loginid} (${r.currency})`);
-        setToken("");
-        setAppId("");
-        setShowTokenForm(false);
-      } else {
-        setMsg(`Failed: ${r.error}`);
-      }
-      await load();
-    } catch (e: any) {
-      setMsg(`Failed: ${e.message ?? e}`);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const disconnect = async () => {
     setBusy(true);
     try {
@@ -177,10 +148,10 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
       ) : (
         <>
           <p style={{ color: "#8b949e", fontSize: "0.75rem", marginBottom: 8, lineHeight: 1.4 }}>
-            Link your Deriv account to enable live trading. Your token is never
-            shown or sent to chat — it goes straight to Deriv and your server.
-            (The OAuth button needs a registered app id — until then it shows
-            setup steps instead of a broken page.)
+            No token to paste — the server connects your Deriv account
+            automatically at every boot. If this shows NOT CONNECTED, the
+            server is still establishing the session (give it a few seconds)
+            or the configured token needs attention on Render.
           </p>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             <Btn
@@ -189,9 +160,6 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
               onClick={() => window.open(`${API_BASE}/auth/deriv/login`, "_blank", "noopener,width=520,height=640")}
             >
               CONNECT WITH DERIV
-            </Btn>
-            <Btn small variant="secondary" onClick={() => setShowTokenForm((v) => !v)}>
-              {showTokenForm ? "HIDE" : "PASTE TOKEN"}
             </Btn>
           </div>
           <div style={{ marginTop: 8 }}>
@@ -219,53 +187,6 @@ export default function DerivConnect({ refreshMs = 5000 }: { refreshMs?: number 
               <Btn small disabled={busy} onClick={saveOauthApp}>SAVE</Btn>
             </div>
           </div>
-          {showTokenForm && (
-            <div style={{ marginTop: 8 }}>
-              <input
-                type="password"
-                value={token}
-                onChange={(e) => setToken(e.target.value)}
-                placeholder="Deriv token (developers.deriv.com)"
-                autoComplete="off"
-                style={{
-                  width: "100%",
-                  background: "#010409",
-                  color: "#c9d1d9",
-                  border: "1px solid #30363d",
-                  borderRadius: 6,
-                  padding: "8px 10px",
-                  fontFamily: "monospace",
-                }}
-              />
-              <input
-                type="text"
-                value={appId}
-                onChange={(e) => setAppId(e.target.value)}
-                placeholder="App id (only for pat_ tokens)"
-                autoComplete="off"
-                style={{
-                  width: "100%",
-                  background: "#010409",
-                  color: "#c9d1d9",
-                  border: "1px solid #30363d",
-                  borderRadius: 6,
-                  padding: "8px 10px",
-                  fontFamily: "monospace",
-                  marginTop: 6,
-                }}
-              />
-              <p style={{ color: "#8b949e", fontSize: "0.7rem", marginTop: 4, lineHeight: 1.3 }}>
-                Modern pat_ tokens need your registered app id — register one
-                free app on developers.deriv.com to get it. Old tokens work
-                with the field empty.
-              </p>
-              <div style={{ marginTop: 6 }}>
-                <Btn small variant="success" disabled={busy || !token.trim()} onClick={connectManual}>
-                  {busy ? "VALIDATING…" : "CONNECT"}
-                </Btn>
-              </div>
-            </div>
-          )}
         </>
       )}
       {msg && <div style={{ marginTop: 6, fontSize: "0.75rem", color: "#8b949e" }}>{msg}</div>}
