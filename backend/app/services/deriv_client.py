@@ -28,6 +28,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from app.config import get_settings
 from app.models.tick import Tick
 from app.services.token_vault import VAULT
+from app.services.deriv_trader import deriv_trader
 
 
 class GeoRestrictedError(ConnectionError):
@@ -75,8 +76,20 @@ class DerivClient:
         self.authorized = False
 
     async def _connect(self) -> bool:
+        """Resolve the URL via the trader, which mints a FRESH account OTP.
+
+        The generic endpoint (wss://ws.derivws.com) geo-blocks entire regions
+        (serves zero synthetic symbols to DE/US egress). The OTP URL
+        (wss://api.derivws.com/trading/v1/options/ws/...?otp=...) decides by
+        the authorized ACCOUNT instead — the same egress IP that got
+        InvalidSymbol on the generic endpoint streams real ticks once the
+        account's OTP URL is used. OTP URLs are single-use, so resolve a
+        fresh one per connection; fall back to the generic endpoint when no
+        account is connected (or minting fails).
+        """
         try:
-            url = f"{self.settings.deriv_ws_url}?app_id={self.settings.deriv_app_id}&l=EN"
+            token = await resolve_token()
+            url = await deriv_trader._url(token)
             self.ws = await websockets.connect(url, ping_interval=20, ping_timeout=10, open_timeout=10)
             return True
         except Exception as exc:  # noqa: BLE001
