@@ -26,7 +26,7 @@ from app.services.persistence import settings_store
 _STATE_KEY = "risk_guard_state"
 _lock = threading.Lock()
 
-MODES = ("FULL_AUTO", "COACH", "FULL_MANUAL", "HEV", "HYBRID", "PHEV")
+MODES = ("FULL_AUTO", "COACH", "FULL_MANUAL", "HEV", "HYBRID", "PHEV", "PARITY")
 
 
 def _utcnow() -> str:
@@ -295,6 +295,13 @@ class RiskGuard:
             "max_trades_per_hour": 30, "streak_halving": False,
             "trail_arm": 0.0, "trail_pct": 0.5, "auto_kill_drawdown_pct": 0.0,
             "escalate_after_losses": 0,
+        },
+        "PARITY": {
+            # Parity tables: OVER/UNDER/ODD/EVEN/MATCHES only — no DIFFERS.
+            "daily_loss_limit": 200.0, "session_take_profit": 200.0,
+            "max_trades_per_hour": 10, "streak_halving": True,
+            "trail_arm": 50.0, "trail_pct": 0.5, "auto_kill_drawdown_pct": 0.10,
+            "escalate_after_losses": 2,
         },
     }
 

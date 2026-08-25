@@ -77,6 +77,8 @@ export default function VirtualBankPanel({ refreshMs = 4000 }: { refreshMs?: num
           onClick={() => act(async () => { await apiPost("/guard/mode", { mode: "HEV" }); await apiPost("/guard/preset/HEV"); }, "Mode: HEV — speed bot with brakes")}>HEV</Btn>
         <Btn small variant="secondary" title="Speed of the bots, brakes of the Guard"
           onClick={() => act(() => apiPost("/guard/mode", { mode: "HYBRID" }), "Mode: HYBRID")}>HYBRID</Btn>
+        <Btn small variant="secondary" title="OVER/UNDER/ODD/EVEN/MATCHES only — no DIFFERS"
+          onClick={() => act(async () => { await apiPost("/guard/mode", { mode: "PARITY" }); await apiPost("/guard/preset/PARITY"); }, "Mode: PARITY — no DIFFERS")}>PARITY</Btn>
         <Btn small variant="primary" title="Plug-in hybrid: fewer, bigger, cleaner strikes"
           onClick={() => act(async () => { await apiPost("/guard/mode", { mode: "PHEV" }); await apiPost("/guard/preset/PHEV"); }, "Mode: PHEV — engine only runs when the market is charging")}>PHEV</Btn>
       </div>

@@ -26,6 +26,9 @@ import PerformanceAnalytics, { DiversificationAnalyzer } from "@/components/pane
 import ClubPanel from "@/components/panels/ClubPanel";
 import VirtualBankPanel from "@/components/panels/VirtualBankPanel";
 import SessionRoom from "@/components/panels/SessionRoom";
+import TraderScriptPanel from "@/components/panels/TraderScriptPanel";
+import DigitHackerToolPanel from "@/components/panels/DigitHackerToolPanel";
+import ProTraderPanel from "@/components/panels/ProTraderPanel";
 
 const SYMBOLS = ["R_10", "R_25", "R_50", "R_75", "R_100"];
 
@@ -128,6 +131,13 @@ export default function Dashboard() {
         <SectionHeader emoji="📣" title="The Club" sub="Manager · Board · News · Fans · Alerts" />
         <div className="main-grid">
           <ClubPanel />
+        </div>
+
+        <SectionHeader emoji="⚔️" title="The Competition" sub="Speed · Digits · Analysis" />
+        <div className="main-grid">
+          <TraderScriptPanel />
+          <DigitHackerToolPanel symbol={symbol} />
+          <ProTraderPanel symbol={symbol} />
         </div>
 
         <SectionHeader emoji="🔄" title="Second XI" sub="Bench" />

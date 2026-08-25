@@ -119,10 +119,13 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
     )
     phev = risk_guard.mode == "PHEV"
     hev = risk_guard.mode == "HEV"
+    parity = risk_guard.mode == "PARITY"
     plays: list[dict] = []
     for c in contracts:
         ev = c.get("ev", -1)
         edge = c.get("observed_edge", 0.0) or 0.0
+        if parity and c.get("type") == "DIFFERS":
+            continue  # PARITY: no DIFFERS — only OVER/UNDER/ODD/EVEN/MATCHES
         if hev:
             # HEV: the speed bot. Only the 95% significance gate and a real
             # positive EV stand between the market and the trigger — no z
@@ -173,6 +176,8 @@ def select_plays(mm: dict, symbol: str) -> list[dict]:
         fresh = [p for p in plays if now - _strike_last_fired.get(p["name"], 0) >= STRIKE_ROTATION_S]
         if not fresh:
             return []  # every approved strike is on cooldown — wait for a new angle
+        # The cooled-down lead drops out; the next fresh angle leads. This is
+        # how MATCHES/OVER/UNDER get to fire when DIFFERS is on cooldown.
         plays = fresh
 
     # The precision gate: the top play must survive the table-level checks.

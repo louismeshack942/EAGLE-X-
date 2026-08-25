@@ -680,3 +680,44 @@ class TestHEV:
         assert len(plays) == 1
         assert plays[0]["name"] == "DIFFERS on 0"
         risk_guard.set_mode("FULL_AUTO")
+
+
+class TestParity:
+    """PARITY: OVER/UNDER/ODD/EVEN/MATCHES only, never DIFFERS."""
+
+    def test_parity_mode_exists(self):
+        g = _fresh_guard()
+        assert g.set_mode("PARITY")["mode"] == "PARITY"
+        g.set_mode("FULL_AUTO")
+
+    def test_parity_preset(self):
+        g = _fresh_guard()
+        r = g.apply_preset("PARITY")
+        assert r["preset"] == "PARITY"
+
+    def test_parity_blocks_differs_allows_parity(self):
+        from app.services.auto_trader import select_plays
+        from app.services.risk_guard import risk_guard
+        risk_guard.set_mode("PARITY")
+        mm = {
+            "data_quality": 85, "signal": "STRONG_DATA_SUPPORT", "anomaly_count": 0,
+            "contracts": [], "all_contracts": [
+                {"name": "DIFFERS on 0", "type": "DIFFERS", "digit": 0, "ev": 0.08,
+                 "observed_edge": 8.0, "confidence": 90, "evidence": "STRONG_DATA_SUPPORT",
+                 "significant": True, "z": 3.33},
+                {"name": "OVER 1", "type": "OVER", "digit": 1, "ev": 0.06,
+                 "observed_edge": 5.0, "confidence": 80, "evidence": "STRONG_DATA_SUPPORT",
+                 "significant": True, "z": 2.5},
+                {"name": "ODD", "type": "ODD", "digit": None, "ev": 0.04,
+                 "observed_edge": 3.0, "confidence": 70, "evidence": "STRONG_DATA_SUPPORT",
+                 "significant": True, "z": 2.0},
+                {"name": "MATCHES on 5", "type": "MATCHES", "digit": 5, "ev": 0.10,
+                 "observed_edge": 4.0, "confidence": 75, "evidence": "STRONG_DATA_SUPPORT",
+                 "significant": True, "z": 2.2},
+            ],
+        }
+        plays = select_plays(mm, "R_100")
+        names = [p["name"] for p in plays]
+        assert "DIFFERS on 0" not in names
+        assert any("OVER" in n or "ODD" in n or "MATCHES" in n for n in names)
+        risk_guard.set_mode("FULL_AUTO")
