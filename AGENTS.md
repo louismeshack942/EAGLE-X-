@@ -94,6 +94,37 @@ connect them:
 `test_vault_stores_pat_fields` and `test_trader_url_prefers_pat_and_falls_back_legacy`
 live in `tests/test_auth_and_live.py` (74 tests).
 
+## Analysis Lab / Truth Engine (2026-08-25)
+
+The honest layer. Answers "do I have a real edge right now?" with math:
+
+- `backend/app/services/truth_engine.py` — per contract per symbol:
+  breakeven win rate (1/payout), Bayes-shrunk observed rate, margin (pp),
+  EV, verdict: EDGE (significant + positive EV), FAIR (nothing mispriced),
+  TRAP (significant and still losing). `projection()` is quarter-Kelly,
+  capped 10%, and returns $0/day (not a hedge) when no EDGE exists.
+  `reconcile_journal()` replays the journal against breakeven math —
+  verdicts SUSTAINABLE / BREAKEVEN / SLOW BLEED. The canonical example:
+  18W/2L at 1.1 payout (DIFFERS) needs 90.9% to break even; 90.0% is
+  below it — variance, not edge.
+- `backend/app/services/tick_recorder.py` — every tick appended to
+  `data/ticks/{symbol}.jsonl` (20MB rotation, one backup), provider
+  tagged (`deriv_live` vs `demo`). Hooked in `_on_tick` in main.py;
+  recorder faults never interrupt ingestion.
+- Routes: `/lab/edge-board`, `/lab/expectancy/{symbol}`,
+  `/lab/projection/{symbol}`, `/lab/reconcile`, `/lab/recordings[/{symbol}]`.
+- Frontend: `AnalysisLab.tsx` (4 tabs: Edge Board / Contract Truth /
+  Journal Truth / The Tape), own dashboard section.
+- Tests: `tests/test_truth_engine.py` (20 tests incl. the 18W/2L
+  reconciliation). Suite: 228.
+
+Demo-feed honesty fix (same day): the GBM step was ~100x smaller than
+the 4th decimal, so rounded quotes froze the last digit — digit 0 never
+occurred in demo mode and every analytic manufactured fake "OVER 0"
+edges. `DemoGenerator` now stamps a uniform 0-9 digit per tick in
+`raw["digit"]`; `Tick.digit` reads the last digit at the quote's own
+decimal precision and prefers the stamped digit when present.
+
 ## Club (communications hub)
 
 `backend/app/services/club.py` — Team Manager briefing, Board/Sponsors
