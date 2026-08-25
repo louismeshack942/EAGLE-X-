@@ -86,10 +86,10 @@ async def test_trader_url_prefers_pat_and_falls_back_legacy(monkeypatch):
         assert url == "wss://api.derivws.com/trading/v1/options/ws/real?otp=xyz"
         await VAULT.set("legacy123")
         url = await trader._url("legacy123")
-        assert "websockets/v3/websocket" in url
+        assert "websockets/v3?app_id=" in url
         await VAULT.set("legacy123")
         other = await trader._url("another-token")
-        assert "websockets/v3/websocket" in other
+        assert "websockets/v3?app_id=" in other
     finally:
         await VAULT.clear()
 
