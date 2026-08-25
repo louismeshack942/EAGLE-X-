@@ -101,7 +101,9 @@ class DerivTrader:
             ws_url = await VAULT.get_ws_url()
             if ws_url:
                 return ws_url
-        return f"{self.settings.deriv_ws_url.rstrip('/')}/websocket?app_id={self.settings.deriv_app_id}&l=EN"
+        # deriv_ws_url already points at the websockets/v3 path; appending
+        # "/websocket" would 404 (Deriv redirects that to an HTML page).
+        return f"{self.settings.deriv_ws_url.rstrip('/')}?app_id={self.settings.deriv_app_id}&l=EN"
 
     @staticmethod
     def _needs_authorize(url: str) -> bool:
