@@ -52,6 +52,7 @@ from app.services.organism import organism
 from app.services.shell import audit_log, real_trade_budget
 from datetime import datetime, timezone
 
+from app.services.rivalry import rivalry_engine
 from app.services.forge import (
     chaos_engine,
     disaster_simulation,
@@ -1224,6 +1225,40 @@ def forge_self_destruct(body: dict):
 @app.get("/forge/disaster")
 def forge_disaster(balance: float = 1000.0, stake: float = 1.0, payout: float = 1.95):
     return disaster_simulation(balance=balance, stake=stake, payout=payout)
+
+
+# ---------------- Rivalry (self-competition) ----------------
+@app.get("/rivalry/status")
+def rivalry_status():
+    return rivalry_engine.status()
+
+
+@app.post("/rivalry/generate")
+def rivalry_generate(body: dict):
+    return rivalry_engine.generate(str(body.get("kind", "")))
+
+
+@app.post("/rivalry/compete")
+def rivalry_compete(body: dict):
+    digits = body.get("digits") or []
+    return rivalry_engine.compete(digits=[int(x) for x in digits],
+                                  kind=body.get("kind"),
+                                  folds=int(body.get("folds", 4)))
+
+
+@app.get("/rivalry/tournament")
+def rivalry_tournament(user_id: str = "default", dimension: str = "contract"):
+    return rivalry_engine.tournament(user_id=user_id, dimension=dimension)
+
+
+@app.get("/rivalry/adversarial")
+def rivalry_adversarial(user_id: str = "default"):
+    return rivalry_engine.adversarial(user_id=user_id)
+
+
+@app.get("/rivalry/decay")
+def rivalry_decay(user_id: str = "default", recent_n: int = 20):
+    return rivalry_engine.decay(user_id=user_id, recent_n=recent_n)
 
 
 @app.get("/forge/chaos")

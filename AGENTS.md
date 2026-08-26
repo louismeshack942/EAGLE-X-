@@ -312,6 +312,20 @@ stays under the ceiling AND health/regime/meta gates pass.
 - Routes: /forge/{strength,survivability,self-destruct,disaster,chaos}.
 - Tests: tests/test_forge.py (9). Suite: 357 passed.
 
+
+## Rivalry — Self-Competitive / Limit-Breaking (2026-08-26)
+- `backend/app/services/rivalry.py` — champion/challenger promotion via a
+  no-lookahead walk-forward comparator: at each decision point the
+  candidate is picked from digits BEFORE it and resolved on the NEXT
+  tick. Promotion needs a better EAGLE_SCORE, robustness >= 50, and
+  walk-forward consistency >= 0.5. Robustness = fold consistency +
+  instability + window perturbation + shuffle dissonance.
+- Routes: /rivalry/{status,generate,compete,tournament,adversarial,decay}.
+  Tournament mines the journal per contract/market; adversarial mines
+  for blind spots; decay emits GREEN/YELLOW/RED (+rollback at RED).
+- Tests: tests/test_rivalry.py (9 incl. explicit no-lookahead regression).
+  Suite: 366 passed.
+
 ## Commands
 
 - Frontend build: `cd frontend && npm run build` → `out/`
