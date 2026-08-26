@@ -1666,14 +1666,27 @@ def _resolve_frontend(path: str) -> Optional[Path]:
     return fd / "index.html"
 
 
+# Paths that look like API routes must never be served the SPA shell —
+# a fake HTML page for a missing endpoint is worse than an honest 404.
+_API_PREFIXES = (
+    "/api/", "/auth/", "/trade", "/status", "/health", "/bank", "/journal",
+    "/bottom-up/", "/super/", "/lightning/", "/eagle/", "/organism/",
+    "/shell/", "/forge/", "/rivalry/", "/pro-trader/", "/lab/", "/club/",
+    "/auto-trader/", "/risk/", "/intel/", "/market/", "/analytics/",
+    "/truth/", "/vault/", "/settings/", "/users/", "/approvals/",
+    "/replay/", "/sessions/", "/posts/", "/rooms/", "/videos/",
+)
+
+
 @app.middleware("http")
 async def serve_frontend(request, call_next):
     response = await call_next(request)
     if request.method != "GET" or response.status_code != 404:
         return response
-    if request.url.path.startswith("/api/"):
+    path = request.url.path
+    if any(path.startswith(pre) for pre in _API_PREFIXES):
         return response
-    target = _resolve_frontend(request.url.path)
+    target = _resolve_frontend(path)
     if target is None:
         return response
     media_type, _ = mimetypes.guess_type(str(target))
