@@ -44,6 +44,7 @@ from app.services.persistence import (
     settings_store,
 )
 from app.services.pro_trader import pro_trader
+from app.services.bottom_up import bottom_up_engine
 from app.services.strategy_engine import StrategyConfig, strategy_engine
 from app.services import scout as scout_svc
 from app.services import season as season_svc
@@ -73,6 +74,7 @@ async def _refresh_account_snapshot() -> None:
 def _on_tick(tick: Tick) -> None:
     tick_queue.push(tick)
     tick_recorder.record(tick)
+    bottom_up_engine.on_tick(tick)
 
 
 async def _bootstrap_env_token() -> None:
@@ -848,6 +850,77 @@ def lab_recording(symbol: str, limit: int = 200):
 @app.delete("/lab/recordings/{symbol}")
 def lab_recording_purge(symbol: str):
     return {"removed": tick_recorder.purge(symbol)}
+
+
+# ---------------- Bottom-Up Profitability Engine (the directive) ----------------
+def _bu_risk_blocked() -> bool:
+    """§16: the risk engine has authority over the strategy engine."""
+    return bool(risk_guard.killed)
+
+
+@app.get("/bottom-up/rank")
+def bottom_up_rank():
+    return bottom_up_engine.rank(settings.active_symbols, risk_blocked=_bu_risk_blocked())
+
+
+@app.get("/bottom-up/config")
+def bottom_up_config():
+    return bottom_up_engine.get_config()
+
+
+@app.post("/bottom-up/config")
+def bottom_up_config_update(body: dict):
+    return bottom_up_engine.update_config(**body)
+
+
+@app.get("/bottom-up/tracker")
+def bottom_up_tracker():
+    return bottom_up_engine.tracker()
+
+
+@app.get("/bottom-up/risk-profile")
+def bottom_up_risk_profile():
+    return bottom_up_engine.risk_profile()
+
+
+@app.get("/bottom-up/martingale")
+def bottom_up_martingale(base_stake: float = 1.0, payout: float = 1.95,
+                         max_level: int = 3, bankroll: float = 100.0,
+                         target_profit: float = 0.0, cumulative_loss: float = 0.0):
+    return bottom_up_engine.martingale_plan(
+        base_stake=base_stake, payout=payout, max_level=min(max_level, 10),
+        bankroll=bankroll, target_profit=target_profit, cumulative_loss=cumulative_loss,
+    )
+
+
+@app.get("/bottom-up/postmortem")
+def bottom_up_postmortem(user_id: str = "default"):
+    return bottom_up_engine.postmortem(user_id=user_id)
+
+
+@app.get("/bottom-up/win-analysis")
+def bottom_up_win_analysis(user_id: str = "default"):
+    return bottom_up_engine.win_analysis(user_id=user_id)
+
+
+@app.get("/bottom-up/scorecard")
+def bottom_up_scorecard(user_id: str = "default"):
+    return bottom_up_engine.scorecard(user_id=user_id)
+
+
+@app.get("/bottom-up/validate")
+def bottom_up_validate(user_id: str = "default"):
+    return bottom_up_engine.validate_thresholds(user_id=user_id)
+
+
+@app.get("/bottom-up/signal/{symbol}")
+def bottom_up_signal(symbol: str):
+    return bottom_up_engine.signal(symbol, risk_blocked=_bu_risk_blocked())
+
+
+@app.get("/bottom-up/candidates/{symbol}")
+def bottom_up_candidates(symbol: str):
+    return bottom_up_engine.evaluate(symbol, risk_blocked=_bu_risk_blocked())
 
 
 # ---------------- Backtest ----------------

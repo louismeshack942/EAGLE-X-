@@ -176,6 +176,50 @@ rate -5%) + ffmpeg into MP4. Never espeak. `/videos/*.mp4` served statically;
 `videos.json` manifest drives the Video Hub UI list (elided titles, no
 "THE CLUB" naming).
 
+
+## Bottom-Up Profitability Engine (2026-08-26 directive)
+
+`backend/app/services/bottom_up.py` — the gate-first decision layer on top of
+Pro Trader stats. Mission order: fewer losses > better decisions > risk-adjusted
+profit. Survival before profit; NO TRADE is a valid, frequent answer.
+
+- **Contract hierarchy (§1):** MATCHES > OVER > UNDER > ODD > EVEN > DIFFERS.
+  The hierarchy orders FOCUS among validated edges only — it never forces a
+  trade. This intentionally conflicts with the old "CF trades DIFFERS only"
+  lesson; resolved by keeping every hard gate, so a fair board still yields
+  zero trades. Never loosen gates to force MATCHES trades.
+- **Hard gates (§4):** data_quality, sample (>=100), FDR statistics,
+  confidence (Wilson LB > breakeven, §8), safety_margin (edge >= +3pp default,
+  preferred +5pp, §7), multi-window stability over 50/250/1000 (§5),
+  long_term anti-spike (the long window must independently clear the margin,
+  §10), edge_not_decaying (chronological chunk slope, §12), latency <=500ms,
+  risk (risk_guard.killed has veto authority, §16).
+- **Score 0-100 + grade A+/A/B/C/D (§14/§15):** any failed gate => grade D.
+  The score NEVER overrides a hard rejection. Only A+/A are auto-executable.
+- **Signal persistence (§11/§12):** detection is not execution. A passing
+  candidate is tracked (EDGE_LIFETIME: initial/current edge, slope,
+  volatility) and must survive `confirmation_ticks` (default 5) re-evaluations
+  before EXECUTE; decay below the floor or disappearing evidence CANCELS it.
+  Tracker is in-memory by design (signals are short-lived). `on_tick` is
+  hooked in `main._on_tick` and only re-evaluates symbols with live signals.
+- **Journal analytics:** postmortem (§20, 11 loss classes + variance-vs-model
+  Wilson verdict), win_analysis (§21, SKILL_CONSISTENT vs VARIANCE_NOT_PROVEN),
+  scorecard (§24: win rate, realized vs expected EV, ROI, profit factor,
+  max drawdown, losing streaks, per-contract/market/barrier, grade win rates),
+  kill switches (§25: rolling-100 EV<0 AND Wilson UB below breakeven),
+  validate_thresholds (§7/§23: in-sample grid, refuses to declare winners
+  without out-of-sample evidence).
+- **Martingale (§18):** capped plans only via required-recovery formula;
+  unlimited is prohibited; plan aborts when bankroll breaks.
+- Config: GET/POST `/bottom-up/config` (persisted in settings_store, env
+  BU_MIN_EDGE / BU_CONFIRMATION_TICKS). Routes: `/bottom-up/rank`,
+  `/signal/{symbol}`, `/candidates/{symbol}`, `/tracker`, `/risk-profile`,
+  `/martingale`, `/postmortem`, `/win-analysis`, `/scorecard`, `/validate`.
+- Tests: `tests/test_bottom_up.py` (22 tests). Suite: 271 passed.
+- Still advisory: the auto_trader execution path does not yet consume
+  bottom-up decisions; frontend panel not yet built. Both are deliberate
+  follow-ups.
+
 ## Commands
 
 - Frontend build: `cd frontend && npm run build` → `out/`
