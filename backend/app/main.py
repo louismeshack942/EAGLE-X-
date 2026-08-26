@@ -46,6 +46,9 @@ from app.services.persistence import (
 from app.services.pro_trader import pro_trader
 from app.services.bottom_up import bottom_up_engine
 from app.services.super_profit import super_profit_engine
+from app.services.lightning import lightning_engine
+from app.services.eagle import eagle_engine
+from app.services.organism import organism
 from app.services.strategy_engine import StrategyConfig, strategy_engine
 from app.services import scout as scout_svc
 from app.services import season as season_svc
@@ -77,6 +80,7 @@ def _on_tick(tick: Tick) -> None:
     tick_recorder.record(tick)
     bottom_up_engine.on_tick(tick)
     super_profit_engine.on_tick(tick)
+    lightning_engine.on_tick(tick)
 
 
 async def _bootstrap_env_token() -> None:
@@ -1023,6 +1027,113 @@ def super_allocate(body: dict):
 @app.get("/super/profit-lock")
 def super_profit_lock(session_pnl_pct: float = 0.0):
     return super_profit_engine.profit_lock_multiplier(session_pnl_pct)
+
+# ---------------- Lightning-Speed Execution layer ----------------
+@app.get("/lightning/dashboard")
+def lightning_dashboard():
+    return lightning_engine.dashboard()
+
+
+@app.get("/lightning/profiler")
+def lightning_profiler():
+    return lightning_engine.profiler.stats()
+
+
+@app.get("/lightning/events")
+def lightning_events(limit: int = 100):
+    return {"events": lightning_engine.bus.drain(limit=min(limit, 500)),
+            "dropped": lightning_engine.bus.dropped}
+
+
+@app.get("/lightning/ledger")
+def lightning_ledger():
+    lightning_engine.ledger.expire_unknowns()
+    return lightning_engine.ledger.snapshot()
+
+
+@app.post("/lightning/ledger/begin")
+def lightning_ledger_begin(body: dict):
+    return lightning_engine.begin_trade(
+        client_trade_id=str(body.get("client_trade_id", "")),
+        symbol=str(body.get("symbol", "")),
+        contract=str(body.get("contract", "")),
+        barrier=body.get("barrier"),
+        detail=str(body.get("detail", "")),
+    )
+
+
+@app.post("/lightning/ledger/update")
+def lightning_ledger_update(body: dict):
+    return lightning_engine.update_trade(
+        client_trade_id=str(body.get("client_trade_id", "")),
+        state=str(body.get("state", "")),
+        detail=str(body.get("detail", "")),
+    )
+
+
+@app.get("/lightning/failsafe/{symbol}")
+def lightning_failsafe(symbol: str):
+    reason = lightning_engine.failsafe(symbol)
+    return {"symbol": symbol, "blocked": reason is not None, "reason": reason}
+
+# ---------------- Hunting-Eagle Precision layer ----------------
+@app.get("/eagle/state/{symbol}")
+def eagle_state(symbol: str):
+    return eagle_engine.market_state(symbol)
+
+
+@app.get("/eagle/strike/{symbol}")
+def eagle_strike(symbol: str, user_id: str = "default"):
+    return eagle_engine.strike(symbol, risk_blocked=_bu_risk_blocked(), user_id=user_id)
+
+
+@app.post("/eagle/strike/{symbol}")
+def eagle_strike_priced(symbol: str, body: dict, user_id: str = "default"):
+    return eagle_engine.strike(
+        symbol, payouts=body.get("payouts"), latency_ms=body.get("latency_ms"),
+        risk_blocked=_bu_risk_blocked(), user_id=user_id,
+    )
+
+
+@app.get("/eagle/barriers/{symbol}")
+def eagle_barriers(symbol: str):
+    return eagle_engine.rank_barriers(symbol)
+
+
+@app.get("/eagle/false-positives")
+def eagle_false_positives(user_id: str = "default"):
+    return eagle_engine.false_positive_hunt(user_id=user_id)
+
+
+@app.get("/eagle/scoreboard")
+def eagle_scoreboard(user_id: str = "default"):
+    return eagle_engine.scoreboard(user_id=user_id)
+
+# ---------------- The Conveyor-Belt Organism ----------------
+@app.get("/organism/spine")
+def organism_spine():
+    return organism.spine_status()
+
+
+@app.get("/organism/performance")
+def organism_performance():
+    return organism.performance()
+
+
+@app.post("/organism/process")
+def organism_process(body: dict, user_id: str = "default"):
+    """Push one synthetic tick through the whole body (inspection/testing)."""
+    from datetime import datetime, timezone
+    try:
+        t = Tick(
+            symbol=str(body["symbol"]),
+            quote=float(body["quote"]),
+            timestamp=datetime.fromisoformat(
+                str(body.get("timestamp") or datetime.now(timezone.utc).isoformat())),
+        )
+    except (KeyError, ValueError) as exc:
+        return {"decision": "REJECT", "reason": f"malformed tick: {exc}"}
+    return organism.process(t, user_id=user_id, risk_blocked=_bu_risk_blocked())
 
 
 # ---------------- Backtest ----------------

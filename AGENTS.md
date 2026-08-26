@@ -259,6 +259,34 @@ stays under the ceiling AND health/regime/meta gates pass.
 - Still advisory: the execution path (auto_trader) is untouched. The
   ensemble gates decisions; it does not place trades.
 
+
+## Lightning + Eagle + Organism (2026-08-26 directives #3-#6)
+- `backend/app/services/lightning.py` — event-driven hot path: RingWindow
+  O(1) circular buffers per symbol (50/250/1000), two-tier brain (fast
+  filter skips quiet markets, deep ensemble only for survivors), priority
+  event bus (P0 trade ... P5 logging), TradeLedger duplicate protection
+  (CREATED->SUBMITTED->CONFIRMED/REJECTED/UNKNOWN, timeout => UNKNOWN,
+  never blind-retry), failsafe (dead connection/stale feed/UNKNOWN
+  executions block), latency profiler P50/P90/P95/P99, /lightning/*
+  routes (dashboard, profiler, events, ledger, failsafe).
+- `backend/app/services/eagle.py` — precision layer: three-horizon vision
+  (EYE 500/1000, FOCUS 100/250/500, STRIKE 10/25/50), horizon agreement
+  requires every horizon's mean edge >= max(min_edge, 0.05), probability
+  consensus (raw/Bayesian/rolling/conditional, normalized variance),
+  12-level signal stack, anti-overconfidence (uncertainty/contradiction
+  ceilings), EntryPrecisionScore bands A+/A/B/C/<65 NO_TRADE, exact
+  barrier ranking per family, false-positive hunting from the loss DB,
+  precision scoreboard with grading-monotonicity check. /eagle/* routes.
+- `backend/app/services/organism.py` — the conveyor-belt body: Data Armor
+  -> Speed -> Vision -> Precision -> Competition -> Venom -> Strength ->
+  Final Gate -> STRIKE|REJECT, driven by the ControlSpine state machine
+  (OBSERVING..HARDENING, FAILURE->SAFE_STATE from anywhere). Immutable
+  safety rules listed in spine_status. Per-stage tail profiling at
+  /organism/performance; /organism/process pushes one tick through the
+  whole body. Advisory-only: STRIKE emits an armed card, no broker call.
+- Tests: test_lightning (14), test_eagle (13), test_organism (10).
+  Suite: 336 passed.
+
 ## Commands
 
 - Frontend build: `cd frontend && npm run build` → `out/`
