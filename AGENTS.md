@@ -287,6 +287,22 @@ stays under the ceiling AND health/regime/meta gates pass.
 - Tests: test_lightning (14), test_eagle (13), test_organism (10).
   Suite: 336 passed.
 
+
+## External Shell + Certification harness (2026-08-26 directive #7)
+- `backend/app/services/shell.py` — AuditLog (append-only, newest-first)
+  and RealTradeBudget: REAL test trades must be exactly \$1, lifetime cap
+  60 across everything; #60 sets REAL_TEST_EXECUTION_LOCKED until a human
+  resets via /shell/certification/reset.
+- Routes: /shell/ops-card (system+risk+speed+organism+ledger), /shell/audit,
+  /shell/certification/{trade,report,reset}.
+- `tests/test_shell.py` (12): chaos (bad digit armor, disconnect/stale
+  failsafe, risk lock), recovery (ledger UNKNOWN), security (no secrets in
+  responses, malformed input), budget math. Suite: 348 passed.
+- Infra reality: Postgres/Redis stay unavailable on Render free tier;
+  persistence is JSON files. WS routes are unauthenticated by design —
+  add an auth gateway before multi-user exposure. No /api/v1 prefix; the
+  whole API is same-origin on one service.
+
 ## Commands
 
 - Frontend build: `cd frontend && npm run build` → `out/`

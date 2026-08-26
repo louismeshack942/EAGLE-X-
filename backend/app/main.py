@@ -49,6 +49,7 @@ from app.services.super_profit import super_profit_engine
 from app.services.lightning import lightning_engine
 from app.services.eagle import eagle_engine
 from app.services.organism import organism
+from app.services.shell import audit_log, real_trade_budget
 from app.services.strategy_engine import StrategyConfig, strategy_engine
 from app.services import scout as scout_svc
 from app.services import season as season_svc
@@ -1118,6 +1119,75 @@ def organism_spine():
 @app.get("/organism/performance")
 def organism_performance():
     return organism.performance()
+
+# ---------------- External Shell (ops + audit + certification) ----------------
+@app.get("/shell/ops-card")
+def shell_ops_card(user_id: str = "default"):
+    perf = organism.performance()
+    spine = organism.spine_status()
+    guard = risk_guard.status()
+    ledger = lightning_engine.ledger.snapshot()
+    return {
+        "system": "OPERATIONAL" if not risk_guard.killed else "BLOCKED",
+        "risk": guard,
+        "speed": {"decision_p50_ms": perf["stages_ms"].get("total", {}).get("p50"),
+                  "decision_p95_ms": perf["stages_ms"].get("total", {}).get("p95"),
+                  "decision_p99_ms": perf["stages_ms"].get("total", {}).get("p99")},
+        "organism": {"cycles": perf["cycles"], "strikes": perf["strikes"],
+                     "rejects": perf["rejects"], "selectivity": perf["selectivity"],
+                     "spine": spine["state"]},
+        "ledger": ledger,
+        "lightning": lightning_engine.dashboard(),
+        "immutable_rules": spine["immutable_rules"],
+    }
+
+
+@app.get("/shell/audit")
+def shell_audit(limit: int = 100, action: Optional[str] = None):
+    return {"events": audit_log.list(limit=min(limit, 500), action=action),
+            "count": audit_log.count()}
+
+
+@app.post("/shell/audit")
+def shell_audit_record(body: dict):
+    return audit_log.record(
+        actor=str(body.get("actor", "system")),
+        action=str(body.get("action", "?")),
+        detail=str(body.get("detail", "")),
+        old=body.get("old"), new=body.get("new"),
+    )
+
+
+@app.post("/shell/certification/trade")
+def shell_cert_trade(body: dict):
+    try:
+        stake = float(body.get("stake", 0))
+        pnl = float(body.get("pnl", 0))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "stake/pnl must be numeric"}
+    out = real_trade_budget.record(
+        stake=stake,
+        symbol=str(body.get("symbol", "?")),
+        contract=str(body.get("contract", "?")),
+        result=str(body.get("result", "?")),
+        pnl=pnl,
+        latency_ms=body.get("latency_ms"),
+        reason=str(body.get("reason", "")),
+    )
+    audit_log.record("system", "real_test_trade",
+                     detail=f"#{out.get('trade_number')} {out.get('trade', {}).get('symbol')}",
+                     new=str(out.get("trade", {}).get("pnl")) if out.get("ok") else None)
+    return out
+
+
+@app.get("/shell/certification/report")
+def shell_cert_report():
+    return real_trade_budget.report()
+
+
+@app.post("/shell/certification/reset")
+def shell_cert_reset(body: dict):
+    return real_trade_budget.reset(actor=str(body.get("actor", "unknown")))
 
 
 @app.post("/organism/process")
