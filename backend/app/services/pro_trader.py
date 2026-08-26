@@ -205,9 +205,10 @@ class ProTrader:
                 cur_d, cur_len = x, 1
         max_streak[cur_d] = max(max_streak[cur_d], cur_len)
 
-        # Spec §22: entropy regime.
-        big = window_stats.get(str(max(w for w in WINDOWS if str(w) in window_stats)))
-        big_w = max(w for w in WINDOWS if str(w) in window_stats)
+        # Spec §22: entropy regime. Thin tapes (< smallest window) fall back
+        # to the whole buffer instead of crashing on an empty window set.
+        avail_ws = [w for w in WINDOWS if str(w) in window_stats]
+        big_w = max(avail_ws) if avail_ws else min(n, min(WINDOWS))
         counts_big = Counter(digits[-big_w:])
         entropy = -sum(
             (c / big_w) * math.log2(c / big_w) for c in counts_big.values() if c

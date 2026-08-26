@@ -63,6 +63,15 @@ def test_wilson_upper_bound():
     assert wilson_upper_bound(0, 25) < 0.15
 
 
+def test_thin_tape_does_not_crash():
+    # Fresh boot: a handful of ticks must yield NO_TRADE, not a 500.
+    eng, _ = make_engine([4, 4, 7])
+    e = eng.evaluate("R_100")
+    assert e["n_ticks"] == 3
+    assert all(c["decision"] == "REJECT" for c in e["candidates"])
+    assert eng.signal("R_100")["decision"] == "NO_TRADE"
+
+
 # ---------------- §1 hierarchy ----------------
 def test_candidates_follow_hierarchy():
     kinds = [k for k, _ in BottomUpEngine._candidates()]
