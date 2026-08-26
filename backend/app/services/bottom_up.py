@@ -454,7 +454,14 @@ class BottomUpEngine:
         self._update_tracker(symbol, candidates, tick_idx)
 
         passing = [c for c in candidates if c["decision"] == "PASS"]
-        best = max(passing, key=lambda c: (c["score"], -c["hierarchy_rank"]), default=None)
+        # §1: the CONTRACT_HIERARCHY is a real ORDER, not a tie-break flavor.
+        # MATCHES beats OVER beats UNDER beats ODD beats EVEN beats DIFFERS.
+        # If two candidates pass, the hierarchy decides — DIFFERS is never the
+        # FIRST choice merely because its raw score is higher.
+        if passing:
+            best = min(passing, key=lambda c: c["hierarchy_rank"])
+        else:
+            best = None
         return {
             "symbol": symbol,
             "n_ticks": n,

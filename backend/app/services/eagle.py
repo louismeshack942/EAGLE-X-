@@ -44,7 +44,7 @@ STRIKE_WINDOWS = (10, 25, 50)    # immediate actionability
 
 @dataclass
 class EagleConfig:
-    consensus_min: float = 0.85        # §6 probability agreement floor
+    consensus_min: float = 0.80        # §6 probability agreement floor
     max_uncertainty: float = 0.35      # §14 anti-overconfidence ceiling
     max_contradiction: float = 0.25
     entry_a_plus: float = 90.0         # §19 precision score bands

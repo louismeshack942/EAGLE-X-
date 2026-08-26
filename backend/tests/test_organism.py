@@ -111,7 +111,8 @@ def test_full_body_strike_on_strong_edge():
     if last["decision"] == "STRIKE":
         assert stages == ["data_armor", "speed", "vision", "precision",
                           "competition", "venom", "strength", "final_gate"]
-        assert last["card"]["crosshair"]["contract"] == "OVER"
+        # hierarchy order: with the new rule, MATCHES gets priority over OVER
+        assert last["card"]["crosshair"]["contract"] == "MATCHES"
         assert org.strikes >= 1
         assert org.spine.state == "OBSERVING"  # loop closed
     else:
