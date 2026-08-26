@@ -45,6 +45,7 @@ from app.services.persistence import (
 )
 from app.services.pro_trader import pro_trader
 from app.services.bottom_up import bottom_up_engine
+from app.services.super_profit import super_profit_engine
 from app.services.strategy_engine import StrategyConfig, strategy_engine
 from app.services import scout as scout_svc
 from app.services import season as season_svc
@@ -75,6 +76,7 @@ def _on_tick(tick: Tick) -> None:
     tick_queue.push(tick)
     tick_recorder.record(tick)
     bottom_up_engine.on_tick(tick)
+    super_profit_engine.on_tick(tick)
 
 
 async def _bootstrap_env_token() -> None:
@@ -943,6 +945,84 @@ def bottom_up_signal(symbol: str):
 @app.get("/bottom-up/candidates/{symbol}")
 def bottom_up_candidates(symbol: str):
     return bottom_up_engine.evaluate(symbol, risk_blocked=_bu_risk_blocked())
+
+# ---------------- Super-Profitability Engine (multi-brain ensemble) ----------------
+@app.get("/super/config")
+def super_config():
+    return super_profit_engine.get_config()
+
+
+@app.post("/super/config")
+def super_config_update(body: dict):
+    return super_profit_engine.update_config(**body)
+
+
+@app.get("/super/auction")
+def super_auction():
+    return super_profit_engine.auction(settings.active_symbols, risk_blocked=_bu_risk_blocked())
+
+
+@app.get("/super/decision/{symbol}")
+def super_decision(symbol: str, user_id: str = "default"):
+    return super_profit_engine.decide(symbol, risk_blocked=_bu_risk_blocked(), user_id=user_id)
+
+
+@app.post("/super/decision/{symbol}")
+def super_decision_priced(symbol: str, body: dict, user_id: str = "default"):
+    return super_profit_engine.decide(
+        symbol, payouts=body.get("payouts"), latency_ms=body.get("latency_ms"),
+        risk_blocked=_bu_risk_blocked(), user_id=user_id,
+    )
+
+
+@app.get("/super/brains/{symbol}")
+def super_brains(symbol: str, user_id: str = "default"):
+    d = super_profit_engine.decide(symbol, risk_blocked=_bu_risk_blocked(), user_id=user_id)
+    return {"symbol": symbol, "brains": d.get("brains", []), "consensus": d.get("consensus"),
+            "final": d.get("final")}
+
+
+@app.get("/super/health")
+def super_health(user_id: str = "default"):
+    return super_profit_engine.health(user_id=user_id)
+
+
+@app.get("/super/calibration")
+def super_calibration(user_id: str = "default"):
+    return super_profit_engine.calibration(user_id=user_id)
+
+
+@app.get("/super/matrix")
+def super_matrix(user_id: str = "default"):
+    return super_profit_engine.matrix(user_id=user_id)
+
+
+@app.get("/super/profiles")
+def super_profiles(user_id: str = "default"):
+    return super_profit_engine.profiles(user_id=user_id)
+
+
+@app.get("/super/conditional/{symbol}")
+def super_conditional(symbol: str):
+    return super_profit_engine.conditional_edge(symbol)
+
+
+@app.get("/super/ablation/{symbol}")
+def super_ablation(symbol: str):
+    return super_profit_engine.ablation(symbol)
+
+
+@app.post("/super/allocate")
+def super_allocate(body: dict):
+    return super_profit_engine.allocate(
+        balance=float(body.get("balance", 0.0)),
+        opportunities=list(body.get("opportunities", [])),
+    )
+
+
+@app.get("/super/profit-lock")
+def super_profit_lock(session_pnl_pct: float = 0.0):
+    return super_profit_engine.profit_lock_multiplier(session_pnl_pct)
 
 
 # ---------------- Backtest ----------------

@@ -220,6 +220,45 @@ profit. Survival before profit; NO TRADE is a valid, frequent answer.
   bottom-up decisions; frontend panel not yet built. Both are deliberate
   follow-ups.
 
+
+## Super-Profitability Engine (2026-08-26 directive #2)
+
+`backend/app/services/super_profit.py` — seven-brain ensemble over the
+bottom-up gate layer. A candidate EXECUTES only when bottom-up hard gates
+pass AND the tracker confirms AND the brains reach consensus AND uncertainty
+stays under the ceiling AND health/regime/meta gates pass.
+
+- **Brains:** A frequency (adaptive window, no lookahead), B probability
+  (Wilson bounds), C sequence (transition-conditioned, gated by a cached
+  shuffle test — no sequential info => abstains), D anomaly (FDR vs
+  contradiction), E contract specialist (per-family margin multipliers),
+  F execution (latency/payout-source/freshness), G risk (risk_guard veto +
+  model health). One OPPOSE vetoes the consensus.
+- **Ensemble:** agreement = (support-oppose)/7; needs >=5 SUPPORT and >=0.70
+  agreement. **Uncertainty** (sample gap, confidence deficit, opposing
+  brains, tracked edge volatility, calibration error) must stay <= 0.60.
+  **Meta-model** score >= 60 required. Regime classifier: NORMAL /
+  CONCENTRATED / DISTRIBUTION_SHIFT / HIGH_ANOMALY / LOW_INFORMATION /
+  UNSTABLE; LOW_INFORMATION blocks by default.
+- **Offline honesty tools:** `/super/conditional/{symbol}` (P(outcome|STATE)
+  with per-position states computed only from past ticks; features without
+  significant lift are DISCARD), `/super/ablation/{symbol}` (walk-forward
+  brain-removal impact, no future information), `/super/calibration`
+  (predicted vs realized bins, MIS_CALIBRATED verdict), `/super/health`
+  (GREEN/YELLOW/ORANGE/RED per contract family with exposure multipliers),
+  `/super/matrix` (symbol x contract institutional memory), `/super/profiles`
+  (per-market learned personalities from realized results only),
+  `/super/auction` (best validated offer wins; zero valid => zero trades,
+  frequency target never forced), `/super/allocate` (EV x confidence x
+  health weighting), `/super/profit-lock` (session pnl tiers: +2% -> 0.75x,
+  +3% -> 0.5x, +4% -> stop).
+- Decision card at `/super/decision/{symbol}` (GET) and POST with
+  {payouts, latency_ms} for live-proposal pricing (§9 dynamic payout).
+- Config: GET/POST `/super/config` (settings_store key super_config).
+- Tests: `tests/test_super_profit.py` (25 tests). Suite: 297 passed.
+- Still advisory: the execution path (auto_trader) is untouched. The
+  ensemble gates decisions; it does not place trades.
+
 ## Commands
 
 - Frontend build: `cd frontend && npm run build` → `out/`
