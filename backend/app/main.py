@@ -137,9 +137,31 @@ async def lifespan(app: FastAPI):
         stream_lifecycle(settings.active_symbols, _on_tick, demo_factory)
     )
     logger.info("ingestion started for %s", settings.active_symbols)
+    autostart_task = asyncio.create_task(_autostart_cf())
     yield
+    autostart_task.cancel()
     if _ingestion_task:
         _ingestion_task.cancel()
+
+
+async def _autostart_cf() -> None:
+    """Standing order: the CF never stops. After any restart/deploy, put him
+    back on the pitch automatically when CF_AUTOSTART is set. Waits for the
+    account connection, then starts him in the configured mode."""
+    mode = settings.cf_autostart.strip().lower()
+    if mode not in ("live", "paper"):
+        return
+    from app.services.auto_trader import auto_trader
+    for attempt in range(15):
+        await asyncio.sleep(5)
+        if auto_trader.running:
+            return
+        result = await auto_trader.start(mode=mode)
+        if result.get("status") in ("started", "already running"):
+            logger.info("boot: CF auto-resumed (%s mode) — CF_AUTOSTART honored", mode)
+            return
+        logger.info("boot: CF auto-resume attempt %d refused: %s", attempt + 1, result.get("message"))
+    logger.error("boot: CF auto-resume gave up after 15 attempts — start him from the dashboard")
 
 
 app = FastAPI(

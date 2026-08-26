@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     deriv_ws_url: str = "wss://ws.derivws.com/websockets/v3"
     deriv_app_id: int = 1089
     deriv_api_token: str = ""
+    # Auto-resume the CF after every restart/deploy: "live" or "paper".
+    # Empty = stay stopped until the dashboard starts him. The owner's
+    # standing order is that the CF never stops, so production sets "live".
+    cf_autostart: str = ""
     # App id that owns the PAT token (developers.deriv.com). Required for the
     # boot-time auto-connect: DERIV_API_TOKEN + DERIV_PAT_APP_ID together make
     # the live feed survive every restart without manual reconnects.

@@ -745,3 +745,45 @@ async def test_main_loop_never_dies_on_error(monkeypatch):
     await asyncio.wait_for(at._main_loop(None), timeout=10)
     assert calls["n"] == 2  # recovered once, then exited on stop
     assert any("never stops" in line for line in at.log)
+
+
+@pytest.mark.asyncio
+async def test_autostart_cf_retries_until_started(monkeypatch):
+    """CF_AUTOSTART=live must put the CF back on the pitch after a restart,
+    retrying until the balance read succeeds."""
+    from app import main as main_module
+    from app.services.auto_trader import auto_trader
+    monkeypatch.setattr(main_module.settings, "cf_autostart", "live")
+    calls = {"n": 0}
+
+    async def fake_start(mode="paper", api_token=None):
+        calls["n"] += 1
+        if calls["n"] < 2:
+            return {"status": "error", "message": "no balance yet"}
+        auto_trader.running = True
+        return {"status": "started"}
+
+    monkeypatch.setattr(auto_trader, "start", fake_start)
+    auto_trader.running = False
+    try:
+        await asyncio.wait_for(main_module._autostart_cf(), timeout=30)
+        assert calls["n"] == 2
+        assert auto_trader.running
+    finally:
+        auto_trader.running = False
+
+
+@pytest.mark.asyncio
+async def test_autostart_cf_disabled_by_default(monkeypatch):
+    from app import main as main_module
+    from app.services.auto_trader import auto_trader
+    monkeypatch.setattr(main_module.settings, "cf_autostart", "")
+    called = {"n": 0}
+
+    async def fake_start(mode="paper", api_token=None):
+        called["n"] += 1
+        return {"status": "started"}
+
+    monkeypatch.setattr(auto_trader, "start", fake_start)
+    await asyncio.wait_for(main_module._autostart_cf(), timeout=5)
+    assert called["n"] == 0
