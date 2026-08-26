@@ -275,3 +275,33 @@ ephemeral, so the token vault file dies with every restart. Fixed permanently:
   degrading to the geo-blocked generic endpoint (the silent demo slide).
 - Verified: fresh deploy AND a hard restart both come up LIVE DATA with zero
   manual steps. Suite: 241 passed.
+
+## CF never-stop architecture (2026-08-26)
+
+Standing order: the CF must NEVER stop. Four failure classes found and fixed:
+
+- **Vault self-wipe** (`token_vault.set`): `DerivClient.authorize()` re-saved
+  the vault with only loginid/currency, wiping account_id/ws_url/app_id and
+  the balance mid-session -> OTP mints failed -> live starts refused.
+  `set()` now preserves PAT fields + balance when re-setting the SAME token;
+  a different token still resets everything. `set_balance()` persists.
+- **Fragile balance reads** (`deriv_trader.get_balance`): PAT tokens read the
+  balance via the REST `/options/accounts` endpoint FIRST (pure HTTP, no OTP
+  mint, no rate-limit exposure); websocket is fallback only. All failures are
+  logged, never swallowed.
+- **Killable loop** (`auto_trader._main_loop`): now a never-die wrapper
+  around `_scan_session` — any exception is logged + throttled-alerted, the
+  CF regroups 2s and re-enters. Only `stop()`, the kill switch, or task
+  cancellation end the loop.
+- **Death by risk stops**: session hard stops (drawdown %, consecutive
+  losses, session time, daily trade cap) now pause 120s, rebase the session
+  on the current balance, and play on. Guard violations (hourly cap, daily
+  money limits, schedule) hold 60s and auto-resume when clear. The KILL
+  SWITCH is the only guard verdict that still stops trading.
+- **Deploy/restart survival**: `CF_AUTOSTART=live` (env) makes boot
+  auto-resume the CF (15 attempts, 5s apart). `GUARD_STAKE_OVERRIDE=1`
+  pins the $1 stake across restarts. Both set on the Render service.
+  Verified live: deploy -> CF resumed by itself in live mode at $1 within
+  ~60s, 23 trades @ $1 completed without a single stop.
+
+Suite: 274 passed.
