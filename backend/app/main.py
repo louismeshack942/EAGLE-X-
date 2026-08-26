@@ -50,6 +50,8 @@ from app.services.lightning import lightning_engine
 from app.services.eagle import eagle_engine
 from app.services.organism import organism
 from app.services.shell import audit_log, real_trade_budget
+from datetime import datetime, timezone
+
 from app.services.forge import (
     chaos_engine,
     disaster_simulation,
@@ -1226,7 +1228,9 @@ def forge_disaster(balance: float = 1000.0, stake: float = 1.0, payout: float = 
 
 @app.get("/forge/chaos")
 def forge_chaos():
-    from tests.test_organism import tick as _tick  # local factory, no broker
+    def _tick(symbol, digit, i):
+        return Tick(symbol=symbol, quote=round(1000 + digit * 0.01, 2),
+                    timestamp=datetime.now(timezone.utc))
     return chaos_engine(organism, _tick)
 
 
