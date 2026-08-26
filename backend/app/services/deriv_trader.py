@@ -8,6 +8,7 @@ Deriv reports the contract settled — a successful *purchase* is not a win.
 """
 import asyncio
 import json
+import logging
 from typing import Optional
 
 import httpx
@@ -15,6 +16,8 @@ import websockets
 
 from app.config import get_settings
 from app.services.token_vault import VAULT
+
+logger = logging.getLogger(__name__)
 
 # Internal name -> Deriv API contract_type.
 DERIV_CONTRACT_TYPES = {
@@ -123,6 +126,46 @@ class DerivTrader:
         # "/websocket" would 404 (Deriv redirects that to an HTML page).
         return f"{self.settings.deriv_ws_url.rstrip('/')}?app_id={self.settings.deriv_app_id}&l=EN"
 
+    async def _rest_balance(self, token: str) -> Optional[float]:
+        """Read the balance via the REST accounts endpoint — pure HTTP, no
+        OTP mint, no websocket. The reliable path for PAT tokens: the OTP
+        endpoint rate-limits under load, and a failed mint used to take the
+        whole balance read down with it."""
+        account_id = await VAULT.get_account_id()
+        app_id = await VAULT.get_app_id() or self.settings.deriv_pat_app_id or None
+        base = self.settings.deriv_rest_base.rstrip("/")
+        headers = {"Authorization": f"Bearer {token}"}
+        if app_id:
+            headers["Deriv-App-ID"] = str(app_id)
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.get(f"{base}/options/accounts", headers=headers)
+                if resp.status_code != 200:
+                    if resp.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                        await asyncio.sleep(0.5 * (2 ** attempt))
+                        continue
+                    logger.warning("rest balance: accounts lookup HTTP %s", resp.status_code)
+                    return None
+                accounts = resp.json().get("data") or []
+                wanted = str(account_id or (await VAULT.status()).get("loginid") or "")
+                if wanted:
+                    for a in accounts:
+                        ids = {str(a.get("account_id") or ""), str(a.get("loginid") or "")}
+                        if wanted in ids:
+                            bal = a.get("balance")
+                            return float(bal) if bal is not None else None
+                if accounts:
+                    bal = accounts[0].get("balance")
+                    return float(bal) if bal is not None else None
+                return None
+            except (httpx.HTTPError, ValueError) as exc:
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (2 ** attempt))
+                    continue
+                logger.warning("rest balance failed: %s", exc)
+        return None
+
     async def _revalidate_pat(self, token: str) -> None:
         """Refill the vault's PAT fields (account_id, OTP ws_url) from the
         REST API — the same validation the connect endpoint performs."""
@@ -138,6 +181,11 @@ class DerivTrader:
             app_id=info.get("app_id") or app_id,
             accounts=info.get("accounts"),
         )
+        if info.get("balance") is not None:
+            try:
+                await VAULT.set_balance(float(info["balance"]))
+            except (TypeError, ValueError):
+                pass
 
     @staticmethod
     def _needs_authorize(url: str) -> bool:
@@ -161,22 +209,36 @@ class DerivTrader:
             return {"status": "ok", "account": msg.get("authorize", {})}
 
     async def get_balance(self, api_token: str) -> Optional[float]:
-        """Authorize (or reuse the OTP session) and read the account balance."""
+        """Authorize (or reuse the OTP session) and read the account balance.
+
+        PAT tokens read via REST first — no OTP mint, no websocket, no rate
+        limit exposure. The websocket path remains as fallback and for legacy
+        tokens. Failures are logged, never swallowed."""
         try:
-            url = await self._url(api_token)
+            token = (api_token or await VAULT.get() or self.settings.deriv_api_token or "").strip()
+            if token.startswith("pat_"):
+                bal = await self._rest_balance(token)
+                if bal is not None:
+                    await VAULT.set_balance(bal)
+                    return bal
+                logger.warning("get_balance: REST read failed, trying websocket path")
+            url = await self._url(token)
             async with websockets.connect(url, ping_interval=20, open_timeout=10) as ws:
                 if self._needs_authorize(url):
-                    msg = await self._send_recv(ws, {"authorize": api_token})
+                    msg = await self._send_recv(ws, {"authorize": token})
                     if "error" in msg:
+                        logger.warning("get_balance: authorize error %s", msg["error"])
                         return None
                     bal = (msg.get("authorize") or {}).get("balance")
                     return float(bal) if bal is not None else None
                 bal_msg = await self._send_recv(ws, {"balance": 1})
                 if "error" in bal_msg:
+                    logger.warning("get_balance: ws balance error %s", bal_msg["error"])
                     return None
                 bal = (bal_msg.get("balance") or {}).get("balance")
                 return float(bal) if bal is not None else None
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("get_balance failed: %s", exc)
             return None
 
     async def _await_settlement(self, ws, contract_id: str) -> dict:

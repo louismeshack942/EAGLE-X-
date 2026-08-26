@@ -426,9 +426,12 @@ class AutoTrader:
                 acct = await VAULT.status()
                 real_balance = acct.get("balance")
             if real_balance is None:
+                acct = await VAULT.status()
                 return {
                     "status": "error",
-                    "message": "LIVE refused: could not read your Deriv balance. "
+                    "message": "LIVE refused: could not read your Deriv balance right now "
+                               f"(account {acct.get('loginid') or 'unknown'}). This is usually a "
+                               "transient Deriv API hiccup — hit START again in a few seconds. "
                                "Not risking a single cent blind.",
                 }
             if real_balance <= 0.35:
@@ -612,7 +615,36 @@ class AutoTrader:
         self._log(f"Trade resolved: {result_label} {'+' if pnl >= 0 else ''}${pnl:.2f} ({contract.get('symbol')} {contract['name']})")
         return {"won": won, "pnl": pnl}
 
+    async def _pause(self, seconds: float) -> None:
+        """Sleep in 2s slices so stop() stays responsive during holds."""
+        end = time.time() + seconds
+        while self.running and time.time() < end:
+            await asyncio.sleep(min(2.0, end - time.time()))
+
+    def _pause_alert(self, msg: str) -> None:
+        """Telegram alerts for pause states — throttled to one per 30 min
+        so a held CF doesn't spam the phone."""
+        now = time.time()
+        if now - getattr(self, "_last_pause_alert", 0.0) > 1800:
+            self._last_pause_alert = now
+            telegram_notifier.send_risk_alert(msg)
+
     async def _main_loop(self, api_token: str | None) -> None:
+        """The CF NEVER stops on errors. Any unexpected exception is logged,
+        alerted (throttled), and the CF regroups for 2s and plays on. Only
+        stop(), the kill switch, or task cancellation end the loop."""
+        while self.running:
+            try:
+                await self._scan_session(api_token)
+                break
+            except asyncio.CancelledError:  # normal shutdown path
+                break
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"Error in trading loop: {exc} — CF regroups 2s and plays on (never stops)")
+                self._pause_alert(f"Auto Trader error (auto-recovered): {exc}")
+                await asyncio.sleep(2)
+
+    async def _scan_session(self, api_token: str | None) -> None:
         try:
             while self.running:
                 self._scan_count += 1
@@ -750,10 +782,18 @@ class AutoTrader:
                 )
                 if violations:
                     for v in violations:
-                        telegram_notifier.send_risk_alert(v)
                         self._log(f"RISK LIMIT: {v}")
-                    self.running = False
-                    break
+                    self._pause_alert(f"RISK LIMIT: {violations[0]}")
+                    # Never die: regroup, rebase the session on the current
+                    # balance and play on. MAX_TRADES_PER_DAY survives the
+                    # rebase — it clears at the next matchday rollover, and
+                    # until then the CF keeps pausing instead of stopping.
+                    self._log("CF regroups — pausing 120s, session baseline reset; auto-resumes")
+                    await self._pause(120)
+                    self.initial_balance = self.balance
+                    self.session_started = time.time()
+                    self.consecutive_losses = 0
+                    continue
 
                 # The Risk Guard speaks money, not percentages: kill switch,
                 # daily $ loss floor, session $ take-profit, hourly trade cap.
@@ -765,10 +805,21 @@ class AutoTrader:
                 if hard:
                     self.counters["gate_blocks"] += 1
                     for v in hard:
-                        telegram_notifier.send_risk_alert(v)
                         self._log(f"GUARD: {v}")
-                    self.running = False
-                    break
+                    if any("KILL_SWITCH" in v or "AUTO_KILL" in v for v in hard):
+                        # The kill switch is the owner's explicit handbrake —
+                        # the ONLY guard verdict allowed to stop the CF.
+                        for v in hard:
+                            telegram_notifier.send_risk_alert(v)
+                        self.running = False
+                        break
+                    # Hourly caps and schedules clear with time; daily money
+                    # limits clear at rollover. Hold position and re-check —
+                    # the CF never stops.
+                    self._pause_alert(f"GUARD hold: {hard[0]}")
+                    self._log("GUARD hold — CF waits 60s and re-checks; auto-resumes when clear")
+                    await self._pause(60)
+                    continue
                 manual_only = any(v.startswith("FULL_MANUAL") for v in guard_violations)
 
                 # Hot-hours filter: if the CF's own track record says this
@@ -964,11 +1015,9 @@ class AutoTrader:
                     # Every mode scans fast now: 0.3s across the board.
                     await asyncio.sleep(risk_guard.scan_speed()["loop_sleep"])
         except asyncio.CancelledError:  # normal shutdown path
-            pass
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"Error in trading loop: {exc}")
-            telegram_notifier.send_risk_alert(f"Auto Trader error: {exc}")
-            self.running = False
+            raise
+        # Every other failure propagates to the _main_loop wrapper, which
+        # regroups and re-enters. This method is never allowed to kill the CF.
 
     def status(self) -> dict:
         total = self.wins_today + self.losses_today

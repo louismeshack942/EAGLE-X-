@@ -40,6 +40,8 @@ class TokenVault:
                 self._ws_url = data.get("ws_url")
                 self._app_id = data.get("app_id")
                 self._accounts = data.get("accounts") or []
+                bal = data.get("balance")
+                self._balance = float(bal) if bal is not None else None
         except Exception:
             self._token = None
 
@@ -50,6 +52,7 @@ class TokenVault:
             "token": self._token,
             "loginid": self._loginid,
             "currency": self._currency,
+            "balance": self._balance,
             "account_id": self._account_id,
             "ws_url": self._ws_url,
             "app_id": self._app_id,
@@ -62,13 +65,25 @@ class TokenVault:
                   account_id: Optional[str] = None, ws_url: Optional[str] = None,
                   app_id: Optional[str] = None, accounts: Optional[list] = None) -> None:
         async with self._lock:
-            self._token = token.strip()
-            self._loginid = loginid
-            self._currency = currency
-            self._balance = None
-            self._account_id = account_id
-            self._ws_url = ws_url
-            self._app_id = app_id
+            new_token = token.strip()
+            same = bool(self._token) and self._token == new_token
+            if not same:
+                self._balance = None
+                self._account_id = None
+                self._ws_url = None
+                self._app_id = None
+                self._accounts = []
+            self._token = new_token
+            if loginid is not None or not same:
+                self._loginid = loginid
+            if currency is not None or not same:
+                self._currency = currency
+            if account_id is not None:
+                self._account_id = account_id
+            if ws_url is not None:
+                self._ws_url = ws_url
+            if app_id is not None:
+                self._app_id = app_id
             if accounts is not None:
                 self._accounts = accounts
             self._persist()
@@ -121,6 +136,7 @@ class TokenVault:
     async def set_balance(self, balance: float) -> None:
         async with self._lock:
             self._balance = balance
+            self._persist()
 
     async def status(self) -> dict:
         async with self._lock:

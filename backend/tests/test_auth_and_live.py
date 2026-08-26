@@ -648,3 +648,100 @@ async def test_place_trade_never_raises(monkeypatch):
         assert result["step"] == "connect"
     finally:
         await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_vault_preserves_pat_fields_on_same_token_reset():
+    """The stream's authorize() re-sets the vault with only loginid/currency.
+    That must NOT wipe the PAT fields or the balance — losing account_id
+    mid-session broke OTP minting and refused live starts."""
+    try:
+        await VAULT.set(
+            "pat_keep",
+            loginid="DOT94300575",
+            currency="USD",
+            account_id="DOT94300575",
+            ws_url="wss://api.derivws.com/trading/v1/options/ws/demo?otp=aa",
+            app_id="4521",
+        )
+        await VAULT.set_balance(12143.02)
+        await VAULT.set("pat_keep", loginid="DOT94300575", currency="USD")
+        assert await VAULT.get_account_id() == "DOT94300575"
+        assert await VAULT.get_app_id() == "4521"
+        assert await VAULT.get_ws_url() is not None
+        st = await VAULT.status()
+        assert st["balance"] == 12143.02
+        assert st["loginid"] == "DOT94300575"
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_vault_new_token_still_resets_everything():
+    try:
+        await VAULT.set(
+            "pat_old", account_id="DOT1", ws_url="wss://x?otp=1", app_id="1",
+        )
+        await VAULT.set_balance(100.0)
+        await VAULT.set("pat_new", loginid="DOT2")
+        st = await VAULT.status()
+        assert st["account_id"] is None
+        assert st["balance"] is None
+        assert await VAULT.get_ws_url() is None
+        assert await VAULT.get_app_id() is None
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_vault_balance_survives_restart(tmp_path):
+    """set_balance must persist — an ephemeral-FS restart keeps the last
+    known balance instead of going blind."""
+    path = tmp_path / "vault.json"
+    v1 = TokenVault(path=path)
+    await v1.set("pat_x", loginid="DOT94300575", account_id="DOT94300575")
+    await v1.set_balance(12143.02)
+    v2 = TokenVault(path=path)
+    st = await v2.status()
+    assert st["balance"] == 12143.02
+
+
+@pytest.mark.asyncio
+async def test_get_balance_rest_first_for_pat(monkeypatch):
+    """PAT balance reads go through the REST accounts endpoint — no OTP
+    mint, no websocket. The websocket path must not even be attempted."""
+    trader = DerivTrader()
+    try:
+        await VAULT.set("pat_bal", account_id="DOT94300575", app_id="4521")
+        async def fake_rest(self, token):
+            return 12143.02
+        monkeypatch.setattr(DerivTrader, "_rest_balance", fake_rest)
+        async def ws_would_fail(self, token=None):
+            raise AssertionError("websocket path must not be attempted")
+        monkeypatch.setattr(DerivTrader, "_url", ws_would_fail)
+        bal = await trader.get_balance("pat_bal")
+        assert bal == 12143.02
+        assert (await VAULT.status())["balance"] == 12143.02
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_main_loop_never_dies_on_error(monkeypatch):
+    """An exploding scan session must not kill the CF: the wrapper logs,
+    regroups and re-enters. The loop only ends when running goes False."""
+    from app.services.auto_trader import AutoTrader
+    at = AutoTrader()
+    at.running = True
+    calls = {"n": 0}
+
+    async def exploding_session(self, api_token):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("boom")
+        self.running = False  # second entry exits cleanly
+
+    monkeypatch.setattr(AutoTrader, "_scan_session", exploding_session)
+    await asyncio.wait_for(at._main_loop(None), timeout=10)
+    assert calls["n"] == 2  # recovered once, then exited on stop
+    assert any("never stops" in line for line in at.log)
