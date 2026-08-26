@@ -580,6 +580,7 @@ class BottomUpEngine:
             decision = "NO_TRADE"
         return {
             **best,
+            "best": best,
             "decision": decision,
             "signal_state": tracked.state if tracked else None,
             "signal_lifetime": tracked.lifetime() if tracked else None,
