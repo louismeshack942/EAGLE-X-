@@ -98,7 +98,18 @@ class RealTradeBudget:
 
     def record(self, stake: float, symbol: str, contract: str, result: str,
                pnl: float, latency_ms: Optional[float] = None,
-               reason: str = "") -> dict:
+               reason: str = "", dry: bool = False) -> dict:
+        if dry:
+            err = self.validate_stake(stake)
+            if err:
+                return {"ok": False, "error": err}
+            with self._lock:
+                if self.locked:
+                    return {"ok": False, "error": "REAL_TEST_EXECUTION_LOCKED"}
+                planned = len(self._trades) + 1
+                return {"ok": True, "would_be_trade_number": planned,
+                        "remaining": max(0, CERT_MAX_TRADES - planned),
+                        "dry_run": True}
         err = self.validate_stake(stake)
         if err:
             return {"ok": False, "error": err}

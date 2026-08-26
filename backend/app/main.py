@@ -1168,6 +1168,21 @@ def shell_audit_record(body: dict):
     )
 
 
+@app.post("/shell/certification/plan")
+def shell_cert_plan(body: dict):
+    """The REAL executor's only legal order form (§7)."""
+    try:
+        stake = float(body.get("stake", 0))
+        pnl = float(body.get("pnl", 0))
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "stake/pnl must be numeric"}
+    return real_trade_budget.record(
+        stake=stake, symbol=str(body.get("symbol", "?")),
+        contract=str(body.get("contract", "?")), result=str(body.get("result", "?")),
+        pnl=pnl, latency_ms=body.get("latency_ms"),
+        reason=str(body.get("reason", "")), dry=True)
+
+
 @app.post("/shell/certification/trade")
 def shell_cert_trade(body: dict):
     try:
