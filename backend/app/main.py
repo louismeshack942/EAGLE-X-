@@ -50,6 +50,13 @@ from app.services.lightning import lightning_engine
 from app.services.eagle import eagle_engine
 from app.services.organism import organism
 from app.services.shell import audit_log, real_trade_budget
+from app.services.forge import (
+    chaos_engine,
+    disaster_simulation,
+    eagle_strength,
+    self_destruct,
+    survivability,
+)
 from app.services.strategy_engine import StrategyConfig, strategy_engine
 from app.services import scout as scout_svc
 from app.services import season as season_svc
@@ -1183,6 +1190,44 @@ def shell_cert_trade(body: dict):
 @app.get("/shell/certification/report")
 def shell_cert_report():
     return real_trade_budget.report()
+
+# ---------------- Forge (venom + tanker completion) ----------------
+@app.get("/forge/strength")
+def forge_strength():
+    return eagle_strength()
+
+
+@app.post("/forge/survivability")
+def forge_survivability(body: dict):
+    return survivability(
+        balance=float(body.get("balance", 1000.0)),
+        stake=float(body.get("stake", 1.0)),
+        payout=float(body.get("payout", 1.95)),
+        max_session_loss_pct=float(body.get("max_session_loss_pct", 0.05)),
+        max_drawdown_pct=float(body.get("max_drawdown_pct", 0.08)),
+        max_consecutive_losses=int(body.get("max_consecutive_losses", 3)),
+        severe_streak=int(body.get("severe_streak", 5)),
+    )
+
+
+@app.post("/forge/self-destruct")
+def forge_self_destruct(body: dict):
+    digits = body.get("digits") or []
+    return self_destruct(digits=[int(x) for x in digits],
+                         kind=str(body.get("kind", "MATCHES")),
+                         d=body.get("d"),
+                         base_window=int(body.get("base_window", 250)))
+
+
+@app.get("/forge/disaster")
+def forge_disaster(balance: float = 1000.0, stake: float = 1.0, payout: float = 1.95):
+    return disaster_simulation(balance=balance, stake=stake, payout=payout)
+
+
+@app.get("/forge/chaos")
+def forge_chaos():
+    from tests.test_organism import tick as _tick  # local factory, no broker
+    return chaos_engine(organism, _tick)
 
 
 @app.post("/shell/certification/reset")

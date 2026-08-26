@@ -303,6 +303,15 @@ stays under the ceiling AND health/regime/meta gates pass.
   add an auth gateway before multi-user exposure. No /api/v1 prefix; the
   whole API is same-origin on one service.
 
+
+## Forge (2026-08-26) — venom + tanker completion
+- `backend/app/services/forge.py` closes the unfinished directive pieces:
+  `disaster_simulation` (§4), `self_destruct` (§5 overfit kill),
+  `chaos_engine` (§17 safe degradation), `survivability` (§29 capital
+  wall), `eagle_strength` (§32 0-100 Fortress..PRODUCTION PROHIBITED).
+- Routes: /forge/{strength,survivability,self-destruct,disaster,chaos}.
+- Tests: tests/test_forge.py (9). Suite: 357 passed.
+
 ## Commands
 
 - Frontend build: `cd frontend && npm run build` → `out/`
