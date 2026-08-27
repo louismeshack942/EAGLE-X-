@@ -140,6 +140,66 @@ class Trade(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class SignalRecord(Base):
+    """Persisted signal history (Phase 4 §15) — immutable append-mostly record.
+
+    Stores the created/validated/qualified/expired/executed/rejected/result lifecycle
+    for later performance analysis. Does NOT store any secret.
+    """
+
+    __tablename__ = "signal_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    signal_id: Mapped[str] = mapped_column(String(64), index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    contract_family: Mapped[str] = mapped_column(String(16))
+    barrier: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    prediction: Mapped[str] = mapped_column(String(32))
+    state: Mapped[str] = mapped_column(String(32), index=True)  # signal_state
+    execution_state: Mapped[str] = mapped_column(String(32), default="NOT_ELIGIBLE")
+    risk_state: Mapped[str] = mapped_column(String(16), default="NOT_RUN")
+    estimated_probability: Mapped[float | None] = mapped_column(nullable=True)
+    expected_value: Mapped[float | None] = mapped_column(nullable=True)
+    source: Mapped[str] = mapped_column(String(16), default="")
+    proposal_source: Mapped[str] = mapped_column(String(16), default="")
+    multi_window_state: Mapped[str] = mapped_column(String(32), default="INSUFFICIENT_DATA")
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_ts: Mapped[float] = mapped_column(Integer, default=0)
+    expiry: Mapped[float] = mapped_column(Integer, default=0)
+    payload: Mapped[str] = mapped_column(Text, default="")  # full traceable evidence (JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class TradeRecord(Base):
+    """Persisted trade ledger (Phase 5 §28) — every trade across modes.
+
+    `idempotency_key` is unique server-side to guarantee ONE purchase per key.
+    `mode` is always present so HARNESS/PAPER/LIVE are never mixed silently.
+    """
+
+    __tablename__ = "trade_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trade_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    signal_id: Mapped[str] = mapped_column(String(64), index=True)
+    execution_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    contract_id: Mapped[str] = mapped_column(String(64), index=True, default="")
+    idempotency_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    mode: Mapped[str] = mapped_column(String(16), index=True)
+    symbol: Mapped[str] = mapped_column(String(32), index=True)
+    contract_type: Mapped[str] = mapped_column(String(32))
+    prediction: Mapped[str] = mapped_column(String(64))
+    stake: Mapped[float] = mapped_column(default=0.0)
+    buy_price: Mapped[float | None] = mapped_column(nullable=True)
+    payout: Mapped[float | None] = mapped_column(nullable=True)
+    profit_loss: Mapped[float | None] = mapped_column(nullable=True)
+    status: Mapped[str] = mapped_column(String(16), index=True, default="OPEN")
+    error: Mapped[str] = mapped_column(Text, default="")
+    source: Mapped[str] = mapped_column(String(64), default="")
+    timestamps: Mapped[str] = mapped_column(Text, default="{}")  # JSON dict
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class Event(Base):
     """System status / audit event (non-secret)."""
 
@@ -159,8 +219,10 @@ __all__ = [
     "Market",
     "Session",
     "Signal",
+    "SignalRecord",
     "Tick",
     "Trade",
+    "TradeRecord",
     "User",
     "utcnow",
 ]

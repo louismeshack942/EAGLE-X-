@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import AnalysisPanel from "@/components/AnalysisPanel";
+import ExecutionPanel from "@/components/ExecutionPanel";
 import LiveChart, { type ChartPoint } from "@/components/LiveChart";
 import { apiGet, apiPost, ApiError, type MarketRow, type ServerStatus, type TickRow } from "@/lib/api";
 
@@ -228,6 +229,11 @@ export default function CockpitPage() {
           <section className="card" style={{ marginBottom: ".75rem" }}>
             <p className="panel-title">Analysis & contracts (Phase 2 — statistical)</p>
             <AnalysisPanel symbol={selected} />
+          </section>
+
+          <section className="card">
+            <p className="panel-title">Phase 4/5 — Signal pipeline & execution</p>
+            <ExecutionPanel symbol={selected} />
           </section>
 
           <section className="card">

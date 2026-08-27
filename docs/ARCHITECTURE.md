@@ -82,6 +82,40 @@ statically-exported Next.js frontend from one origin. No proxy, no cross-service
 8. **Phase3Service** (`services/phase3_service.py`) + `api/phase3.py`: rate-limited,
    cached, read-only quick-analysis + 42-contract board scan. **No trade execution.**
 
+## Phase 4 — Validated signal pipeline
+
+9. **Probability** (`services/probability.py`): transparent Bayesian digit-probability
+   estimator — Beta posterior mean shrunken toward the 1/10 prior, regularized lower
+   incomplete beta implemented in-file (Lentz continued fraction), no scipy.
+10. **Signal engine** (`services/signal_engine.py`): `Signal` state machine
+    (`REJECTED → VALIDATING → EXECUTION_READY → OPEN → WON/LOST/VOID/ERROR/EXPIRED/BLOCKED`).
+    Hard build-time gates (data quality, min sample, valid proposal, valid price) + EV
+    computed from the proposal payout; every signal carries `estimated_probability`,
+    `expected_value`, `source`, `proposal_source`, `multi_window_state`.
+11. **Risk engine** (`services/risk_engine.py`): the Phase 4 risk gate — `PASS | VETO`
+    (kill switch, live not enabled, not authenticated, too many open, loss limits, streak,
+    negative EV, conflicting windows, stale, expired, duplicate, balance, stake limits,
+    lock held). Deterministic `signal_id` per analysis+contract for idempotency.
+12. **Decision service** (`services/decision_service.py`): ties analysis → signal → risk →
+    execution; persists each signal.
+
+## Phase 5 — Execution engine
+
+13. **Broker** (`services/broker.py`): `ExecutionRequest` + `Broker`. Three explicit modes —
+    **HARNESS** (deterministic sim, labeled), **PAPER** (priced off the spot, resolved next
+    tick), **LIVE** (REJECTED unless the server-side master switch `execution_live_enabled`
+    is ON and every gate passes). `KillSwitch` + `ExecutionLock`.
+14. **Execution engine** (`services/execution_engine.py`): lifecycle controller —
+    revalidates everything, duplicate-purchase protection (idempotency), ledger,
+    `EXECUTION_UNCERTAIN → reconciliation (NEVER re-buy)`, result resolution (explicit win /
+    next digit / UNKNOWN — never invented), per-mode performance metrics.
+15. **API** (`api/execution.py`): `/api/exec/{config,mode,killswitch,open,ledger,probe,
+    performance,signals,history,execute,resolve}` and `/api/signal/{symbol}` (read-only
+    decision card). A live probe honestly reports `can_purchase` from the server switch.
+16. **Frontend** (`components/ExecutionPanel.tsx`, mounted in `/cockpit`): mode selector,
+    signal decision card, risk state, kill switch, open contracts, performance, trade
+    history, live-safety notice. Request → Confirm; the server still revalidates.
+
 ## Database
 
 - Dev: SQLite file (`./backend/eaglex_dev.db`). Prod: Postgres via
