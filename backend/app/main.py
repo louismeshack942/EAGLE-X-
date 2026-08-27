@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import auth, cockpit
+from app.api import analysis, auth, cockpit, phase3
 from app.config import settings
 from app.db.init_db import init_db
 
@@ -34,6 +34,8 @@ def create_app() -> FastAPI:
 
     app.include_router(auth.router)
     app.include_router(cockpit.router)
+    app.include_router(analysis.router)
+    app.include_router(phase3.router)
 
     @app.get("/health")
     def health():
@@ -45,7 +47,7 @@ def create_app() -> FastAPI:
             "name": settings.app_name,
             "env": settings.env,
             "oauth_configured": settings.oauth_configured,
-            "phase": "0+1",
+            "phase": "2+3",
         }
 
     # Serve the exported frontend (Next.js `output: export`) when built.

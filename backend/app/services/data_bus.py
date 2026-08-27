@@ -1,7 +1,8 @@
 """Data bus — runs a provider for a symbol, persists normalized ticks, broadcasts.
 
 DERIV -> Provider -> normalize -> [DB persist] -> EventBus(ticks)
-                                          \-> EventBus(status)
+                                   +-> analysis_manager (realtime windows)
+                                   +-> EventBus(status)
 
 Recorder faults never interrupt ingestion.
 """
@@ -16,6 +17,7 @@ from app.core.events import SUBJECT_STATUS, SUBJECT_TICKS, event_bus
 from app.core.status import ConnectionState
 from app.db import SessionLocal
 from app.models.models import Tick
+from app.services.analysis_engine import analysis_manager
 from app.services.connector import MarketDataProvider
 from app.services.harness import HarnessProvider
 
@@ -44,6 +46,14 @@ class DataBus:
         self._task = asyncio.create_task(self._run(symbol))
         return self._task
 
+    def provider_connected(self, symbol: str) -> None:
+        try:
+            analysis_manager.mark_connection(
+                symbol, self.provider.state or ""
+            )
+        except Exception:
+            pass
+
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
@@ -57,10 +67,16 @@ class DataBus:
     async def _run(self, symbol: str) -> None:
         try:
             await self.provider.connect(symbol)
+            self.provider_connected(symbol)
             event_bus.publish(
                 SUBJECT_STATUS, {"symbol": symbol, "state": self.provider.state, "kind": "connection"}
             )
             async for tick in self.provider.ticks():
+                # Realtime analysis (Phase 2): feed the window engine + broadcast.
+                try:
+                    analysis_manager.push(tick)
+                except Exception:  # analysis faults never interrupt ingestion
+                    logger.exception("realtime analysis push failed (non-fatal)")
                 event_bus.publish(SUBJECT_TICKS, tick.__dict__)
                 self.latest[symbol] = tick.__dict__
                 if self.persist:

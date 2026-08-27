@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import AnalysisPanel from "@/components/AnalysisPanel";
 import LiveChart, { type ChartPoint } from "@/components/LiveChart";
 import { apiGet, apiPost, ApiError, type MarketRow, type ServerStatus, type TickRow } from "@/lib/api";
 
@@ -224,31 +225,10 @@ export default function CockpitPage() {
             </section>
           </div>
 
-          <div className="grid grid-2">
-            <section className="card">
-              <p className="panel-title">Analysis — COMING IN LATER PHASE</p>
-              <div className="placeholder">
-                <b>Not implemented in Phase 1.</b> Advanced digit analysis, streaks, gaps,
-                probabilities and contract recommendations ship in Phases 2–3. This area is
-                intentionally empty — EAGLE-X never fakes analysis as real.
-              </div>
-            </section>
-
-            <section className="card">
-              <p className="panel-title">Contract selection — FOUNDATION ONLY</p>
-              <div className="row">
-                {["MATCHES", "DIFFERS", "ODD", "EVEN", "OVER", "UNDER"].map((c) => (
-                  <span key={c} className="badge" style={{ borderColor: "var(--border)" }}>
-                    {c}
-                  </span>
-                ))}
-              </div>
-              <div className="placeholder" style={{ marginTop: ".75rem" }}>
-                <b>Execution disabled in Phase 1.</b> Real-money trading is off. Payouts price
-                live via the Deriv proposal API in later phases.
-              </div>
-            </section>
-          </div>
+          <section className="card" style={{ marginBottom: ".75rem" }}>
+            <p className="panel-title">Analysis & contracts (Phase 2 — statistical)</p>
+            <AnalysisPanel symbol={selected} />
+          </section>
 
           <section className="card">
             <p className="panel-title">Status log</p>

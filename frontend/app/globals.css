@@ -226,6 +226,29 @@ a {
   color: var(--text);
 }
 
+/* ---------- tables ---------- */
+.tbl {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  width: 100%;
+}
+.tbl th,
+.tbl td {
+  padding: 0.35rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+.tbl th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* active tab button */
+.btn.active {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+
 /* ---------- responsive ---------- */
 @media (max-width: 900px) {
   .layout {

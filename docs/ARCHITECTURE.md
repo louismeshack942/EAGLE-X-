@@ -59,6 +59,29 @@ statically-exported Next.js frontend from one origin. No proxy, no cross-service
 - No passwords are stored or used anywhere. Session signing uses an HMAC cookie backed
   by `SECRET_KEY`.
 
+## Analysis pipeline (Phase 2)
+
+1. **Tick windows** (`services/window_engine.py`): `WindowManager` keeps ring windows per
+   symbol at `(25, 50, 100, 250, 500, 1000)` ticks.
+2. **Data quality** (`core/data_quality.py`): honest per-window state
+   (`DATA_READY / INSUFFICIENT_DATA / STALE / DISCONNECTED / INVALID`).
+3. **Statistical analysis** (`services/analytics.py`): pure-Python digit frequency/ranks/
+   z-scores, parity, OVER/UNDER, MATCHES/DIFFERS, streaks, gaps, chi-square (lower
+   incomplete gamma) — no scipy.
+4. **AnalysisManager** (`services/analysis_engine.py`) aggregates multi-window snapshots
+   and is updated in realtime from `data_bus`. Served at `/api/analysis/{symbol}` + panels.
+
+## Proposal & recommendation pipeline (Phase 3, read-only)
+
+5. **Contracts** (`services/contracts.py`): family specs + board builder.
+6. **Proposals** (`services/proposal_engine.py`): real Deriv proposal normalization
+   (`{proposal:{id, ask_price, payout, spot}}`) → EV/breakeven; labeled HARNESS fallback.
+7. **Recommender** (`services/recommender.py`): `QUALIFIED / WATCH / NO TRADE /
+   INSUFFICIENT DATA` with sample/quality/breakeven/EV gates; a simulated price caps the
+   state at `WATCH`.
+8. **Phase3Service** (`services/phase3_service.py`) + `api/phase3.py`: rate-limited,
+   cached, read-only quick-analysis + 42-contract board scan. **No trade execution.**
+
 ## Database
 
 - Dev: SQLite file (`./backend/eaglex_dev.db`). Prod: Postgres via
@@ -67,11 +90,13 @@ statically-exported Next.js frontend from one origin. No proxy, no cross-service
 
 ## Testing & quality gates
 
-- `backend/tests/` — 34 pytest tests (API, ticks/digit extraction, harness tagging,
-  auth/OAuth helpers, crypto).
-- `mypy` clean on `app/`; `ruff` clean on `app/` + `tests/`.
+- `backend/tests/` — 87 pytest tests (API, ticks/digit extraction, harness tagging,
+  auth/OAuth helpers, crypto, Phase 2 analytics/window/quality, Phase 3 contracts/
+  proposals/recommender + API). `test_phase3.py` + extended `test_api.py`.
+- `mypy` clean on `app/` (31 files); `ruff` clean on `app/` + `tests/`.
 - Frontend: `next build` runs type-check + lint (ESLint via next); verified in-browser
-  (chart renders, WS streams digits, honest source/state badges).
+  (chart renders, WS streams digits, honest source/state badges, analysis + quick-analysis +
+  scan tabs return honest states).
 
 ## Running locally
 
