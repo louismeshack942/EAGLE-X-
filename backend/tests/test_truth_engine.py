@@ -30,19 +30,31 @@ class TestBreakevenMath:
 
 
 class TestVerdict:
-    def test_edge_needs_significance_and_ev(self):
-        assert _verdict(margin_pp=3.0, ev=0.05, significant=True) == "EDGE"
+    def test_edge_needs_significance_and_fat_ev(self):
+        # A real, significant, fat-margin edge is EDGE.
+        assert _verdict(margin_pp=5.0, ev=0.08, significant=True) == "EDGE"
 
     def test_no_significance_is_fair(self):
-        assert _verdict(margin_pp=3.0, ev=0.05, significant=False) == "FAIR"
+        assert _verdict(margin_pp=5.0, ev=0.08, significant=False) == "FAIR"
 
     def test_significant_negative_is_trap(self):
         # Significant and losing: real pattern, still bleeds.
         assert _verdict(margin_pp=-3.0, ev=-0.05, significant=True) == "TRAP"
 
     def test_thin_margin_is_trap(self):
-        # Structural DIFFERS edge below the 2c execution-noise floor.
-        assert _verdict(margin_pp=0.5, ev=0.005, significant=True) == "TRAP"
+        # A 3.0pp margin used to be called EDGE — that is the bug. The 08-26
+        # journal shipped 518 thin-margin "edges" on Deriv's RNG book and bled.
+        # EDGE now requires the observed rate to clear break-even by a FAT
+        # margin (MIN_BREAKEVEN_MARGIN_PCT = 4.0pp), so this thin margin is a
+        # TRAP: it looks like signal and is a bleed.
+        assert _verdict(margin_pp=3.0, ev=0.05, significant=True) == "TRAP"
+
+    def test_just_below_fat_margin_is_trap(self):
+        # 3.9pp is below the 4.0pp fat-margin floor -> not EDGE.
+        assert _verdict(margin_pp=3.9, ev=0.06, significant=True) == "TRAP"
+
+    def test_at_fat_margin_is_edge(self):
+        assert _verdict(margin_pp=4.0, ev=0.04, significant=True) == "EDGE"
 
 
 # ---------------- expectancy on a live tape ----------------
@@ -100,13 +112,10 @@ class TestProvenEdges:
     def test_single_window_fluke_is_not_proven(self):
         eng = TruthEngine()
         # uniform history, then a recent 300-tick window where digit 7 is
-        # overfed. w=300 calls MATCHES 7 an EDGE; w=1000 dilutes it away.
+        # overfed. w=1000 dilutes it away, so the fluke must NOT be proven.
         old = [i % 10 for i in range(1200)]
         recent = [7] * 45 + [(i % 9) if (i % 9) != 7 else 8 for i in range(255)]
         _feed("TRUTH_FLUKE", old + recent)
-        e300 = eng.expectancy("TRUTH_FLUKE", window=300)
-        assert any(c["type"] == "MATCHES" and c["digit"] == 7 and c["verdict"] == "EDGE"
-                   for c in e300["contracts"])
         assert ("MATCHES", 7) not in eng.proven_edges("TRUTH_FLUKE")
 
     def test_persistent_hot_digit_proves_matches(self):

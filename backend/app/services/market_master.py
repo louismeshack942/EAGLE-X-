@@ -19,13 +19,13 @@ from app.services.money_management import compute_stake
 
 MAX_SCORE = 100.0
 
-# Fair payout multipliers Deriv offers (approx; used for EV honesty, not display).
-# MATCHES/DIFFERS are fixed by Deriv; ODD/EVEN are the ~1.9 coin-flip tables.
-# OVER/UNDER are NOT 1.9: Deriv prices them by win probability (~1-2% house
-# edge), so OVER 1 (wins 80%) pays ~1.21, not 1.9. Using 1.9 manufactured a
-# fake +EV on OVER/UNDER and cost the account real money — see the 2026-08-24
-# drawdown. _digit_payout computes the real number per contract.
-PAYOUTS = {"MATCHES": 9.0, "DIFFERS": 1.1, "ODD": 1.9, "EVEN": 1.9}
+# Honest payout multipliers. These are what EV/edge are priced against, and
+# they MUST match what Deriv actually pays or the system manufactures false
+# +EV. The real settled ledger shows MATCHES settles at ~8.33-8.93 (not 9.0)
+# and DIFFERS at ~1.094 (not 1.1) after Deriv's ~1.5-2% house edge. Pricing
+# against the optimistic 9.0/1.1 systematically overstates expected value and
+# gives false green lights. We price against the conservative real numbers.
+PAYOUTS = {"MATCHES": 8.85, "DIFFERS": 1.09, "ODD": 1.94, "EVEN": 1.94}
 HOUSE_EDGE = 0.015  # Deriv keeps ~1.5% on digit contracts
 
 
@@ -39,10 +39,23 @@ def _digit_payout(p_win_fair: float) -> float:
     return round((1.0 - HOUSE_EDGE) / p, 3)
 
 SIGNIFICANCE_Z = 1.96  # 95% confidence level
-MIN_EDGE_PCT = 1.0     # scouts' floor: minimum observed-vs-fair edge (pp)
-MIN_EV = 0.0           # scouts' floor: minimum expected value per 1.0 staked
-MIN_DIFFERS_EV = 0.015 # entry-quality bar: DIFFERS rejects slivers —
-                       # sliver of edge loses its stake on one miss in ten
+# Scouts' edge floor. Deliberately FAT: on Deriv's RNG synthetic indices a
+# thin edge (1-2pp) over a small window is multiple-testing noise, not signal.
+# The 08-26 ledger is the proof — 518 MATCHES/OVER lottery tickets at 13.7%
+# wins got through gates that "proved" thin edges and every one bled. An edge
+# must clear fair by a fat margin OR chance can fake it all day.
+MIN_EDGE_PCT = 3.0
+# A minimum margin in percentage points the observed rate must clear the
+# payout's break-even by. Matches the scouts' fat-edge floor for the lottery
+# families that pay ~8.9x (where breakeven is ~11.1%): we only trust a dollar
+# when the observed rate beats break-even by at least this far.
+MIN_BREAKEVEN_MARGIN_PCT = 4.0
+MIN_EV = 0.03          # scouts' floor: minimum expected value per 1.0 staked
+MIN_DIFFERS_EV = 0.03  # entry-quality bar: DIFFERS rejects slivers —
+                       # its breakeven is ~91%, so it needs fat real expectancy.
+                       # 1 loss erases ~11 wins; only a real margin is worth the risk.
+MIN_SAMPLE_TICKS = 400 # an edge must be measured on enough real ticks that the
+                       # observed rate can't be a small-sample fluke
 MIN_Z_AGE_S = 10.0     # the edge must have HELD before the CF fires (speed-tuned)
 BREAKEVEN_MIN_TICKS = 200  # under this, the window can't prove a real edge
 
@@ -105,6 +118,7 @@ class MarketMaster:
                     "observed_edge": round(m_edge, 2),
                     "z": round(z_d, 2),
                     "significant": z_d >= 1.96,
+                    "sample_n": counts[d],
                     "payout": PAYOUTS["MATCHES"],
                     "ev": _ev(p_match, PAYOUTS["MATCHES"]),
                 })
@@ -124,6 +138,7 @@ class MarketMaster:
                     "observed_edge": round(d_edge, 2),
                     "z": round(-z_d, 2),
                     "significant": z_d <= -1.96,
+                    "sample_n": counts[d],
                     "payout": PAYOUTS["DIFFERS"],
                     "ev": _ev(p_diff, PAYOUTS["DIFFERS"]),
                 })
@@ -143,6 +158,7 @@ class MarketMaster:
                 "observed_edge": round(o_edge, 2),
                 "z": round(o_z, 2),
                 "significant": o_z >= SIGNIFICANCE_Z,
+                "sample_n": n_ticks,
                 "payout": PAYOUTS["ODD"],
                 "ev": _ev(max(0.01, min(0.99, odd_freq / 100.0)), PAYOUTS["ODD"]),
             })
@@ -160,6 +176,7 @@ class MarketMaster:
                 "observed_edge": round(e_edge, 2),
                 "z": round(e_z, 2),
                 "significant": e_z >= SIGNIFICANCE_Z,
+                "sample_n": n_ticks,
                 "payout": PAYOUTS["EVEN"],
                 "ev": _ev(max(0.01, min(0.99, even_freq / 100.0)), PAYOUTS["EVEN"]),
             })
@@ -193,6 +210,7 @@ class MarketMaster:
                     "observed_edge": round(ov_edge, 2),
                     "z": round(ov_z, 2),
                     "significant": ov_z >= SIGNIFICANCE_Z,
+                    "sample_n": high_count,
                     "payout": ov_payout,
                     "ev": _ev(max(0.01, min(0.99, high_freq / 100.0)), ov_payout),
                 })
@@ -210,6 +228,7 @@ class MarketMaster:
                     "observed_edge": round(un_edge, 2),
                     "z": round(un_z, 2),
                     "significant": un_z >= SIGNIFICANCE_Z,
+                    "sample_n": low_count,
                     "payout": un_payout,
                     "ev": _ev(max(0.01, min(0.99, low_freq / 100.0)), un_payout),
                 })
@@ -234,7 +253,7 @@ class MarketMaster:
                 reasons.append("LB: poor data quality")
             if not anomalies_ok:
                 reasons.append("Physio: anomalies")
-            if c.get("ev", 0) <= 0:
+            if c.get("ev", 0) < MIN_EV:
                 reasons.append("Scouts: no +EV")
             if (c.get("observed_edge") or 0) < MIN_EDGE_PCT:
                 reasons.append("Scouts: edge too thin")
@@ -242,6 +261,20 @@ class MarketMaster:
                 reasons.append("Analysts: not significant")
             if "SUPPORT" not in (c.get("evidence") or ""):
                 reasons.append("CB: no support")
+            # Fat-edge gate: the observed rate must clear the payout's own
+            # break-even by a real margin. Without this, a 13% "win rate" on a
+            # contract that needs 11.1% to break even looks like an edge and
+            # bleeds — the exact 08-26 lottery failure.
+            payout = c.get("payout") or 0
+            obs = c.get("observed_pct") or 0
+            if payout and obs:
+                breakeven = 100.0 / payout
+                if obs < breakeven + MIN_BREAKEVEN_MARGIN_PCT:
+                    reasons.append(f"Scouts: only {obs:.0f}% vs {breakeven:.0f}%+{MIN_BREAKEVEN_MARGIN_PCT:.0f}% break-even")
+            # Big-sample gate: a thin window can manufacture fake edges.
+            # Require enough measured ticks before any contract is trusted.
+            if (c.get("sample_n") or 0) < MIN_SAMPLE_TICKS:
+                reasons.append(f"Analysts: only {c.get('sample_n', 0)} ticks (need {MIN_SAMPLE_TICKS})")
             c["verdict"] = "PLAY" if team_ok and not reasons else "BENCH"
             c["verdict_reason"] = "; ".join(reasons) if reasons else "whole team agrees"
 

@@ -35,6 +35,12 @@ from app.services.persistence import journal_engine
 # Verdict thresholds
 SIGNIFICANCE_Z = 1.96
 MIN_REAL_EV = 0.02  # 2 cents per 1.0 — below this the "edge" is execution noise
+# A "proven edge" must clear the payout's break-even by at least this many
+# percentage points. On Deriv's RNG synthetics a 1-2pp margin over a small
+# window (BREAKEVEN_MIN_TICKS) is multiple-testing noise; the 08-26 ledger
+# shipped 518 such "edges" and every one bled. Without a fat, chance-proof
+# margin the Truth Engine keeps endorsing a lottery.
+MIN_BREAKEVEN_MARGIN_PCT = 4.0
 
 
 def _breakeven(payout: float) -> float:
@@ -45,7 +51,11 @@ def _breakeven(payout: float) -> float:
 def _verdict(margin_pp: float, ev: float, significant: bool) -> str:
     if not significant:
         return "FAIR"
-    if ev >= MIN_REAL_EV and margin_pp > 0:
+    # EDGE now requires the observed rate to clear break-even by a FAT margin —
+    # not just a hair above it. A 13% win rate on a contract that needs 11.1% to
+    # break even looks like an edge and bleeds (the 08-26 lottery). Only a
+    # margin large enough that chance on an RNG book can't manufacture it counts.
+    if ev >= MIN_REAL_EV and margin_pp >= MIN_BREAKEVEN_MARGIN_PCT:
         return "EDGE"
     return "TRAP"
 
