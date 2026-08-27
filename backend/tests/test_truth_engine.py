@@ -118,6 +118,17 @@ class TestProvenEdges:
         _feed("TRUTH_FLUKE", old + recent)
         assert ("MATCHES", 7) not in eng.proven_edges("TRUTH_FLUKE")
 
+    def test_fresh_boot_hot_digit_cannot_be_proven(self):
+        # Regression: on a fresh boot the queue has only ~50-99 ticks. A digit
+        # fluke over that sliver used to clear the old 50-tick truth floor and
+        # the CF fired a $1 lottery ticket on it (log: "Placing trade ...
+        # z=3.61 EV 0.78" on 13 ticks). proven_edges now needs each of the
+        # 100/300/1000 windows to hold min_ticks=100, so a thin boot tape
+        # proves nothing no matter how hot one digit looks.
+        eng = TruthEngine()
+        _feed("TRUTH_BOOTFLUKE", [7] * 40 + [(i % 9) if (i % 9) != 7 else 8 for i in range(45)])
+        assert eng.proven_edges("TRUTH_BOOTFLUKE") == set()
+
     def test_persistent_hot_digit_proves_matches(self):
         # MATCHES is not banned — it must EARN its way through the gate.
         # digit 4 lands every 4th tick (~30% after filler) — far above the

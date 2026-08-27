@@ -63,13 +63,16 @@ def _verdict(margin_pp: float, ev: float, significant: bool) -> str:
 class TruthEngine:
     """Computes honest expectancy per contract from the live tape."""
 
-    def proven_edges(self, symbol: str, windows=(100, 300, 1000), min_ticks: int = 50) -> set[tuple]:
+    def proven_edges(self, symbol: str, windows=(100, 300, 1000), min_ticks: int = 100) -> set[tuple]:
         """(type, digit) pairs that are EDGE in EVERY window with enough data.
 
         A single 300-tick window manufactures flukes — some digit always looks
         overfed by chance. An edge the CF may fire on must survive all three
-        windows simultaneously. min_ticks is a thin-tape floor only (it must
-        stay below the smallest window, or every call is a blanket ban).
+        windows simultaneously. min_ticks is a thin-tape floor, but it must be
+        REAL: a fresh-boot window of ~51 ticks is far too little for chance to
+        be ruled out. We raised it to 100 (= the smallest window) so a boot
+        fluke can no longer prove an edge, while a genuinely persistent skew
+        still clears every window.
         Returns an empty set when the tape is thin or the market is fair —
         the correct, capital-preserving answer.
         """
