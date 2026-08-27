@@ -1,0 +1,37 @@
+# Repo meta
+.git
+.gitignore
+.dockerignore
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+**/__pycache__
+**/*.py[cod]
+**/.venv
+**/venv
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/htmlcov
+
+# Node / frontend build artifacts (regenerated in the image)
+**/node_modules
+**/.next
+**/out
+frontend/out
+next-env.d.ts
+
+# Runtime data / logs
+*.db
+*.sqlite3
+backend/data
+backend/.data
+*.log
+
+# Docs/tests not needed at runtime for a lean image (tests still run in CI)
+docs
+*.md

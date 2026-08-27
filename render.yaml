@@ -1,0 +1,47 @@
+# EAGLE-X — single-service Render blueprint.
+# One service runs the FastAPI backend AND serves the exported Next.js frontend from the
+# same origin (see docs/ARCHITECTURE.md). No proxy, no cross-service URLs.
+#
+# NOTE: This file is a reproducible blueprint. It triggers no live-money trading by
+# itself — `EXECUTION_LIVE_ENABLED` must be set to "true" by a HUMAN operator on the
+# service, and even then all risk gates + server-side switches still apply.
+
+services:
+  - type: web
+    name: eaglex
+    runtime: docker
+    plan: free
+    rootDir: ./
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENV
+        value: production
+      - key: APP_NAME
+        value: EAGLE-X
+      # Port uvicorn listens on. Render injects $PORT; default 8000.
+      - key: PORT
+        value: 8000
+      # The exported frontend is baked into the image at /app/frontend_static.
+      - key: FRONTEND_DIR
+        value: /app/frontend_static
+      # !!! Never override these to true via the blueprint. They are operational
+      # switches a human must set on the Render dashboard:
+      - key: EXECUTION_LIVE_ENABLED
+        value: "false"
+      - key: CF_AUTOSTART
+        value: off
+      # Deriv account auth (PAT) — set securely on the dashboard, NOT here.
+      - key: DERIV_API_TOKEN
+        sync: false
+      - key: DERIV_PAT_APP_ID
+        sync: false
+      # DB: empty => SQLite file at /app/backend/eaglex_dev.db (persisted on the disk below).
+      # For production set DATABASE_URL=postgres://... in the dashboard.
+      - key: DATABASE_URL
+        sync: false
+    disk:
+      name: eaglex-data
+      mountPath: /app/backend
+      sizeGB: 1
