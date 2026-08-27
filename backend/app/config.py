@@ -84,6 +84,28 @@ class Settings(BaseSettings):
     # MARTINGALE IS PROHIBITED. There is intentionally NO config for auto stake growth.
     balance_provider_enabled: bool = True
 
+    # ================= Phase 6 — automated trader =============================
+    # The automated trader is a CLIENT of the Phase 4/5 pipeline. It never bypasses
+    # signal/risk/execution. Defaults are DISABLED and conservative (NO TRADE).
+    automation_enabled: bool = False              # master switch: OFF by default
+    automation_mode_default: str = "OFF"          # OFF | MONITOR | PAPER | LIVE
+    automation_max_trades_per_session: int = 20
+    automation_max_trades_per_day: int = 50
+    automation_max_open: int = 1                  # never exceed execution_max_open
+    automation_max_daily_loss: float = 5.0
+    automation_max_session_loss: float = 5.0
+    automation_max_consecutive_losses: int = 3
+    automation_cooldown_secs: float = 30.0        # after a loss / error
+    automation_max_signal_age_secs: float = 5.0   # revalidate before every execution
+    automation_min_signal_quality: float = 60.0   # floor on signal composite quality (0-100)
+    automation_scan_interval_secs: float = 1.0    # min gap between scan cycles per symbol
+    automation_max_stake: float = 1.0             # capped by risk_max_stake & live_stake_max
+    automation_min_stake: float = 0.1
+    automation_allowed_markets: str = "R_10,R_25,R_50,R_75,R_100"  # comma-separated
+    automation_allowed_families: str = "MATCHES,OVER,UNDER,ODD,EVEN,DIFFERS"
+    # NOTE: automation can NEVER enable execution_live_enabled itself. That master
+    # switch remains server-side ONLY, off by default.
+
     # ---- CORS ----
     @property
     def cors_origins(self) -> list[str]:

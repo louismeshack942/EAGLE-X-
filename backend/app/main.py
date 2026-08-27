@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api import analysis, auth, cockpit, execution, phase3
+from app.api import analysis, auth, automation, cockpit, execution, phase3
 from app.config import settings
 from app.db.init_db import init_db
 
@@ -37,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(analysis.router)
     app.include_router(phase3.router)
     app.include_router(execution.router)
+    app.include_router(automation.router)
 
     @app.get("/health")
     def health():
