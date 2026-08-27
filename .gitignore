@@ -1,0 +1,46 @@
+# Environment / secrets
+.env
+.env.local
+.env.production
+.env.*.local
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Node
+node_modules/
+.next/
+out/
+next-env.d.ts
+
+# Build / runtime generated
+dist/
+build/
+*.db
+*.sqlite3
+frontend/out/
+backend/data/
+frontend/public/videos/
+
+# Data stores (dev fallback JSON)
+backend/.data/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log
+logs/

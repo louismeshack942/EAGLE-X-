@@ -1,0 +1,91 @@
+# EAGLE-X — Architecture (Batch 1)
+
+Single-service architecture: a FastAPI backend serves both the JSON/WS API and the
+statically-exported Next.js frontend from one origin. No proxy, no cross-service URLs.
+
+## Repo layout
+
+```
+.
+├── .env.example            # all env vars + comments (no secrets)
+├── .gitignore
+├── backend/
+│   ├── app/
+│   │   ├── main.py         # FastAPI app; mounts exported frontend when built
+│   │   ├── config.py       # pydantic-settings (env-driven)
+│   │   ├── db/init_db.py   # create_all + seed markets
+│   │   ├── models/models.py# SQLAlchemy models (User, Authorization, Market, Tick, Events)
+│   │   ├── core/           # ticks (normalization+digit), events bus, status, crypto
+│   │   ├── services/       # connector interface, harness (clearly labeled), deriv_client, data_bus, oauth
+│   │   └── api/            # auth.py (OAuth) + cockpit.py (markets, connect, ticks, WS)
+│   ├── tests/              # pytest suite (backend)
+│   ├── pyproject.toml
+│   └── requirements.txt
+├── frontend/
+│   ├── app/                # Next.js App Router (client components)
+│   ├── components/         # LiveChart (TradingView lightweight-charts)
+│   └── lib/api.ts          # typed API helpers (relative, same-origin)
+└── docs/                   # Phase 0 forensic spec + protrader research
+```
+
+## Data flow
+
+1. **Provider** (`MarketDataProvider`): `harness` (local simulator, clearly tagged) or
+   `deriv_live` (async Deriv WS client). Both are async generators of `NormalizedTick`.
+2. **DataBus** (`services/data_bus.py`): connects the provider, forwards ticks on the
+   in-process event bus, and persists each tick to the DB (non-fatal on failure).
+3. **API / WS** (`api/cockpit.py`): `/api/connect` starts a bus; `/api/ticks/{symbol}`
+   reads recent rows; `/ws/ticks` streams live ticks + connection `status` events.
+4. **Frontend** subscribes to `/ws/ticks` and renders the chart/digit grid, tagging the
+   data source honestly (`harness` vs `deriv_live`).
+
+## Data-source honesty
+
+- Ticks carry a `provider` field (`harness` | `deriv_live`). A harness tick is NEVER
+  labeled live.
+- `/api/status` reports `data_source` derived from config (`harness` unless Deriv OAuth
+  is configured) plus an explicit `note`.
+- When OAuth is unconfigured, live connections are refused with `AUTHORIZATION_REQUIRED`
+  (503) — no silent simulation disguised as real.
+
+## Auth (legitimate only)
+
+- Deriv **OAuth2 Authorization Code + PKCE** (`services/oauth.py`). The backend mints
+  the authorize URL with a `code_challenge` and swaps the returned `code` (+verifier)
+  at the token endpoint via `httpx` (HTTPS). Tokens are encrypted at rest with a
+  per-deployment key (`core/crypto.py`).
+- `OAuthService.is_configured` gates the `/auth/deriv/login` flow; the flow is inert
+  (`NOT_CONFIGURED`) until env values are present, so there is never a fake login.
+- No passwords are stored or used anywhere. Session signing uses an HMAC cookie backed
+  by `SECRET_KEY`.
+
+## Database
+
+- Dev: SQLite file (`./backend/eaglex_dev.db`). Prod: Postgres via
+  `postgresql+psycopg`. Models import cleanly (no hard Postgres-only types in Batch 1).
+- Redis is targeted for later phases (caching/session), with a fallback today.
+
+## Testing & quality gates
+
+- `backend/tests/` — 34 pytest tests (API, ticks/digit extraction, harness tagging,
+  auth/OAuth helpers, crypto).
+- `mypy` clean on `app/`; `ruff` clean on `app/` + `tests/`.
+- Frontend: `next build` runs type-check + lint (ESLint via next); verified in-browser
+  (chart renders, WS streams digits, honest source/state badges).
+
+## Running locally
+
+```bash
+# Backend
+cd backend
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --port 8000
+
+# Frontend dev (different tab)
+cd frontend && npm install && npm run dev   # http://localhost:3000
+
+# Full app on ONE origin (production-like):
+cd frontend && npm run build                # produces frontend/out
+cd ../backend && FRONTEND_DIR=$PWD/../frontend/out uvicorn app.main:app --port 8000
+```
