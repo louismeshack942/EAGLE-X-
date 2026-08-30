@@ -369,7 +369,7 @@ export default function CockpitPage() {
           </div>
           {!signalActive && (
             <p className="empty-note" style={{ marginTop: ".6rem" }}>
-              The 30-second signal window runs once enough live ticks are collected. Hold until confidence passes 70%% before entering a trade — matching the target tool's documented rule.
+              The 30-second signal window runs once enough live ticks are collected. Hold until confidence passes 70% before entering a trade — matching the target tool&apos;s documented rule.
 
             </p>
           )}
