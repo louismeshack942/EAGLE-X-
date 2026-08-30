@@ -21,6 +21,13 @@ from app.services.data_bus import DataBus, make_provider
 
 router = APIRouter(tags=["cockpit"])
 
+
+def _live_available() -> bool:
+    from app.services.deriv_session import get_session
+    session = get_session()
+    return session.live_configured or settings.oauth_configured
+
+
 # active bus per symbol
 _buses: dict[str, DataBus] = {}
 
@@ -38,13 +45,22 @@ def system_status(db: Session = Depends(get_db)):
         {"symbol": s, "state": bus.provider.state, "latest": bus.latest.get(s)}
         for s, bus in list(_buses.items())
     ]
-    source = "harness" if settings.use_unauth_public_data and not settings.deriv_oauth_client_id else "deriv_live"
+    from app.services.deriv_session import get_session
+    session = get_session()
+    source = (
+        "deriv_live"
+        if session.live_configured
+        else "harness"
+        if settings.use_unauth_public_data and not settings.deriv_oauth_client_id
+        else "deriv_live"
+    )
     return {
         "status": "ok",
         "server_time": time.time(),
         "connection": buses,
         "data_source": source,
         "oauth_configured": settings.oauth_configured,
+        "account": session.status(),
         "note": "MOCK/SIMULATION labels are surfaced honestly; no fake 'live/real' claims.",
     }
 
@@ -57,7 +73,7 @@ async def connect_market(payload: dict, db: Session = Depends(get_db)):
     if not market:
         return JSONResponse({"state": "MARKET_UNAVAILABLE", "error": "unknown symbol"}, status_code=404)
 
-    if mode == "live" and not settings.oauth_configured:
+    if mode == "live" and not _live_available():
         return JSONResponse(
             {"state": "AUTHORIZATION_REQUIRED",
              "error": "Live data requires a configured Deriv OAuth app."},

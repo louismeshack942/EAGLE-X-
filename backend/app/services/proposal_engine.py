@@ -172,8 +172,18 @@ class ProposalService:
         self._last_request_at: float | None = None
 
     @property
+    def live_session(self):
+        """The authenticated Deriv session, when connected (live proposals source."""
+        from app.services.deriv_session import get_session
+
+        session = get_session()
+        if session.live_configured:
+            return session
+        return None
+
+    @property
     def live_configured(self) -> bool:
-        return self.use_live and self._ws is not None
+        return bool(self.live_session) or (self.use_live and self._ws is not None)
 
     async def request(self, spec: ContractSpec) -> NormalizedProposal:
         """Request (and normalize) a proposal for one contract.
@@ -201,6 +211,51 @@ class ProposalService:
             if wait > 0:
                 await asyncio.sleep(wait)
         self._last_request_at = time.time()
+
+        # Live proposals prefer the authenticated session (OTP socket, real
+        # Deriv pricing). Fall back to the injected ws (tests/legacy) only when
+        # the session isn't connected, so the live quote always comes from the
+        # account-authorized feed whenever one is available。
+        session = self.live_session
+        if session is not None:
+            try:
+                live = await session.get_proposal(
+                    symbol=spec.symbol,
+                    contract_type=spec.family,
+                    amount=float(spec.stake),
+                    duration=int(spec.duration_ticks),
+                    digit=spec.barrier,
+                    currency=spec.currency,
+                )
+                return NormalizedProposal(
+                    source=SOURCE_LIVE,
+                    state="OK",
+                    message="",
+                    proposal_id=live["proposal_id"],
+                    symbol=spec.symbol,
+                    contract_type=live["contract_type"],
+                    barrier=live["barrier"],
+                    duration_ticks=spec.duration_ticks,
+                    currency=live["currency"],
+                    stake=float(spec.stake),
+                    ask_price=live["ask_price"],
+                    payout=live["payout"],
+                    profit_net=round((live["payout"] or 0.0) - float(spec.stake), 4) if live["payout"] is not None else None,
+                    payout_pct=round(((live["payout"] or 0.0) / float(spec.stake) - 1) * 100.0, 3) if live["payout"] and float(spec.stake) > 0 else None,
+                    breakeven_win_rate=round(float(spec.stake) / live["payout"], 5) if live["payout"] else None,
+                    spot=live["spot"],
+                    quote_timestamp=time.time(),
+                    request=_request_payload(spec),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # session proposal failure surfaces honestly; caller can fallback
+                from app.services.deriv_session import SessionError
+                if isinstance(exc, SessionError) and exc.state == "UNCERTAIN":
+                    raise ProposalError("CONNECTION_LOST", f"live proposal unavailable: {exc.message}") from exc
+                logger.warning("live session proposal failed (falling through): %s", exc)
+        # Fall back to the injected raw ws path below (tests/legacy) only when
+        # no session was available or its proposal genuinely failed。
 
         req = _request_payload(spec)
         req["req_id"] = 9000 + hash((spec.symbol, spec.contract_type, spec.barrier)) % 1000

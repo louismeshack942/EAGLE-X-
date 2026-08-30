@@ -28,6 +28,7 @@ dist/
 build/
 *.db
 *.sqlite3
+*.tsbuildinfo
 frontend/out/
 backend/data/
 frontend/public/videos/

@@ -110,9 +110,17 @@ class DataBus:
 
 def make_provider(*, use_harness: bool = False, app_id: str = "", token: str = ""):
     from app.services.deriv_client import DerivClient
+    from app.services.deriv_session import get_session
+    from app.services.live_session import LiveProvider
 
     if use_harness:
+
         return HarnessProvider()
+    # Live market data requires an authenticated Deriv session (PAT/OTP or
+    # OAuth). Without one we NEVER fabricate a flow — the caller gets an honest
+    # AUTHORIZATION_REQUIRED state instead of a silent demo/harness slide.
+    if get_session().live_configured:
+        return LiveProvider(session=get_session())
     if app_id:
         return DerivClient(app_id=app_id, token=token)
     return HarnessProvider() if settings.use_unauth_public_data else None

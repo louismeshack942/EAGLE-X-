@@ -23,13 +23,18 @@ from app.services.proposal_engine import ProposalService
 router = APIRouter(prefix="/api", tags=["phase3"])
 
 
+def _live_available() -> bool:
+    from app.services.deriv_session import get_session
+    return get_session().live_configured or settings.oauth_configured
+
+
 def _live_proposal_service() -> ProposalService:
     """Build the proposal service.
 
     Real Deriv proposals are requested over the authenticated WS only when OAuth is
     configured. Otherwise we stay HARNESS (simulated and clearly labeled) or UNAVAILABLE.
     """
-    use_live = settings.oauth_configured
+    use_live = _live_available()
     return ProposalService(use_live=use_live)
 
 
@@ -132,8 +137,8 @@ async def scan_symbol(symbol: str, window: int = 100):
 def proposal_flow():
     """Honest indicator of current pricing source."""
     return {
-        "live_configured": settings.oauth_configured,
-        "mode": "LIVE" if settings.oauth_configured else "HARNESS",
+        "live_configured": _live_available(),
+        "mode": "LIVE" if _live_available() else "HARNESS",
         "note": (
             "Pricing reflects real Deriv proposals when configured; otherwise simulated "
             "(HARNESS) pricing is clearly labeled and never implied to be real."

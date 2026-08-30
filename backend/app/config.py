@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     deriv_rest_base: str = "https://api.derivws.com/trading/v1"
     # Fall back to the public endpoint when OAuth not configured:
     use_unauth_public_data: bool = True
+    # Live PAT token (env-configured, never in repo) — the session validates and
+    # stores it in the 0600 vault; DERIV_PAT_APP_ID is required for pat_ tokens.
+    deriv_api_token: str = ""
+    deriv_pat_app_id: str = ""
 
     # ---- Security ----
     # Session signing key. In production set a strong random value via env.

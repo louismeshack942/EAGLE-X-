@@ -202,10 +202,10 @@ def test_paper_broker_needs_spot():
     assert res.status == "ERROR"
 
 
-def test_live_placeholder_rejects_without_enable():
-    from app.services.broker import DerivPlaceholderBroker, ExecutionRequest
+def test_live_broker_rejects_without_enable():
+    from app.services.broker import DerivLiveBroker, ExecutionRequest
 
-    broker = DerivPlaceholderBroker(live_enabled=False)
+    broker = DerivLiveBroker(live_enabled=False)
     req = ExecutionRequest(signal_id="s", symbol="R_10", contract_type="DIGITMATCH",
                            family="MATCHES", barrier=1, prediction="1", duration_ticks=5,
                            stake=1.0, proposal_id="pid", proposal_source="LIVE",

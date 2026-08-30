@@ -69,10 +69,13 @@ class DecisionService:
 
     # ---- healthy, self-maintained snapshot for risk ---------------------------
     def _risk_context(self, signal: Signal, mode: str) -> RiskContext:
+        from app.services.deriv_session import get_session
+        session = get_session()
+        live_authed = session.live_configured or self.AuthSnapshot.authenticated()
         return RiskContext(
             execution_mode=mode,
             live_enabled=settings.execution_live_enabled,
-            live_authenticated=self.AuthSnapshot.authenticated(),
+            live_authenticated=live_authed,
             connected=analysis_manager.connection_state(signal.symbol) == "connected",
             kill_switch=self.kill.enabled,
             execution_lock=self.lock.held,
@@ -86,12 +89,17 @@ class DecisionService:
         )
 
     def _balance(self) -> float | None:
+        # For LIVE the authenticated session's current Deriv balance is the authority.
+        from app.services.deriv_session import get_session
+        session = get_session()
+        if session.live_configured:
+            bal = session._balance
+            return bal if bal is not None else None
         # In paper/harness we don't assume a real balance; LIVE would read it. Return
-        # None means "balance not known" — the risk gate then skips the reserve check
+        # None means balance-not-known and the risk gate skips the reserve check
         # but STILL refuses LIVE without an authentic balance requirement upstream.
         return None
 
-    # ---- produce a signal from current analysis + an available proposal ---------
     def produce_signal(
         self,
         *,

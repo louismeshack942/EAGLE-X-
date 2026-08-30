@@ -145,42 +145,103 @@ class ExecutionLock:
         return self._held
 
 
-class DerivPlaceholderBroker:
-    """The LIVE broker. Uses the legitimate Deriv purchase API when enabled.
+class DerivLiveBroker:
+    """The LIVE broker — wraps the authenticated Deriv session's real BUY.
 
     The real network purchase lives behind BOTH the master `execution_live_enabled`
-    switch and the execution-mode gate. No purchase call is ever issued unless both are
-    on AND all risk gates passed (checked upstream). This class only wraps the wire
-    format so the pipeline stays broker-compatible; the live call itself is a stubbed
-    method that NEVER runs in tests.
-    """
+    switch and the execution-mode gate — these are enforced upstream (ExecutionEngine)
+    and here again (belt-and-braces>. No purchase call is ever issued unless both are
+    on AND all risk gates passed (checked upstream>. This class only wraps the wire
+    format so the pipeline stays broker-compatible;the live call is exercised against
+    the real Deriv API via `DerivSession.buy` (proposal-driven, $1 stake cap..
 
-    def __init__(self, ws=None, live_enabled: bool = False) -> None:
-        self._ws = ws
+    """
+    def __init__(self, session=None, live_enabled: bool = False) -> None:
+        self._session = session
         self.live_enabled = live_enabled
 
+
+
     async def buy(self, request: ExecutionRequest) -> PurchaseResult:
-        """Issue (or refuse) a LIVE purchase. Returns explicit broker confirmation."""
+
+
+        def _rejected(message: str) -> PurchaseResult:
+
+
+            return PurchaseResult(
+                request_id=request.request_id,
+                idempotency_key=request.idempotency_key,
+                status="REJECTED",
+                execution_mode=MODE_LIVE,
+                message=message,
+            )
+
         if not self.live_enabled:
-            return PurchaseResult(
-                request_id=request.request_id,
-                idempotency_key=request.idempotency_key,
-                status="REJECTED",
-                execution_mode=MODE_LIVE,
-                message="LIVE execution is DISABLED on this server.",
-            )
+
+
+
+
+            return _rejected("LIVE execution is DISABLED on this server.")
         # Never send a request without a proposal id / pricing provenance.
+
         if not request.proposal_id or request.proposal_source != "LIVE":
+
+
+            return _rejected("LIVE purchase requires a LIVE proposal id (no real quote, no buy..")
+        from app.services.deriv_session import SessionError, get_session
+
+
+
+        session = self._session or get_session()
+        if not session or not session.live_configured:
+
+
+            return _rejected("LIVE execution requires an authenticated Deriv session.")
+        try:
+
+            bought = await session.buy(
+                proposal_id=request.proposal_id,
+                price=request.ask_price if request.ask_price is not None else request.stake,
+                amount=request.stake,
+
+                currency=request.currency,
+
+            )
+        except SessionError as exc:
+
+            # An ambiguous buy (timeout, no contract_id) must go to UNCERTAIN —
+            # the ledger reconciles to UNKNOWN; never a blind retry. Other errors
+            # surface honestly as ERROR (never a win/loss guess..
+            status = "UNCERTAIN" if exc.state == "UNCERTAIN" else "ERROR"
             return PurchaseResult(
                 request_id=request.request_id,
                 idempotency_key=request.idempotency_key,
-                status="REJECTED",
+                status=status,
                 execution_mode=MODE_LIVE,
-                message="LIVE purchase requires a LIVE proposal id (no real quote, no buy).",
+                message=exc.message,
+                raw={"session_error": exc.state},
             )
-        # Real network call would go here (buy: {contract_id, buy_price, payout, ...}).
-        # It is intentionally NOT exercised in automated tests (no real money).
-        raise NotImplementedError("LIVE purchase path requires an authenticated Deriv WS.")
+        except Exception as exc:  # noqa: BLE001 — transport level failures are honest
+            return PurchaseResult(
+                request_id=request.request_id,
+                idempotency_key=request.idempotency_key,
+                status="ERROR",
+                execution_mode=MODE_LIVE,
+                message=f"LIVE buy failed: {exc}",
+            )
+        return PurchaseResult(
+            request_id=request.request_id,
+            idempotency_key=request.idempotency_key,
+            status="EXECUTED",
+            contract_id=str(bought.get("contract_id") or ""),
+            buy_price=bought.get("buy_price") or request.stake,
+            payout=bought.get("payout"),
+            entry=bought.get("buy_price") or request.ask_price or request.stake,
+            message=f"LIVE executed via Deriv (tx={bought.get('transaction_id')}).",
+            confirmed_ts=time.time(),
+            raw=bought,
+            execution_mode=MODE_LIVE,
+        )
 
 
 class HarnessBroker:
@@ -260,7 +321,7 @@ class PaperBroker:
 def broker_for(mode: str, *, live_enabled: bool = False, spot_provider=None, ws=None) -> object:
     """Return the appropriate broker for an explicit mode."""
     if mode == MODE_LIVE:
-        return DerivPlaceholderBroker(ws=ws, live_enabled=live_enabled)
+        return DerivLiveBroker(session=None, live_enabled=live_enabled)
     if mode == MODE_PAPER:
         return PaperBroker(spot_provider=spot_provider)
     return HarnessBroker()
@@ -271,7 +332,7 @@ __all__ = [
     "MODE_LIVE",
     "MODE_PAPER",
     "MODES",
-    "DerivPlaceholderBroker",
+    "DerivLiveBroker",
     "ExecutionLock",
     "ExecutionRequest",
     "HarnessBroker",

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, Request, Response
+from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
@@ -44,9 +45,50 @@ def _set_session_cookie(response: Response, token: str) -> None:
 @router.get("/status")
 def auth_status(request: Request, response: Response):
     token = request.cookies.get("eaglex_session")
-    if not token or not _SESSION_BY_HASH.get(hash_secret(token)):
-        return {"authenticated": False}
-    return {"authenticated": True, "configured": settings.oauth_configured}
+    session_ok = bool(token) and bool(_SESSION_BY_HASH.get(hash_secret(token or "")))
+    if session_ok:
+        from app.services.deriv_session import get_session
+        return {"authenticated": True, "configured": settings.oauth_configured,
+                "account": {"loginid": get_session()._loginid or "", "currency": get_session()._currency or ""}}
+    # The live session (PAT/OTP, env-configured or operator-uploaded) is the
+    # authoritative account for trading; a web OAuth session is optional.
+
+    from app.services.deriv_session import get_session
+    session = get_session()
+    return {
+        "authenticated": session.state == "connected",
+        "configured": settings.oauth_configured,
+        "account": session.status(),
+    }
+
+
+class TokenBody(BaseModel):
+    token: str
+    app_id: str | None = None
+
+
+@router.post("/token")
+async def token_connect(body: TokenBody):
+    """Connect a Deriv PAT token via the authenticated session (all-or-nothing.
+
+    Validates against Deriv's REST API + mints an OTP URL BEFORE storing.
+
+    The operator can also configure these via env (`DERIV_API_TOKEN` +
+    `DERIV_PAT_APP_ID`); this endpoint is for live, per-session override."""
+    from app.services.deriv_session import get_session, SessionError
+
+    try:
+        res = await get_session().connect(body.token, body.app_id)
+    except SessionError as exc:
+        return {"ok": False, "state": exc.state, "error": exc.message}
+    return res
+
+
+@router.delete("/token")
+async def token_disconnect():
+    """Disconnect the current session (removes the vault)."""
+    from app.services.deriv_session import get_session
+    return await get_session().disconnect()
 
 
 @router.get("/deriv/login")

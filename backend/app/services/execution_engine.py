@@ -21,6 +21,7 @@ Safety principles enforced here:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -279,11 +280,50 @@ class ExecutionEngine:
         signal.signal_state = SignalState.OPEN.value
         self._open_contract(signal, req, result)
         self._record_ledger(signal, req, result, "OPEN")
+
+        # (6) LIVE contracts settle automatically through the session's real feed.
+
+        if mode == MODE_LIVE:
+            try:
+                await self._settle_live(result.contract_id, signal, req)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — a settle hiccup must not rollback the purchase
+                # The buy already happened;the open contract + ledger are correct as OPEN.
+                logger.warning("live settlement follow failed for %s: %s", result.contract_id, exc)
+
         return {
             "status": ExecutionState.SUCCEEDED.value,
             "reason": result.message,
             "contract_id": result.contract_id,
         }
+
+    async def _settle_live(self, contract_id: str, signal: Signal, req: ExecutionRequest) -> None:
+
+        """Follow a real Deriv contract to settlement (status resets *from* OPEN.."""
+
+        from app.services.deriv_session import SessionError, get_session
+
+        session = get_session()
+        if not session.live_configured:
+            return
+        try:
+            settled = await session.settle(contract_id, timeout_s=180.0)
+        except SessionError as exc:
+            contract = self._open.get(contract_id)
+            if contract:
+                contract.status = "UNKNOWN"
+                self._update_ledger_status(contract_id, "UNKNOWN", exc.message)
+            raise
+        won = bool(settled.get("won"))
+        pnl = float(settled.get("pnl") or 0.0)
+        contract = self._open.get(contract_id)
+        if contract:
+            contract.status = "WON" if won else "LOST"
+            contract.result_digit = settled.get("result_digit")
+            contract.result_payout = settled.get("sell_price")
+            contract.profit_loss = round(pnl, 4)
+        self._update_ledger_status(contract_id, "WON" if won else "LOST", "", pnl)
 
     def _open_contract(self, signal: Signal, req: ExecutionRequest, result: PurchaseResult) -> None:
         dur = max(1, req.duration_ticks)
