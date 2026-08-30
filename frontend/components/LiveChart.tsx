@@ -8,6 +8,7 @@ import {
   type ISeriesApi,
   type Time,
   type UTCTimestamp,
+  LineStyle,
 } from "lightweight-charts";
 
 export type ChartPoint = {
@@ -127,8 +128,8 @@ export default function LiveChart({
     if (rsel) {
       rchart = mk(rsel, 90);
       rser = rchart.addLineSeries({ color: "#8b7cf8", lineWidth: 2 });
-      rser.createPriceLine({ price: 70, color: "rgba(46,230,168,.35)", lineWidth: 1, lineStyle: { type: 2 } as any });
-      rser.createPriceLine({ price:  30, color: "rgba(255,93,108,.35)", lineWidth:  1, lineStyle: { type:  2 } as any });
+      rser.createPriceLine({ price: 70, color: "rgba(46,230,168,.35)", lineWidth: 1, lineStyle: LineStyle.Dashed });
+      rser.createPriceLine({ price:  30, color: "rgba(255,93,108,.35)", lineWidth:  1, lineStyle: LineStyle.Dashed });
     }
 
     chartRef.current = chart;
