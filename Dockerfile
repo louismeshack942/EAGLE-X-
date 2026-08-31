@@ -2,12 +2,12 @@
 # The FastAPI backend serves the statically-exported frontend from the same
 # origin, so the whole platform is ONE service on ONE port. No proxy.
 
-# ---- Stage 1: build the frontend (static export) ----
+# ---- Stage 1: build the Pro Trader twin frontend (static export) ----
 FROM node:18-alpine AS frontend
 WORKDIR /fe
-COPY frontend/package.json frontend/package-lock.json* ./
+COPY twin/package.json twin/package-lock.json* ./
 RUN npm install --no-audit --no-fund
-COPY frontend/ ./
+COPY twin/ ./
 RUN npm run build   # produces /fe/out
 
 # ---- Stage 2: Python deps ----

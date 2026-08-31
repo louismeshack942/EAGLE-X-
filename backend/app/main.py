@@ -1645,7 +1645,7 @@ def performance_analytics_route():
 # origin — one service, one port, no proxy. Specific API routes above win;
 # this middleware only converts 404s for non-API GET requests into SPA pages
 # or static files.
-_HTML_PAGES = ("index", "dashboard", "learn", "splash", "videos")
+_HTML_PAGES = ("index", "dashboard", "learn", "splash", "videos", "app", "auth")
 
 
 def _resolve_frontend(path: str) -> Optional[Path]:

@@ -29,3 +29,9 @@ frontend/out/
 # Splash build intermediates (source footage is re-downloadable)
 scripts/_splash_src/
 scripts/_splash_tmp/
+
+# Twin app build artifacts
+twin/.next/
+twin/out/
+twin/tsconfig.tsbuildinfo
+.agent_tmp/
