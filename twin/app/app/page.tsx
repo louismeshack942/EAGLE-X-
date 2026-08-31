@@ -53,13 +53,13 @@ useEffect(() => {
  async function poll() {
  try {
  const [t,dg,mk,it,pd,tc,ct] = await Promise.all([
- fetch(`/ticks/${symbol}?limit=40`).then((x) => x.json()).catch(() => null),
- fetch(`/digits/${symbol}?window=100`).then((x) => x.json()).catch(() => null),
- fetch(`/market-master/${symbol}?window=100`).then((x) => x.json()).catch(() => null),
- fetch(`/intelligence/${symbol}?window=100`).then((x) => x.json()).catch(() => null),
- fetch(`/digits/${symbol}/predictor?window=100`).then((x) => x.json()).catch(() => null),
- fetch(`/technical/${symbol}?window=100`).then((x) => x.json()).catch(() => null),
- fetch(`/digits/${symbol}/contract?window=100`).then((x) => x.json()).catch(() => null),
+ fetch(`/ticks/${symbol}?limit=40&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
+ fetch(`/digits/${symbol}?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
+ fetch(`/market-master/${symbol}?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
+ fetch(`/intelligence/${symbol}?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
+ fetch(`/digits/${symbol}/predictor?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
+ fetch(`/technical/${symbol}?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
+ fetch(`/digits/${symbol}/contract?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
  ]);
  if (alive) {
  if (t?.ticks?.length) setTicks(t);
