@@ -100,9 +100,8 @@ export default function CockpitPage() {
   Next suggestion reviews every 15 seconds.
   </div>
   </div>
-  </div>
 
- <div style={{ maxWidth: 1240, margin: "0 auto", padding: "16px 1rem 0", display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 1.4fr), minmax(280px, 0.6fr))" }}>
+ <div style={{ maxWidth: 1240, margin: "0 auto", padding: "16px 1rem 0", display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 1.4fr) minmax(280px, 0.6fr)" }}>
  <section className="card-glow" style={{ padding: "1rem" }}>
  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
  <h2 style={{ fontSize: ".78rem", fontWeight: 700, color: "var(--muted)", letterSpacing: ".08em" }}>LIVE TICK STREAM</h2>
