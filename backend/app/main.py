@@ -914,6 +914,13 @@ def cockpit_predict(symbol: str, window: int = 250,
                                   duration=duration, stake=stake)
 
 
+@app.get("/cockpit/fbi/{symbol}")
+def cockpit_fbi(symbol: str, window: int = 250,
+                duration: str = "5t", stake: float = 1.0):
+    return cockpit_engine.fbi(symbol, window=window,
+                              duration=duration, stake=stake)
+
+
 # ---------------- Bottom-Up Profitability Engine (the directive) ----------------
 def _bu_risk_blocked() -> bool:
     """§16: the risk engine has authority over the strategy engine."""

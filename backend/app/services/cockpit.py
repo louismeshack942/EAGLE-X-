@@ -353,6 +353,147 @@ class CockpitEngine:
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
+    def fbi(self, symbol: str, window: int = 250, duration: str = "5t", stake: float = 1.0) -> dict:
+        """FBI final verdict - per-digit OVER/UNDER probabilities plus an ENTRY digit.
+
+        Turns a coarse "OVER 5" into evidence-backed, per-digit confidence:
+        for every barrier d in 0..9 it returns P(next digit > d) and
+        P(next digit < d) with Wilson lower-bound confidence, breakeven-aware
+        edge (pp) and EV, then ranks the strongest OVER / UNDER plays and the
+        best single entry digit. Advisory only - never fires.
+        """
+        from math import sqrt
+        from app.services.analytics_advanced import digit_engine
+
+        window = max(20, int(window))
+        analysis = digit_engine.get_digit_analysis(symbol, window=window) or {}
+        freq = analysis.get("frequency") or {}
+        n = int(analysis.get("n") or 0)
+        if n <= 0:
+            return {
+                "symbol": symbol, "window": window, "duration": duration,
+                "verdict": "FAIR", "reason": "no tape", "n": 0,
+                "confidence_over": {"side": "OVER", "digit": None, "confidence": 0.0,
+                                    "observed_pct": 0.0, "breakeven_pct": 0.0,
+                                    "edge_pp": 0.0, "ev": 0.0, "playable": False},
+                "confidence_under": {"side": "UNDER", "digit": None, "confidence": 0.0,
+                                     "observed_pct": 0.0, "breakeven_pct": 0.0,
+                                     "edge_pp": 0.0, "ev": 0.0, "playable": False},
+                "entry": {"side": None, "digit": None, "confidence": 0.0,
+                          "observed_pct": 0.0, "breakeven_pct": 0.0,
+                          "edge_pp": 0.0, "ev": 0.0, "available": False},
+                "over_digits": [], "under_digits": [], "ranked": [],
+            }
+
+        def wilson_lb(p: float, n_: int) -> float:
+            # Wilson score lower bound (95%), two-sided z=1.96
+            z = 1.96
+            phat = p
+            denom = 1 + z * z / n_
+            center = (phat + z * z / (2 * n_)) / denom
+            margin = z * sqrt((phat * (1 - phat) + z * z / (4 * n_)) / n_) / denom
+            return max(0.0, min(1.0, center - margin))
+
+        # Per-digit Bayes-shrunk estimate (trustworthy share out of 10)
+        est = [float(freq.get(str(d), {}).get("estimate", 10.0)) / 100.0 for d in range(10)]
+        # Raw observed share (for the cumulative sums below use counts when available)
+        counts = [int(freq.get(str(d), {}).get("count", 0)) for d in range(10)]
+        if sum(counts) == 0:
+            counts = [int(round(e * n)) for e in est]
+
+        over_rows = []
+        under_rows = []
+        for d in range(10):
+            # P(digit > d) and P(digit < d) from observed digits
+            ob_over = sum(counts[k] for k in range(d + 1, 10)) / n
+            ob_under = sum(counts[k] for k in range(0, d)) / n
+            # breakeven for OVER barrier d (digits d+1..9 => 9-d-1+1 = 9-d outcomes)
+            n_over = 9 - d
+            n_under = d
+            payout_over = 10.0 / n_over if n_over else 10.0    # 1 => 10.0, 8=>1.25...
+            payout_under = 10.0 / n_under if n_under else 10.0
+            be_over = 100.0 / payout_over
+            be_under = 100.0 / payout_under
+            lb_over = wilson_lb(ob_over, n) * 100.0
+            lb_under = wilson_lb(ob_under, n) * 100.0
+            ev_over = (ob_over * payout_over) - 1.0
+            ev_under = (ob_under * payout_under) - 1.0
+            over_rows.append({
+                "digit": d, "barrier": d,
+                "observed_pct": round(ob_over * 100, 2),
+                "wilson_lb": round(lb_over, 2),
+                "breakeven_pct": round(be_over, 2),
+                "edge_pp": round(ob_over * 100 - be_over, 2),
+                "ev": round(ev_over, 4),
+                "playable": lb_over > be_over and ev_over > 0,
+            })
+            under_rows.append({
+                "digit": d, "barrier": d,
+                "observed_pct": round(ob_under * 100, 2),
+                "wilson_lb": round(lb_under, 2),
+                "breakeven_pct": round(be_under, 2),
+                "edge_pp": round(ob_under * 100 - be_under, 2),
+                "ev": round(ev_under, 4),
+                "playable": lb_under > be_under and ev_under > 0,
+            })
+
+        playable_over = [r for r in over_rows if r["playable"]]
+        playable_under = [r for r in under_rows if r["playable"]]
+        best_over = max(playable_over, key=lambda r: r["wilson_lb"]) if playable_over else None
+        best_under = max(playable_under, key=lambda r: r["wilson_lb"]) if playable_under else None
+
+        # ENTRY: single digit with the best EV across both families; tie-break by edge_pp
+        entry_pool = playable_over + playable_under
+        best_entry = max(entry_pool, key=lambda r: (r["ev"], r["edge_pp"])) if entry_pool else None
+
+        def fin(rows: List[dict], side: str) -> dict:
+            r = max(rows, key=lambda x: x["wilson_lb"]) if rows else None
+            return {
+                "side": side,
+                "digit": r["digit"] if r else None,
+                "confidence": r["wilson_lb"] if r else 0.0,
+                "observed_pct": r["observed_pct"] if r else 0.0,
+                "breakeven_pct": r["breakeven_pct"] if r else 0.0,
+                "edge_pp": r["edge_pp"] if r else 0.0,
+                "ev": r["ev"] if r else 0.0,
+                "playable": bool(r),
+                "top": r if r else None,
+            }
+
+        over_fin = fin(playable_over, "OVER")
+        under_fin = fin(playable_under, "UNDER")
+        entry_fin = {
+            "side": ("OVER" if best_entry and best_entry in over_rows else "UNDER") if best_entry else None,
+            "digit": best_entry["digit"] if best_entry else None,
+            "confidence": best_entry["wilson_lb"] if best_entry else 0.0,
+            "observed_pct": best_entry["observed_pct"] if best_entry else 0.0,
+            "breakeven_pct": best_entry["breakeven_pct"] if best_entry else 0.0,
+            "edge_pp": best_entry["edge_pp"] if best_entry else 0.0,
+            "ev": best_entry["ev"] if best_entry else 0.0,
+            "available": bool(best_entry),
+        }
+        reason = (
+            f"Tape n={n} · best OVER {over_fin['digit']} @ {over_fin['confidence']:.1f}% · "
+            f"best UNDER {under_fin['digit']} @ {under_fin['confidence']:.1f}% · "
+            f"ENTRY digit {entry_fin['digit']} "
+            + (f"({entry_fin['side']}, EV {entry_fin['ev']:+.3f}/$)" if entry_fin["available"] else "(no edge yet)")
+        )
+        verdict = "EDGE" if (over_fin["playable"] or under_fin["playable"]) else "FAIR"
+
+        ranked = sorted(
+            [dict(r, side="OVER") for r in over_rows if r["playable"]] +
+            [dict(r, side="UNDER") for r in under_rows if r["playable"]],
+            key=lambda r: r["wilson_lb"], reverse=True,
+        )
+
+        return {
+            "symbol": symbol, "window": window, "duration": duration, "stake": stake,
+            "verdict": verdict, "reason": reason, "n": n,
+            "confidence_over": over_fin, "confidence_under": under_fin,
+            "entry": entry_fin, "over_digits": over_rows, "under_digits": under_rows,
+            "ranked": ranked,
+        }
+
     @staticmethod
     def _parse_duration(duration: str) -> Tuple[int, str]:
 

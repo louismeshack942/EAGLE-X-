@@ -24,6 +24,31 @@ function Row({ l, v }: { l: string; v: string }) {
     </div>
   );
 }
+function FbiCard({ title, color, data }: { title: string; color: string; data: any }) {
+  const ok = data?.available === true || data?.playable === true;
+  const digit = data?.digit;
+  const conf = data?.confidence ?? 0;
+  return (
+    <div style={{ border: ok ? `1px solid ${color}` : "1px solid var(--border)", background: ok ? "rgba(40,209,124,0.06)" : "rgba(35,43,77,0.4)", borderRadius:12, padding:".8rem .9rem" }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+        <span style={{ fontWeight:800, fontSize:".92rem", color }}>{title}</span>
+        {digit != null ? (
+          <span className="chip" style={{ background:"rgba(185,102,255,0.16)", borderColor:"rgba(185,102,255,0.35)", color:"var(--primary)", fontWeight:800, fontSize:".95rem" }}>{digit}</span>
+        ) : (
+          <span className="chip" style={{ background:"rgba(242,197,24,0.12)", borderColor:"rgba(242,197,24,0.3)", color:"var(--warning)" }}>none</span>
+        )}
+      </div>
+      <div style={{ display:"grid", gap:6, fontSize:".76rem" }}>
+        <Row l="Confidence" v={`${conf >= 0 ? conf.toFixed(1) : "-"}%`} />
+        <Row l="Observed" v={data?.observed_pct != null ? `${data.observed_pct.toFixed(1)}%` : "-"} />
+        <Row l="Breakeven" v={data?.breakeven_pct != null ? `${data.breakeven_pct.toFixed(1)}%` : "-"} />
+        <Row l="Edge (pp)" v={data?.edge_pp != null ? `${data.edge_pp.toFixed(1)}` : "-"} />
+        <Row l="EV / $" v={data?.ev != null ? `${data.ev.toFixed(3)}` : "-"} />
+      </div>
+      {data?.side && <div style={{ marginTop:8, fontSize:".7rem", color:"var(--muted)" }}>{data.side}{digit != null ? ` ${digit}` : ""}{title === "ENTRY" && data.available ? " · READY" : title === "ENTRY" ? " · STAND DOWN" : ok ? " · PLAYABLE" : " · no edge"}</div>}
+    </div>
+  );
+}
 function smaVals(vals: number[], p: number): number[] {
   if (vals.length < p) return [];
   const out: number[] = [];
@@ -102,6 +127,23 @@ async function loadPredict(kind: "over" | "under" | "entry") {
   setPredictErr(e?.message ?? "Predict request failed");
  } finally {
   setPredictBusy(null);
+ }
+}
+const [fbi, setFbi] = useState<any>(null);
+const [fbiBusy, setFbiBusy] = useState(false);
+async function loadFbi() {
+ setFbiBusy(true);
+ setPredictErr(null);
+ try {
+  const res = await fetch(`/cockpit/fbi/${symbol}?window=100&duration=5t&stake=1`, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Empty response");
+  setFbi(data);
+ } catch (e: any) {
+  setPredictErr(e?.message ?? "FBI request failed");
+ } finally {
+  setFbiBusy(false);
  }
 }
 const tickList: any[] = ticks?.ticks ?? [];
@@ -432,6 +474,59 @@ return (
         </div>
        );
       })()
+     )}
+    </div>
+   )}
+  </section>
+  </div>
+ <div style={{ maxWidth:1240, margin:"0 auto", padding:"16px 1rem 0" }}>
+  <section className="card-glow" style={{ padding:"1rem" }}>
+   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+    <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>FBI FINAL VERDICT</h2>
+    <span className="chip chip-violet">final conclusion · entry point</span>
+   </div>
+   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
+    <button className="btn" disabled={fbiBusy} onClick={loadFbi}
+      style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,#e11d48,var(--accent))", color:"#fff", border:"none", opacity:fbiBusy ? .6 : 1 }}>⚡ FBI Verdict</button>
+    <button className="btn btn-ghost" onClick={() => { setFbi(null); setPredictErr(null); }}
+      style={{ padding:".5rem .9rem", fontSize:".8rem" }}>Clear</button>
+   </div>
+   {fbiBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Consulting the bureau…</div>}
+   {!fbi && !fbiBusy && (
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>One tap converts a coarse call (like "OVER 5") into a per-digit conclusion: the strongest OVER barrier, the strongest UNDER barrier, and a precise ENTRY digit — with confidence % and EV evidence.</div>
+   )}
+   {fbi && (
+    <div style={{ display:"grid", gap:12 }}>
+     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, border:"1px solid rgba(185,102,255,0.35)", background:"rgba(185,102,255,0.06)", borderRadius:12, padding:".7rem .9rem" }}>
+      <span style={{ fontWeight:800, fontSize:".95rem" }}>{fbi.verdict === "EDGE" ? "🎯 EDGE FOUND" : "FAIR · STAND DOWN"}</span>
+      <span className="chip chip-violet">n={fbi.n ?? "-"} · {fbi.symbol} · window {fbi.window}</span>
+     </div>
+     <div style={{ display:"grid", gap:10, gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr)))" }}>
+      <FbiCard title="OVER" color="var(--success)" data={fbi.confidence_over} />
+      <FbiCard title="UNDER" color="var(--accent)" data={fbi.confidence_under} />
+      <FbiCard title="ENTRY" color="#e11d48" data={fbi.entry} />
+     </div>
+     {fbi.reason && <div style={{ fontSize:".78rem", color:"var(--muted)", lineHeight:1.5 }}><b style={{ color:"var(--fg)" }}>Evidence: </b>{fbi.reason}</div>}
+     {(fbi.ranked?.length || 0) > 0 && (
+      <div>
+       <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>PER-DIGIT RANKING (WILSON LB)</div>
+       <div style={{ display:"grid", gap:4 }}>
+        {fbi.ranked.map((r: any, i: number) => (
+         <div key={i} style={{ display:"grid", gridTemplateColumns:"56px 40px 1fr 70px 70px", gap:8, alignItems:"center", fontSize:".72rem" }}>
+          <span style={{ color:"var(--muted)" }}>{r.side} {r.digit}</span>
+          <span className="chip chip-violet">{r.wilson_lb?.toFixed(1)}%</span>
+          <div style={{ background:"rgba(35,43,77,0.5)", borderRadius:999, height:10, overflow:"hidden" }}>
+           <div style={{ width:`${Math.min(100,Math.max(2,r.wilson_lb ?? 0))}%`, height:"100%", background:"linear-gradient(90deg,var(--accent),var(--primary))", borderRadius:999 }} />
+          </div>
+          <span style={{ fontFamily:"ui-monospace,monospace", color:"var(--muted)" }}>EV {r.ev?.toFixed(3)}</span>
+          <span style={{ fontFamily:"ui-monospace,monospace", color:"var(--muted)" }}>{r.edge_pp?.toFixed(1)}pp</span>
+         </div>
+        ))}
+       </div>
+      </div>
+     )}
+     {(fbi.ranked?.length || 0) === 0 && fbi.verdict === "FAIR" && (
+      <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>No digit clears its breakeven with significance on this tape. The bureau stays silent — no over, no under, no entry.</div>
      )}
     </div>
    )}
