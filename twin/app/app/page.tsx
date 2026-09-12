@@ -85,7 +85,7 @@ useEffect(() => {
  let alive = true;
  async function poll() {
  try {
- const [t,dg,mk,it,pd,tc,ct] = await Promise.all([
+ const [t,dg,mk,it,pd,tc,ct,fb] = await Promise.all([
  fetch(`/ticks/${symbol}?limit=40&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
  fetch(`/digits/${symbol}?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
  fetch(`/market-master/${symbol}?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
@@ -93,6 +93,7 @@ useEffect(() => {
  fetch(`/digits/${symbol}/predictor?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
  fetch(`/technical/${symbol}?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
  fetch(`/digits/${symbol}/contract?window=100&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
+ fetch(`/cockpit/fbi/${symbol}?window=100&duration=5t&stake=1&_cb=${Date.now()}`).then((x) => x.json()).catch(() => null),
  ]);
  if (alive) {
  if (t?.ticks?.length) setTicks(t);
@@ -102,6 +103,7 @@ useEffect(() => {
  if (pd?.candidate != null) setPred(pd);
  if (tc) setTech(tc);
  if (ct) setContract(ct);
+ if (fb?.verdict) setFbi(fb);
  setUpdatedAt(new Date().toLocaleTimeString([], { hour12:false }));
  }
  } catch {}
@@ -130,12 +132,12 @@ async function loadPredict(kind: "over" | "under" | "entry") {
  }
 }
 const [fbi, setFbi] = useState<any>(null);
-const [fbiBusy, setFbiBusy] = useState(false);
+const [fbiBusy, setFbiBusy] = useState<boolean>(false);
 async function loadFbi() {
  setFbiBusy(true);
  setPredictErr(null);
  try {
-  const res = await fetch(`/cockpit/fbi/${symbol}?window=100&duration=5t&stake=1`, { headers: { Accept: "application/json" } });
+  const res = await fetch(`/cockpit/fbi/${symbol}?window=100&duration=5t&stake=1&_cb=${Date.now()}`, { headers: { Accept: "application/json" } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = await res.json().catch(() => null);
   if (!data) throw new Error("Empty response");
@@ -493,7 +495,7 @@ return (
    </div>
    {fbiBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Consulting the bureau…</div>}
    {!fbi && !fbiBusy && (
-    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>One tap converts a coarse call (like "OVER 5") into a per-digit conclusion: the strongest OVER barrier, the strongest UNDER barrier, and a precise ENTRY digit — with confidence % and EV evidence.</div>
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Reading the live Deriv tape… the bureau publishes the strongest OVER digit, the strongest UNDER digit, and the precise ENTRY digit as soon as the market speaks.</div>
    )}
    {fbi && (
     <div style={{ display:"grid", gap:12 }}>

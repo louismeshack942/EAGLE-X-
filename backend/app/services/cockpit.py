@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from app.services.tick_recorder import tick_recorder
+
 logger = logging.getLogger(__name__)
 
 FAMILIES = ["ODD", "EVEN", "MATCHES", "DIFFERS", "OVER", "UNDER"]
@@ -363,16 +365,46 @@ class CockpitEngine:
         best single entry digit. Advisory only - never fires.
         """
         from math import sqrt
-        from app.services.analytics_advanced import digit_engine
+        from app.core.queue import tick_queue
 
         window = max(20, int(window))
-        analysis = digit_engine.get_digit_analysis(symbol, window=window) or {}
-        freq = analysis.get("frequency") or {}
-        n = int(analysis.get("n") or 0)
+        # Read the ACTUAL Deriv market: consume the persisted tape for this
+        # symbol and keep only ticks tagged `deriv_live`. If no live tape
+        # exists yet, fall back to the in-memory live queue; demo ticks are
+        # never allowed to drive the verdict.
+        keys = f"0123456789"
+        counts = {k: 0 for k in keys}
+        live_ticks = [t for t in tick_recorder.load(symbol, limit=max(2000, window * 4))
+                      if t.get("provider") == "deriv_live"]
+        if live_ticks:
+            rows = live_ticks[-window:]
+            for r in rows:
+                d = r.get("digit")
+                if d is not None and str(d) in keys:
+                    counts[str(d)] += 1
+        else:
+            for t in tick_queue.recent(symbol, limit=window):
+                d = getattr(t, "digit", None)
+                if d is not None and str(d) in keys and getattr(t, "provider", "demo") == "deriv_live":
+                    counts[str(d)] += 1
+        n = sum(counts.values())
+
+        # Build a synthetic digit analysis from the live counts (same shape
+        # the digit engine would return, so the rest of the math is shared).
+        freq = {}
+        PRIOR, PRIOR_STRENGTH = 0.10, 25.0
+        for k in keys:
+            c = counts[k]
+            raw = c / n if n else 0.0
+            shrunk = (c + PRIOR_STRENGTH * PRIOR) / (n + PRIOR_STRENGTH) if n else 0.0
+            freq[k] = {"count": c, "percent": round(raw * 100, 1),
+                       "estimate": round(shrunk * 100, 2)}
+
         if n <= 0:
             return {
                 "symbol": symbol, "window": window, "duration": duration,
-                "verdict": "FAIR", "reason": "no tape", "n": 0,
+                "verdict": "FAIR", "reason": "no live deriv tape", "n": 0,
+                "provider": "deriv_live",
                 "confidence_over": {"side": "OVER", "digit": None, "confidence": 0.0,
                                     "observed_pct": 0.0, "breakeven_pct": 0.0,
                                     "edge_pp": 0.0, "ev": 0.0, "playable": False},
@@ -488,7 +520,7 @@ class CockpitEngine:
 
         return {
             "symbol": symbol, "window": window, "duration": duration, "stake": stake,
-            "verdict": verdict, "reason": reason, "n": n,
+            "verdict": verdict, "reason": reason, "n": n, "provider": "deriv_live",
             "confidence_over": over_fin, "confidence_under": under_fin,
             "entry": entry_fin, "over_digits": over_rows, "under_digits": under_rows,
             "ranked": ranked,

@@ -18,11 +18,18 @@ SYM = "FBI_TEST_R_100"
 
 
 def _push(digits, symbol=SYM):
-    """Replace the queue tape for `symbol` with one cut of controlled digits."""
+    """Replace the queue tape for `symbol` with one cut of controlled digits.
+
+    Provider is `deriv_live` so the FBI path (which only computes on the
+    real Deriv market tape) accepts these ticks. Clear the persisted recorder
+    tape for this symbol first so `fbi()` does not pick up stale disk rows.
+    """
+    from app.services.tick_recorder import tick_recorder
     tick_queue.clear(symbol)
+    tick_recorder.purge(symbol)
     for d in digits:
         tick_queue.push(Tick(symbol=symbol, quote=float(d),
-                             raw={"digit": d},
+                             raw={"digit": d}, provider="deriv_live",
                              timestamp=datetime.now(timezone.utc)))
 
 
@@ -33,11 +40,25 @@ def _fbi(digits, window=100):
 
 class TestFbiHonestOnNoTape:
     def test_no_tape_is_fair_with_no_entry(self):
+        from app.services.tick_recorder import tick_recorder
         tick_queue.clear(SYM)
+        tick_recorder.purge(SYM)
         out = CockpitEngine().fbi(SYM, window=100)
         assert out["verdict"] == "FAIR"
         assert out["entry"]["available"] is False
         assert out["ranked"] == []
+
+    def test_demo_ticks_alone_never_produce_a_read(self):
+        # the FBI refuses to read a demo tape: only deriv_live counts.
+        from app.services.tick_recorder import tick_recorder
+        tick_queue.clear(SYM)
+        tick_recorder.purge(SYM)
+        for _ in range(80):
+            tick_queue.push(Tick(symbol=SYM, quote=7.0, raw={"digit": 7},
+                                 provider="demo", timestamp=datetime.now(timezone.utc)))
+        out = CockpitEngine().fbi(SYM, window=100)
+        assert out["verdict"] == "FAIR"
+        assert out["entry"]["available"] is False
 
 
 class TestFbiSkewedTape:
@@ -103,9 +124,11 @@ class TestFbiBarrierMath:
 
     def test_evidence_uses_wilson_lb_not_raw(self):
         # on thin tape, a 100% raw share should shrink under Wilson
+        from app.services.tick_recorder import tick_recorder
         tick_queue.clear(SYM)
+        tick_recorder.purge(SYM)
         for _ in range(5):
-            tick_queue.push(Tick(symbol=SYM, quote=7.0, raw={"digit": 7}))
+            tick_queue.push(Tick(symbol=SYM, quote=7.0, raw={"digit": 7}, provider="deriv_live"))
         out = CockpitEngine().fbi(SYM, window=20)  # window floor kicks in
         # raw P(digit>0) = 1.0 => wilson LB on n=5 for barrier 0
         # (1.0 -> LB ~ 0.478). So even a "perfect" 5-tick tape can't claim >90%.
