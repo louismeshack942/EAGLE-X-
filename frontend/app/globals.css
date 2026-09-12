@@ -29,21 +29,82 @@ a:hover { text-decoration: underline; }
   --shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
-::selection { background: rgba(88, 166, 255, 0.3); }
+:selection { background: rgba(88, 166, 255, 0.3); }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+:-webkit-scrollbar { width: 10px; height: 10px; }
+:-webkit-scrollbar-track { background: var(--bg); }
+:-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+:-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
 
 /* ---------- layout grids ---------- */
 .main-grid {
   display: grid;
-  gap: 1rem;
-  grid-template-columns: 1fr;
+  gap:  ​1rem;
+  grid-template-columns:​ 1fr;
 }
-@media (min-width: 640px) { .main-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1024px) { .main-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width:​ 640px) { .main-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width:​ 1024px) { .main-grid { grid-template-columns: repeat(3, 1fr); } }
+
+/* Denser one-scroll dashboard layouts — full-width rows, tighter gaps. */
+@media (min-width:​ 1200px) {
+  .main-grid-6 { grid-template-columns: repeat(6, 1fr); gap:​ 0.6rem; }
+}
+@media (min-width:​ 900px) and (max-width:​ 1199.98px) {
+  .main-grid-6 { grid-template-columns: repeat(3, 1fr); gap:​ 0.6rem; }
+}
+
+/* Compact cards in the dense 6-column strip — shrink padding, cap font,
+   cap body height so the panel scrolls internally instead of stretching the
+   dashboard (biggest scroll killer, and disable the entrance animation. */
+.main-grid-6 .ex-card { padding:​ 0.45rem​ 0.55rem; font-size:​ 0.72rem; animation:​ none; }
+.main-grid-6 .ex-card .ex-card-head { margin-bottom:​ 0.3rem; }
+.main-grid-6 .ex-card h3,
+.main-grid-6 .ex-card .ex-row { font-size:​ 0.72rem; }
+.main-grid-6 .ex-card>div:last-child { max-height:​ 150px; overflow:​ auto; padding-right:​ 4px; }
+.main-grid-6 .ex-card-wide { grid-column: span​ 6; max-height:​ none; }
+
+
+/* Full-width sections (Analysis Lab / Club) — keep the big tabbed cards
+wide instead of squeezing them into the 6-column strip. */
+.main-grid-wide {
+  grid-template-columns: 1fr;
+  max-width: 1600px;
+  margin: 0 auto;
+  gap: 0.75rem;
+}
+
+/* One-scroll extras: align strip cards to top so short cards don't stretch
+   the grid row, and cap the wide tabbed cards (Analysis Lab / Club)) so their
+   bodies scroll internally instead of stretching the page height. */
+.main-grid-6 { align-items: start; }
+.main-grid-wide .ex-card>div:last-child { max-height: 420px; overflow: auto; padding-right: 4px; }
+.main-grid-wide .ex-card-head { flex-wrap: wrap; }
+
+/* Sticky section quick-nav — jump straight to any dashboard block with one
+   click instead of scrolling through five pages. */
+.quick-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap:  ​0.4rem;
+  padding:​ 0.5rem 1.25rem;
+  background: rgba(10, 13, 18, 0.92);
+  border-bottom:​ 1px solid var(--border);
+  position: sticky;
+  top:​ 3.25rem;
+  z-index:​ 30;
+}
+.quick-nav button {
+  background: rgba(88, 166, 255,  ​0.1);
+  border:​ 1px solid rgba(88, 166, 255,​ 0.28);
+  color: var(--text);
+  border-radius:​ 6px;
+  padding:​ 0.28rem 0.7rem;
+  font-size:​ 0.74rem;
+  font-weight:​ 600;
+  cursor: pointer;
+}
+.quick-nav button:hover { background: rgba(88, 166, 255,​ 0.22); }
 
 /* ---------- header ---------- */
 .header-bar {
@@ -93,7 +154,7 @@ a:hover { text-decoration: underline; }
   text-transform: uppercase;
   color: var(--text);
 }
-.section-header::after {
+.section-header:after {
   content: "";
   flex: 1;
   height: 1px;
@@ -163,7 +224,7 @@ a:hover { text-decoration: underline; }
   line-height: 1.6;
   white-space: nowrap;
 }
-.ex-pill::before {
+.ex-pill:before {
   content: "";
   width: 6px;
   height: 6px;
@@ -178,7 +239,7 @@ a:hover { text-decoration: underline; }
 .ex-pill-neutral { background: rgba(139, 148, 158, 0.15); color: var(--muted); border: 1px solid rgba(139, 148, 158, 0.4); }
 .ex-pill-running { background: rgba(63, 185, 80, 0.18); color: var(--success); border: 1px solid rgba(63, 185, 80, 0.5); }
 .ex-pill-stopped { background: rgba(248, 81, 73, 0.18); color: var(--danger); border: 1px solid rgba(248, 81, 73, 0.5); }
-.ex-pill-pulse::before { animation: pulse-dot 1.6s ease infinite; }
+.ex-pill-pulse:before { animation: pulse-dot 1.6s ease infinite; }
 @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 
 /* ---------- rows ---------- */

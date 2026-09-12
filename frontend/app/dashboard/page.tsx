@@ -20,6 +20,7 @@ import SocialFeed from "@/components/panels/SocialFeed";
 import CopyTrading from "@/components/panels/CopyTrading";
 import Leaderboards from "@/components/panels/Leaderboards";
 import TradingRooms from "@/components/panels/TradingRooms";
+import CockpitPanel from "@/components/panels/CockpitPanel";
 import PortfolioManager from "@/components/panels/PortfolioManager";
 import RiskDashboard from "@/components/panels/RiskDashboard";
 import PerformanceAnalytics, { DiversificationAnalyzer } from "@/components/panels/PerformanceAnalytics";
@@ -116,9 +117,29 @@ export default function Dashboard() {
         </div>
       )}
 
+      <div className="quick-nav" role="navigation" aria-label="Dashboard sections">
+        {[
+          ["start", "🏆 Starting XI"],
+          ["lab", "🔬 Lab"],
+          ["club", "📣 Club"],
+          ["comp", "⚔️ Competition"],
+          ["bench", "🔄 Bench"],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       <main style={{ padding: "0 1rem 1rem" }}>
-        <SectionHeader emoji="🏆" title="Starting XI" sub="4-3-3" />
-        <div className="main-grid">
+        <section id="start" style={{ scrollMarginTop: "3.2rem" }}>
+        <SectionHeader emoji="🏆" title="Starting XI" sub="4-3-3 — compact strip, full read" />
+        <div className="main-grid main-grid-6">
+          <CockpitPanel symbol={symbol} />
           <VirtualBankPanel />
           <RiskEngine />
           <IntelligenceEnginePanel symbol={symbol} />
@@ -131,26 +152,34 @@ export default function Dashboard() {
           <TradePlanner />
           <AutoTraderPanel />
         </div>
+        </section>
 
+        <section id="lab" style={{ scrollMarginTop: "3.2rem" }}>
         <SectionHeader emoji="🔬" title="Analysis Lab" sub="The Truth Engine — real edge or no trade" />
-        <div className="main-grid">
+        <div className="main-grid main-grid-wide">
           <AnalysisLab />
         </div>
+        </section>
 
+        <section id="club" style={{ scrollMarginTop: "3.2rem" }}>
         <SectionHeader emoji="📣" title="The Club" sub="Manager · Board · News · Fans · Alerts" />
-        <div className="main-grid">
+        <div className="main-grid main-grid-wide">
           <ClubPanel />
         </div>
+        </section>
 
+        <section id="comp" style={{ scrollMarginTop: "3.2rem" }}>
         <SectionHeader emoji="⚔️" title="The Competition" sub="Speed · Digits · Analysis" />
-        <div className="main-grid">
+        <div className="main-grid main-grid-6">
           <TraderScriptPanel />
           <DigitHackerToolPanel symbol={symbol} />
           <ProTraderPanel symbol={symbol} />
         </div>
+        </section>
 
-        <SectionHeader emoji="🔄" title="Second XI" sub="Bench" />
-        <div className="main-grid">
+        <section id="bench" style={{ scrollMarginTop: "3.2rem" }}>
+        <SectionHeader emoji="🔄" title="Second XI" sub="Bench — compact cards, internal scroll" />
+        <div className="main-grid main-grid-6">
           <SessionRoom />
           <TradeJournal />
           <DigitHacker symbol={symbol} />
@@ -165,6 +194,7 @@ export default function Dashboard() {
           <PerformanceAnalytics />
           <DiversificationAnalyzer />
         </div>
+        </section>
       </main>
 
       <footer className="disclaimer">

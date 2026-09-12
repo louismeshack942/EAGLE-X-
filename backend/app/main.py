@@ -49,6 +49,7 @@ from app.services.super_profit import super_profit_engine
 from app.services.lightning import lightning_engine
 from app.services.eagle import eagle_engine
 from app.services.organism import organism
+from app.services.cockpit import cockpit_engine
 from app.services.shell import audit_log, real_trade_budget
 from datetime import datetime, timezone
 
@@ -889,6 +890,28 @@ def lab_recording(symbol: str, limit: int = 200):
 @app.delete("/lab/recordings/{symbol}")
 def lab_recording_purge(symbol: str):
     return {"removed": tick_recorder.purge(symbol)}
+
+
+# ---------------- Edge Cockpit (one-glance decision card) ----------------
+@app.get("/cockpit/{symbol}")
+def cockpit_decision(symbol: str, window: int = 250, family: str = "EVEN",
+                     duration: str = "5t", stake: float = 1.0):
+    return cockpit_engine.decision(symbol, window=window, family=family,
+                                    duration=duration, stake=stake)
+
+
+@app.get("/cockpit/backtest/{symbol}")
+def cockpit_backtest(symbol: str, window: int = 250, family: str = "EVEN",
+                     duration: str = "5t", stake: float = 1.0):
+    return cockpit_engine.backtest(symbol, window=window, family=family,
+                                   duration=duration, stake=stake)
+
+
+@app.get("/cockpit/predict/{symbol}")
+def cockpit_predict(symbol: str, window: int = 250,
+                    duration: str = "5t", stake: float = 1.0):
+    return cockpit_engine.predict(symbol, window=window,
+                                  duration=duration, stake=stake)
 
 
 # ---------------- Bottom-Up Profitability Engine (the directive) ----------------
