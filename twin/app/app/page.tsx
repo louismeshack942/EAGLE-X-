@@ -16,6 +16,14 @@ function fmt(v: any, d =2): string {
   if (v == null || Number.isNaN(Number(v))) return "-";
   return v.toLocaleString(undefined, { minimumFractionDigits:d, maximumFractionDigits:d });
 }
+function Row({ l, v }: { l: string; v: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+      <span style={{ color: "var(--muted)" }}>{l}</span>
+      <span style={{ fontFamily: "ui-monospace,monospace", color: "var(--fg)", fontWeight: 600 }}>{v}</span>
+    </div>
+  );
+}
 function smaVals(vals: number[], p: number): number[] {
   if (vals.length < p) return [];
   const out: number[] = [];
@@ -78,6 +86,24 @@ useEffect(() => {
  const iv = setInterval(poll, 15000);
  return () => { alive =false; clearInterval(iv); };
 }, [symbol]);
+const [predict, setPredict] = useState<any>(null);
+const [predictBusy, setPredictBusy] = useState<string | null>(null);
+const [predictErr, setPredictErr] = useState<string | null>(null);
+async function loadPredict(kind: "over" | "under" | "entry") {
+ setPredictBusy(kind);
+ setPredictErr(null);
+ try {
+  const res = await fetch(`/cockpit/predict/${symbol}?window=100&duration=5t&stake=1`, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Empty response");
+  setPredict({ kind, ...data });
+ } catch (e: any) {
+  setPredictErr(e?.message ?? "Predict request failed");
+ } finally {
+  setPredictBusy(null);
+ }
+}
 const tickList: any[] = ticks?.ticks ?? [];
 const quotes: number[] = [];
 tickList.forEach((t: any) => {
@@ -335,6 +361,81 @@ return (
  {tickList.length} live ticks · tape history,most recent first
  </div>
  </section>
+ </div>
+ <div style={{ maxWidth:1240, margin:"0 auto", padding:"16px 1rem 0" }}>
+  <section className="card-glow" style={{ padding:"1rem" }}>
+   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+    <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>PREDICT + ENTER</h2>
+    <span className="chip chip-live">advisory · Edge Cockpit</span>
+   </div>
+   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
+    <button className="btn" disabled={predictBusy !== null} onClick={() => loadPredict("over")}
+      style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,var(--primary),var(--accent))", color:"#fff", border:"none", opacity:predictBusy ? .6 : 1 }}>1. OVER</button>
+    <button className="btn" disabled={predictBusy !== null} onClick={() => loadPredict("under")}
+      style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,var(--accent),var(--primary))", color:"#fff", border:"none", opacity:predictBusy ? .6 : 1 }}>2. UNDER</button>
+    <button className="btn" disabled={predictBusy !== null} onClick={() => loadPredict("entry")}
+      style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,var(--success),#15803d)", color:"#fff", border:"none", opacity:predictBusy ? .6 : 1 }}>3. ENTRY</button>
+    <button className="btn btn-ghost" onClick={() => { setPredict(null); setPredictErr(null); }}
+      style={{ padding:".5rem .9rem", fontSize:".8rem" }}>Clear</button>
+   </div>
+   {predictBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Loading {predictBusy}…</div>}
+   {predictErr && <div style={{ fontSize:".76rem", color:"var(--danger)", marginBottom:8 }}>Predict error: {predictErr}</div>}
+   {!predict && !predictBusy && !predictErr && (
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Three separate reads on {symbol}: pick <b style={{ color:"var(--fg)" }}>OVER</b>, <b style={{ color:"var(--fg)" }}>UNDER</b> or <b style={{ color:"var(--fg)" }}>ENTRY</b>. Each is advisory; nothing is placed.</div>
+   )}
+   {predict && (
+    <div style={{ display:"grid", gap:10, gridTemplateColumns:"repeat(auto-fit,minmax(240px,1fr)))" }}>
+     {predict.kind === "over" || predict.kind === "under" ? (
+      (() => {
+       const side = predict.kind;
+       const c = predict?.[side] ?? {};
+       const ok = c.playable === true || c.verdict === "EDGE";
+       return (
+        <div style={{ border: ok ? "1px solid rgba(40,209,124,0.4)" : "1px solid var(--border)", background: ok ? "rgba(40,209,124,0.06)" : "rgba(35,43,77,0.4)", borderRadius:12, padding:".8rem .9rem" }}>
+         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+          <span style={{ fontWeight:800, fontSize:".92rem" }}>{side.toUpperCase()} · {symbol}</span>
+          <span className="chip" style={{ background: ok ? "rgba(40,209,124,0.16)" : "rgba(242,197,24,0.14)", color: ok ? "var(--success)" : "var(--warning)", fontWeight:700 }}>{ok ? "PLAYABLE" : c.verdict ?? "FAIR"}</span>
+         </div>
+         <div style={{ display:"grid", gap:6, fontSize:".76rem" }}>
+          <Row l="Observed" v={c?.observed_pct != null ? `${fmt(c.observed_pct,1)}%` : "-"} />
+          <Row l="Breakeven" v={c?.breakeven_pct != null ? `${fmt(c.breakeven_pct,1)}%` : "-"} />
+          <Row l="Edge (pp)" v={c?.edge_pp != null ? `${fmt(c.edge_pp,2)}` : "-"} />
+          <Row l="EV / $" v={c?.ev != null ? `${fmt(c.ev,3)}` : "-"} />
+          <Row l="Significance" v={c?.significant != null ? (c.significant ? "YES" : "no") : "-"} />
+          <Row l="Sample" v={c?.sample_n != null ? `${c.sample_n}` : "-"} />
+         </div>
+         {c?.explain && <div style={{ marginTop:8, fontSize:".72rem", color:"var(--muted)" }}>{c.explain}</div>}
+        </div>
+       );
+      })()
+     ) : (
+      (() => {
+       const e = predict?.entry ?? {};
+       const ok = e.available === true;
+       return (
+        <div style={{ border: ok ? "1px solid rgba(40,209,124,0.4)" : "1px solid var(--border)", background: ok ? "rgba(40,209,124,0.06)" : "rgba(35,43,77,0.4)", borderRadius:12, padding:".8rem .9rem" }}>
+         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+          <span style={{ fontWeight:800, fontSize:".92rem" }}>ENTRY · {symbol}</span>
+          <span className="chip" style={{ background: ok ? "rgba(40,209,124,0.16)" : "rgba(242,197,24,0.14)", color: ok ? "var(--success)" : "var(--warning)", fontWeight:700 }}>{ok ? "READY" : "STAND DOWN"}</span>
+         </div>
+         <div style={{ display:"grid", gap:6, fontSize:".76rem" }}>
+          <Row l="Direction" v={e?.direction ?? "-"} />
+          <Row l="Contract" v={e?.contract_type ?? "-"} />
+          <Row l="Candidate" v={e?.candidate != null ? `${e.candidate}` : "-"} />
+          <Row l="Stake" v={e?.stake != null ? `$${fmt(e.stake,2)}` : "-"} />
+          <Row l="Duration (ticks)" v={e?.duration_ticks != null ? `${e.duration_ticks}` : "-"} />
+          <Row l="Last quote" v={e?.last_quote != null ? `${e.last_quote}` : "-"} />
+          <Row l="Edge (pp)" v={e?.edge_pp != null ? `${fmt(e.edge_pp,2)}` : "-"} />
+          <Row l="EV / $" v={e?.ev != null ? `${fmt(e.ev,3)}` : "-"} />
+         </div>
+         {e?.explain && <div style={{ marginTop:8, fontSize:".72rem", color:"var(--muted)" }}>{e.explain}</div>}
+        </div>
+       );
+      })()
+     )}
+    </div>
+   )}
+  </section>
  </div>
  <footer style={{ maxWidth:1240, margin:"24px auto 0", padding:"0 1rem", borderTop:"1px solid rgba(35,43,77,0.5)" }}>
  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"1rem 0", fontSize:".74rem", color:"var(--muted-2)", flexWrap:"wrap", gap:8 }}>
