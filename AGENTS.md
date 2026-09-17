@@ -459,12 +459,15 @@ an empty body returns a clean FAIR card with no legs).
 
 Tests: `tests/test_cockpit_strategy.py` (33 tests). Suite: 410 passed.
 
-Note: the task brief pointed at `/tmp/new_strategy_block.py`, which did not
-exist in this environment, and the broken `strategy()` method was not present
-in the file either (cockpit.py compiled clean at HEAD). The block was authored
-to the spec and spliced in with the marker-based approach (find `def strategy(`,
-find the next `_parse_duration`, insert before its decorator). Verified after
-splicing: zero non-ASCII and zero doubled commas in the added lines.
+Note: `strategy()` did not exist at HEAD (`git show HEAD:...cockpit.py` has
+zero `def strategy`), so the composer was added rather than repaired. The
+block was spliced in with the marker-based approach (find `def strategy(`,
+find the next `_parse_duration`, insert before its decorator). Two real bugs
+were caught by the tests before commit: legs with no playable candidate were
+being dropped entirely (hiding evidence and letting `band_union` / `cover_all`
+lie), and `martingale.payout` reported `0.0` while `entry.payout` reported
+`None`. Both fixed. Verified after splicing: zero non-ASCII and zero doubled
+commas in the added lines (the 6/1 in cockpit.py are pre-existing baseline).
 
 The deployed frontend is `twin/` (the Pro Trader twin) - the root Dockerfile
 builds it in stage 1. `frontend/` (the video/learn build) is NOT shipped.
