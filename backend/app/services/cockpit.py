@@ -374,19 +374,33 @@ class CockpitEngine:
         # never allowed to drive the verdict.
         keys = f"0123456789"
         counts = {k: 0 for k in keys}
-        live_ticks = [t for t in tick_recorder.load(symbol, limit=max(2000, window * 4))
-                      if t.get("provider") == "deriv_live"]
-        if live_ticks:
-            rows = live_ticks[-window:]
-            for r in rows:
-                d = r.get("digit")
-                if d is not None and str(d) in keys:
-                    counts[str(d)] += 1
-        else:
-            for t in tick_queue.recent(symbol, limit=window):
+        # Merge every deriv_live row we have: the persisted tape (survives
+        # restarts) PLUS the in-memory queue (covers the just-ingested ticks
+        # that aren't on disk yet after tile rotation/boot). This keeps the bureau
+        # reading even the instant a fresh boot/rotation wipes the file.
+        def disk_live() -> List[str]:
+            out = []
+            for t in tick_recorder.load(symbol, limit=max(2000, window * 4)):
+                if t.get("provider") == "deriv_live":
+                    d = t.get("digit")
+                    if d is not None and str(d) in keys:
+                        out.append(str(d))
+            return out
+        def queue_live() -> List[str]:
+            out = []
+            for t in tick_queue.recent(symbol, limit=max(2000, window * 4)):
                 d = getattr(t, "digit", None)
                 if d is not None and str(d) in keys and getattr(t, "provider", "demo") == "deriv_live":
-                    counts[str(d)] += 1
+                    out.append(str(d))
+            return out
+        combined = disk_live()[-window:]
+        fill = queue_live()
+        if fill and len(combined) < window:
+            combined.extend(fill[-(window - len(combined)):])
+        combined = combined[-window:]
+        for d in combined:
+            if d in keys:
+                counts[d] += 1
         n = sum(counts.values())
 
         # Build a synthetic digit analysis from the live counts (same shape
