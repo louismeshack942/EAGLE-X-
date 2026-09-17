@@ -921,6 +921,19 @@ def cockpit_fbi(symbol: str, window: int = 250,
                               duration=duration, stake=stake)
 
 
+@app.post("/cockpit/strategy/{symbol}")
+def cockpit_strategy(symbol: str, body: dict):
+    """Compose a bundle of user predictions into one advisory card."""
+    return cockpit_engine.strategy(
+        symbol,
+        predictions=(body or {}).get("predictions"),
+        window=int((body or {}).get("window") or 100),
+        martingale_steps=int((body or {}).get("martingale_steps") or 2),
+        base_stake=float((body or {}).get("base_stake") or 1.0),
+        budget=float((body or {}).get("budget") or 100.0),
+    )
+
+
 # ---------------- Bottom-Up Profitability Engine (the directive) ----------------
 def _bu_risk_blocked() -> bool:
     """§16: the risk engine has authority over the strategy engine."""

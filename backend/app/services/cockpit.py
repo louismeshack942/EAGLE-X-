@@ -540,6 +540,200 @@ class CockpitEngine:
             "ranked": ranked,
         }
 
+
+    def strategy(self, symbol: str, predictions: Optional[List[dict]] = None,
+                 window: int = 100, martingale_steps: int = 2,
+                 base_stake: float = 1.0, budget: float = 100.0) -> dict:
+        """Compose a bundle of user predictions into one evidence-backed card.
+
+        Legs look like {"side": "UNDER", "barrier": 6}, {"side": "OVER",
+        "barrier": 8}, {"side": "PRED", "barrier": 4}. Every leg is priced
+        against the SAME live tape the FBI reads - this method calls self.fbi()
+        and never re-derives the tape math. The barrier defines the winning
+        digit band (OVER b -> b+1..9, UNDER b -> 0..b-1, PRED/MATCHES/EXACT/
+        DIGIT b -> {b}); the composer then picks the best PLAYABLE digit inside
+        that band (max EV, tie-break edge_pp), so a leg may execute a tighter
+        contract than the barrier it was asked for - never a wider one.
+        Exact-digit legs carry no FBI barrier row, so they stay unplayable by
+        construction: a MATCHES ticket is a 10% lottery, not an edge.
+
+        Returns the legs, their digit-band union, the best entry and a capped
+        doubling ladder filtered by the budget. Advisory only - it builds a
+        card, it never places a trade.
+        """
+        base = self.fbi(symbol, window=window, stake=base_stake)
+        n = int(base.get("n") or 0)
+        window = int(base.get("window") or window)
+        over_rows = base.get("over_digits") or []
+        under_rows = base.get("under_digits") or []
+
+        def band_for(side: str, barrier: int) -> List[int]:
+            if side == "OVER":
+                return list(range(barrier + 1, 10))
+            if side == "UNDER":
+                return list(range(0, barrier))
+            return [barrier]
+
+        def payout_for(side: str, band: List[int]) -> float:
+            # 10/winning-digit-count: the fair price of the band, the same basis
+            # the FBI uses for its own breakeven.
+            if side in ("OVER", "UNDER"):
+                return round(10.0 / len(band), 4) if band else 0.0
+            return 10.0
+
+        def best_row(side: str, band: List[int]) -> Optional[dict]:
+            """Best playable FBI row whose winning band sits inside this leg's band.
+
+            Only TIGHTER contracts qualify, never wider ones: OVER b accepts rows
+            OVER d with d >= b, UNDER b accepts UNDER d with d <= b. A leg may
+            therefore execute a tighter (better-paying) version of the requested
+            view, but never silently widens the user's bet into a cheaper one.
+            """
+            if side not in ("OVER", "UNDER"):
+                return None
+            pool = over_rows if side == "OVER" else under_rows
+            wanted = set(band)
+            inside = []
+            for r in pool:
+                if not r.get("playable"):
+                    continue
+                d = int(r.get("digit", -1))
+                row_band = band_for(side, d)
+                if not row_band or not set(row_band) <= wanted:
+                    continue
+                inside.append(r)
+            if not inside:
+                return None
+            return max(inside, key=lambda r: (float(r.get("ev") or 0.0),
+                                              float(r.get("edge_pp") or 0.0)))
+
+        legs: List[dict] = []
+        for pred in predictions or []:
+            if not isinstance(pred, dict):
+                continue
+            raw_side = str(pred.get("side") or "").strip().upper()
+            side = raw_side if raw_side in ("OVER", "UNDER") else "PRED"
+            try:
+                barrier = int(pred.get("barrier"))
+            except (TypeError, ValueError):
+                continue
+            if barrier < 0 or barrier > 9:
+                continue
+            band = band_for(side, barrier)
+            if not band:
+                continue  # OVER 9 / UNDER 0 win on nothing - not a contract.
+            row = best_row(side, band)
+            # A leg is ALWAYS reported so band_union/cover_all stay truthful even
+            # when nothing in it is playable. Unpriced legs fall back to the
+            # requested barrier, so the card still shows the contract the user
+            # asked for, marked unplayable.
+            digit = int(row["digit"]) if row else barrier
+            payout = (payout_for(side, band_for(side, digit)) if row
+                      else payout_for(side, band))
+            if payout <= 0:
+                continue
+            legs.append({
+                "leg": f"{side} {barrier}",
+                "side": side,
+                "barrier": barrier,
+                "band": band,
+                "digit": digit,
+                "payout": payout,
+                "confidence": float(row["wilson_lb"]) if row else 0.0,
+                "observed_pct": float(row["observed_pct"]) if row else 0.0,
+                "breakeven_pct": float(row["breakeven_pct"]) if row else round(100.0 / payout, 2),
+                "edge_pp": float(row["edge_pp"]) if row else 0.0,
+                "ev": float(row["ev"]) if row else 0.0,
+                "playable": bool(row),
+                "tightened": bool(row and digit != barrier),
+                "evidence": ("FBI barrier row" if row else
+                             "no playable FBI barrier row inside this band"),
+            })
+
+        playable_legs = [leg for leg in legs if leg["playable"]]
+        best = (max(playable_legs, key=lambda leg: (leg["ev"], leg["edge_pp"]))
+                if playable_legs else None)
+        entry = {
+            "leg": best["leg"] if best else None,
+            "side": best["side"] if best else None,
+            "barrier": best["barrier"] if best else None,
+            "digit": best["digit"] if best else None,
+            "confidence": best["confidence"] if best else 0.0,
+            "observed_pct": best["observed_pct"] if best else 0.0,
+            "breakeven_pct": best["breakeven_pct"] if best else 0.0,
+            "edge_pp": best["edge_pp"] if best else 0.0,
+            "ev": best["ev"] if best else 0.0,
+            "payout": best["payout"] if best else None,
+            "available": bool(best),
+        }
+
+        band_union = sorted({d for leg in legs for d in leg["band"]})
+        cover_all = band_union == list(range(10))
+        # n == 0 means there is no live tape: the card is FAIR and the entry stays
+        # unavailable - never price a phantom edge off an empty tape.
+        if n <= 0 or not playable_legs:
+            verdict = "TRAP" if (n > 0 and cover_all) else "FAIR"
+        else:
+            verdict = "EDGE"
+
+        requested_steps = max(1, int(martingale_steps))
+        steps = max(1, min(requested_steps, 5))
+        # The ladder prices off the ENTRY contract. With no entry there is no
+        # payout to recover against, so recovery_step2 stays None rather than
+        # inventing a number for a trade that does not exist.
+        entry_payout = float(entry["payout"]) if entry["payout"] else None
+        raw_stakes = [round(base_stake * (2 ** i), 2) for i in range(steps)]
+        stakes = [s for s in raw_stakes if s <= budget] or [round(base_stake, 2)]
+        martingale = {
+            "strategy": "doubling",
+            "steps": len(stakes),
+            "requested_steps": requested_steps,
+            "stakes": stakes,
+            "recovery_step2": (round(base_stake * entry_payout / (entry_payout - 1.0), 2)
+                               if entry_payout and entry_payout > 1.0 else None),
+            "capped": len(stakes) < len(raw_stakes),
+            "steps_capped": steps < requested_steps,
+            "base_stake": round(base_stake, 2),
+            "payout": entry_payout,
+            "budget": round(budget, 2),
+            "note": "Capped doubling only; recovery resizes losses, it never creates edge.",
+        }
+
+        return {
+            "symbol": symbol,
+            "window": window,
+            "n": n,
+            "provider": base.get("provider") or "deriv_live",
+            "verdict": verdict,
+            "reason": self._strategy_reason(base, legs, stakes),
+            "legs": legs,
+            "band_union": band_union,
+            "cover_all": cover_all,
+            "entry": entry,
+            "martingale": martingale,
+        }
+
+
+    @staticmethod
+    def _strategy_reason(base: dict, legs: List[dict], stakes: List[float]) -> str:
+        """One plain-English line for the composed card."""
+        n = int(base.get("n") or 0)
+        playable = [leg for leg in legs if leg.get("playable")]
+        ladder = ", ".join(f"${s:.2f}" for s in stakes) if stakes else "-"
+        if not legs:
+            head = "No legs supplied - nothing to compose."
+        elif n <= 0:
+            head = "No live deriv tape - the composer refuses to price a phantom edge."
+        elif playable:
+            top = max(playable, key=lambda leg: (leg["ev"], leg["edge_pp"]))
+            head = (f"Tape n={n} - {top['leg']} clears its breakeven by "
+                    f"{top['edge_pp']:+.1f}pp (confidence {top['confidence']:.1f}%, "
+                    f"EV {top['ev']:+.3f}/$).")
+        else:
+            head = (f"Tape n={n} - {len(legs)} leg(s) checked, none clears its "
+                    f"breakeven; the gate says stand down.")
+        return f"{head} Ladder {ladder}; advisory card only - nothing is placed."
+
     @staticmethod
     def _parse_duration(duration: str) -> Tuple[int, str]:
 

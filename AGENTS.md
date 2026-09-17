@@ -411,3 +411,60 @@ Standing order: the CF must NEVER stop. Four failure classes found and fixed:
   ~60s, 23 trades @ $1 completed without a single stop.
 
 Suite: 274 passed.
+
+
+## Cockpit strategy() bundle composer (2026-09-17)
+
+`CockpitEngine.strategy()` in `backend/app/services/cockpit.py` sits between
+`fbi()` and `_parse_duration()`. It composes a bundle of user predictions
+(`[{"side": "UNDER", "barrier": 6}, {"side": "OVER", "barrier": 8},
+{"side": "PRED", "barrier": 4}]`) into one advisory card.
+
+- **No duplicated tape math.** It calls `self.fbi()` and reads only
+  `over_digits` / `under_digits` / `n` / `provider`. Same live Deriv tape,
+  same gates.
+- **Winning-digit bands.** OVER b -> b+1..9, UNDER b -> 0..b-1,
+  PRED/MATCHES/EXACT/DIGIT b -> `{b}`. `band_union` is their sorted union;
+  `cover_all` is true when it spans all 10 digits.
+- **Tighten, never widen.** A leg picks the best playable FBI row whose own
+  band is a SUBSET of the requested band (OVER b accepts OVER d with d >= b;
+  UNDER b accepts UNDER d with d <= b), max EV then edge_pp. A leg may
+  execute a tighter, better-paying contract than asked - never a cheaper one.
+  `leg["tightened"]` flags it.
+- **Legs are always reported.** A leg with no playable candidate still
+  appears (digit falls back to the barrier, `playable: false`) so
+  `band_union` / `cover_all` cannot lie. OVER 9 and UNDER 0 are dropped -
+  their band is empty, they win on nothing.
+- **PRED legs are never playable.** No FBI barrier row prices an exact
+  digit: MATCHES is a 10% lottery, so it is reported and benched.
+- **Payout** = 10 / winning-digit-count (the same basis as the FBI
+  breakeven): OVER 8 -> 10, UNDER 6 -> 10/6.
+- **Verdict**: EDGE if any leg is playable; FAIR if `n == 0` (no live tape);
+  TRAP only when the band union covers all 10 digits and nothing is playable.
+- **Entry**: best playable leg by max EV, tie-break edge_pp, carrying leg /
+  side / barrier / digit / confidence / observed_pct / breakeven_pct /
+  edge_pp / ev / payout / available.
+- **Martingale ladder**: capped doubling, `steps = min(requested, 5)` with a
+  hard floor of 1, filtered to `<= budget` (falls back to `[base_stake]` when
+  nothing fits). `recovery_step2 = base_stake * payout / (payout - 1)` only
+  when a payout > 1 exists, else `None`; `capped` / `steps_capped` /
+  `payout` (mirrors entry) report what happened. Capped only - never
+  unlimited, and it never claims to create edge.
+- **Advisory only.** Builds a card, places nothing - like every other
+  cockpit method. No `place_payload` / `scheme_entry` in the output.
+
+Route: `POST /cockpit/strategy/{symbol}` with
+`{predictions, window, martingale_steps, base_stake, budget}` (all optional;
+an empty body returns a clean FAIR card with no legs).
+
+Tests: `tests/test_cockpit_strategy.py` (33 tests). Suite: 410 passed.
+
+Note: the task brief pointed at `/tmp/new_strategy_block.py`, which did not
+exist in this environment, and the broken `strategy()` method was not present
+in the file either (cockpit.py compiled clean at HEAD). The block was authored
+to the spec and spliced in with the marker-based approach (find `def strategy(`,
+find the next `_parse_duration`, insert before its decorator). Verified after
+splicing: zero non-ASCII and zero doubled commas in the added lines.
+
+The deployed frontend is `twin/` (the Pro Trader twin) - the root Dockerfile
+builds it in stage 1. `frontend/` (the video/learn build) is NOT shipped.
