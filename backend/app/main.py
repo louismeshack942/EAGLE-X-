@@ -213,6 +213,7 @@ class TradeBody(BaseModel):
     api_token: Optional[str] = None
     duration_unit: str = "t"
     digit: Optional[int] = None
+    allow_demo: bool = False
 
 
 class BacktestBody(BaseModel):
@@ -524,6 +525,22 @@ async def trade(body: TradeBody):
             "status": "error",
             "error": "No Deriv account connected. Use POST /auth/token or the OAuth connect flow.",
         }
+    # A demo (VRTC) account must never masquerade as real-money trading. The
+    # owner asked for live money; if the connected account is virtual, say so
+    # instead of quietly booking a pretend win.
+    if not body.allow_demo:
+        status = await VAULT.status()
+        loginid = str(status.get("loginid") or "")
+        if loginid.upper().startswith("VRTC"):
+            return {
+                "status": "error",
+                "error": (
+                    "The connected account is a DEMO (virtual) account — no real money "
+                    "would move. Connect a real-money account, or pass allow_demo=true "
+                    "to trade the demo deliberately."
+                ),
+                "account_type": "virtual",
+            }
     result = await deriv_trader.place_trade(
         symbol=body.symbol,
         contract_type=body.direction,
@@ -550,6 +567,110 @@ async def trade(body: TradeBody):
     if tilt:
         result["tilt_warning"] = tilt
     return result
+
+
+# ---------------- Live Account (real money) ----------------
+# The cockpit drives these. They are the bridge between "connected account"
+# and "money moved": account snapshot, live quote, and a live trade. Every
+# one refuses to fake anything — no token means an honest error, and a trade
+# only books once Deriv confirms the settlement.
+
+
+class LiveConnectBody(BaseModel):
+    token: str
+    app_id: Optional[str] = None
+
+
+@app.get("/live/account")
+async def live_account():
+    """Connected account snapshot + live balance. Balance is re-read from
+    Deriv when a token exists so the cockpit never shows a stale number."""
+    status = await VAULT.status()
+    if not status.get("connected"):
+        return {
+            "connected": False,
+            "live": False,
+            "mode": LIVE_STATE.mode,
+            "message": "No Deriv account connected. Connect a token to trade real money.",
+        }
+    token = await VAULT.get() or settings.deriv_api_token
+    balance = status.get("balance")
+    if token:
+        try:
+            fresh = await deriv_trader.get_balance(token)
+            if fresh is not None:
+                balance = fresh
+                await VAULT.set_balance(float(fresh))
+        except Exception as exc:  # never let a balance read break the UI
+            logger.warning("live/account balance refresh failed: %s", exc)
+    return {
+        "connected": True,
+        "live": True,
+        "loginid": status.get("loginid"),
+        "currency": status.get("currency") or "USD",
+        "account_id": status.get("account_id"),
+        "balance": balance,
+        "mode": LIVE_STATE.mode,
+    }
+
+
+@app.post("/live/account")
+async def live_connect(body: LiveConnectBody):
+    """Connect (or replace) the Deriv account used for real trading.
+
+    Delegates to the same all-or-nothing validation as /auth/token: on
+    failure the token is never stored."""
+    from app.api.auth import _validate_token  # local: avoid import cycle
+
+    try:
+        info = await _validate_token(body.token, body.app_id)
+    except Exception as exc:  # noqa: BLE001 — a bad token is a 400, not a 500
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not info or not info.get("loginid"):
+        raise HTTPException(status_code=400, detail="Deriv rejected this token.")
+    await VAULT.set(
+        body.token,
+        loginid=info.get("loginid"),
+        currency=info.get("currency"),
+        account_id=info.get("account_id"),
+        ws_url=info.get("ws_url"),
+        app_id=body.app_id,
+    )
+    if info.get("balance") is not None:
+        await VAULT.set_balance(float(info["balance"]))
+    bal = info.get("balance")
+    if bal is None:
+        try:
+            bal = await deriv_trader.get_balance(body.token)
+            if bal is not None:
+                await VAULT.set_balance(float(bal))
+        except Exception as exc:
+            logger.warning("live/account connect balance read failed: %s", exc)
+    return {
+        "connected": True,
+        "loginid": info.get("loginid"),
+        "currency": info.get("currency"),
+        "account_id": info.get("account_id"),
+        "balance": bal,
+    }
+
+
+@app.delete("/live/account")
+async def live_disconnect():
+    await VAULT.clear()
+    return {"connected": False}
+
+
+@app.get("/live/quote/{symbol}")
+async def live_quote(symbol: str, family: str = "MATCHES", digit: Optional[int] = None,
+                     stake: float = 1.0, duration: int = 5, duration_unit: str = "t"):
+    """The REAL payout Deriv is offering right now, plus the fair-odds
+    comparison. The cockpit prices every trade against this, never the
+    assumed payout table."""
+    return await deriv_trader.get_proposal(
+        symbol=symbol, contract_type=family, amount=stake,
+        duration=duration, duration_unit=duration_unit, digit=digit,
+    )
 
 
 # ---------------- Virtual Bank (the Treasurer) ----------------
@@ -1717,7 +1838,7 @@ _API_PREFIXES = (
     "/shell/", "/forge/", "/rivalry/", "/pro-trader/", "/lab/", "/club/",
     "/auto-trader/", "/risk/", "/intel/", "/market/", "/analytics/",
     "/truth/", "/vault/", "/settings/", "/users/", "/approvals/",
-    "/replay/", "/sessions/", "/posts/", "/rooms/", "/videos/",
+    "/replay/", "/sessions/", "/posts/", "/rooms/", "/videos/", "/live/",
 )
 
 

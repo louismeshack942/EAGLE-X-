@@ -271,6 +271,92 @@ class DerivTrader:
                     "status_label": poc.get("status"),
                 }
 
+    async def get_proposal(
+        self,
+        symbol: str,
+        contract_type: str,
+        amount: float = 1.0,
+        duration: int = 5,
+        duration_unit: str = "t",
+        digit: Optional[int] = None,
+        api_token: Optional[str] = None,
+    ) -> dict:
+        """Price a contract WITHOUT buying it — what Deriv would actually pay.
+
+        The assumed payout table is a guess; this is the real number. The
+        cockpit prices every trade here first so a trade is never offered at
+        a payout the market is not actually paying.
+
+        Returns {"status": "ok", "payout", "ask_price", "payout_multiple",
+        "breakeven_pct"} or {"status": "error", "error": ...}. NEVER raises.
+        """
+        try:
+            contract_fields = deriv_contract_params(contract_type, digit)
+        except ValueError as exc:
+            return {"status": "error", "step": "validate", "error": str(exc)}
+
+        api_token = (api_token or await VAULT.get() or self.settings.deriv_api_token or "").strip()
+        if not api_token:
+            return {"status": "error", "step": "connect", "error": "No Deriv token configured"}
+        try:
+            url = await self._url(api_token)
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "step": "connect", "error": str(exc)}
+
+        try:
+            async with websockets.connect(url, ping_interval=20, open_timeout=10) as ws:
+                if self._needs_authorize(url):
+                    auth_msg = await self._send_recv(ws, {"authorize": api_token})
+                    if "error" in auth_msg:
+                        return {"status": "error", "step": "authorize",
+                                "error": auth_msg["error"].get("message")}
+                    account = auth_msg.get("authorize") or {}
+                else:
+                    account = {}
+
+                req = {
+                    "proposal": 1,
+                    "amount": float(amount),
+                    "basis": "stake",
+                    "currency": (account or {}).get("currency") or "USD",
+                    "duration": int(duration),
+                    "duration_unit": duration_unit,
+                    **contract_fields,
+                }
+                if self._needs_authorize(url):
+                    req["symbol"] = symbol
+                else:
+                    req["underlying_symbol"] = symbol
+
+                prop_msg = await self._send_recv(ws, req)
+                if "error" in prop_msg:
+                    return {"status": "error", "step": "proposal",
+                            "error": prop_msg["error"].get("message")}
+                proposal = prop_msg.get("proposal", {})
+        except Exception as exc:  # noqa: BLE001
+            return {"status": "error", "step": "proposal", "error": str(exc)}
+
+        ask = float(proposal.get("ask_price") or amount or 1.0)
+        payout = proposal.get("payout")
+        multiple = None
+        breakeven = None
+        if payout is not None and ask > 0:
+            multiple = round(float(payout) / ask, 4)
+            if multiple > 0:
+                breakeven = round(100.0 / multiple, 2)
+        return {
+            "status": "ok",
+            "symbol": symbol,
+            "contract_type": proposal.get("contract_type") or contract_fields["contract_type"],
+            "ask_price": ask,
+            "payout": float(payout) if payout is not None else None,
+            "payout_multiple": multiple,
+            "breakeven_pct": breakeven,
+            "spot": proposal.get("spot"),
+            "source": "deriv_live",
+            "proposal_id": proposal.get("id"),
+        }
+
     async def place_trade(
         self,
         symbol: str,
