@@ -133,6 +133,20 @@ async function loadPredict(kind: "over" | "under" | "entry") {
 }
 const [fbi, setFbi] = useState<any>(null);
 const [fbiBusy, setFbiBusy] = useState<boolean>(false);
+const [band, setBand] = useState<any>(null);
+const [bandBusy, setBandBusy] = useState<boolean>(false);
+async function loadBand() {
+ setBandBusy(true);
+ try {
+  const res = await fetch(`/cockpit/band/${symbol}?window=100&duration=5t&stake=1&_cb=${Date.now()}`, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  setBand(await res.json());
+ } catch (e: any) {
+  setBand({ error: String(e?.message || e) });
+ } finally {
+  setBandBusy(false);
+ }
+}
 async function loadFbi() {
  setFbiBusy(true);
  setPredictErr(null);
@@ -550,6 +564,84 @@ return (
      )}
      {(fbi.ranked?.length || 0) === 0 && fbi.verdict === "FAIR" && (
       <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>No digit clears its breakeven with significance on this tape. The bureau stays silent — no over, no under, no entry.</div>
+     )}
+    </div>
+   )}
+  </section>
+ </div>
+ <div style={{ maxWidth:1240, margin:"0 auto", padding:"16px 1rem 0" }}>
+  <section className="card-glow" style={{ padding:"1rem" }}>
+   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+    <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>BAND PREDICTOR · OVER 3 → UNDER 8</h2>
+    <span className="chip chip-violet">68% confidence floor · entry digit</span>
+   </div>
+   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
+    <button className="btn" disabled={bandBusy} onClick={loadBand}
+      style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,#e11d48,var(--accent))", color:"#fff", border:"none", opacity:bandBusy ? .6 : 1 }}>🎯 Band Predictor</button>
+    <button className="btn btn-ghost" onClick={() => setBand(null)}
+      style={{ padding:".5rem .9rem", fontSize:".8rem" }}>Clear</button>
+   </div>
+   {bandBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Reading the band…</div>}
+   {!band && !bandBusy && (
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ranks every barrier from OVER 3 to UNDER 8 on the live tape and publishes only a play whose confidence clears 68%, together with the entry digit inside that exact band.</div>
+   )}
+   {band?.error && <div style={{ fontSize:".76rem", color:"var(--warning)" }}>Band read failed: {band.error}</div>}
+   {band && !band.error && (
+    <div style={{ display:"grid", gap:12 }}>
+     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, border:"1px solid rgba(185,102,255,0.35)", background:"rgba(185,102,255,0.06)", borderRadius:12, padding:".7rem .9rem" }}>
+      <span style={{ fontWeight:800, fontSize:".95rem" }}>{band.verdict === "EDGE" ? "🎯 BAND EDGE" : "FAIR · NO BAND"}</span>
+      <span className="chip chip-violet">n={band.n ?? "-"} · {band.symbol} · window {band.window}</span>
+     </div>
+     {band.band ? (
+      <div style={{ border:"1px solid var(--success)", background:"rgba(40,209,124,0.07)", borderRadius:12, padding:"1rem" }}>
+       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:10, marginBottom:10 }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+         <span style={{ fontWeight:800, fontSize:"1.35rem" }}>{band.band.side} {band.band.barrier}</span>
+         <span className="chip" style={{ background:"rgba(40,209,124,0.16)", borderColor:"rgba(40,209,124,0.4)", color:"var(--success)", fontWeight:800 }}>
+          {band.band.confidence?.toFixed(1)}% confidence
+         </span>
+        </div>
+        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+         <span style={{ fontSize:".7rem", color:"var(--muted-2)" }}>ENTRY DIGIT</span>
+         <span style={{ fontWeight:800, fontSize:"1.6rem", color:"#e11d48" }}>{band.entry?.digit ?? "-"}</span>
+        </div>
+       </div>
+       <div style={{ display:"grid", gap:6, gridTemplateColumns:"repeat(auto-fit,minmax(110px,1fr))", fontSize:".74rem" }}>
+        <Row l="Payout" v={`${band.band.payout?.toFixed(2)}x`} />
+        <Row l="Wins" v={`${band.band.winning_digits}/10 digits`} />
+        <Row l="Observed" v={`${band.band.observed_pct?.toFixed(1)}%`} />
+        <Row l="Breakeven" v={`${band.band.breakeven_pct?.toFixed(1)}%`} />
+        <Row l="Edge" v={`${band.band.edge_pp?.toFixed(1)}pp`} />
+        <Row l="EV / $" v={`${band.band.ev?.toFixed(3)}`} />
+        <Row l="Entry share" v={band.entry?.pct != null ? `${band.entry.pct.toFixed(1)}%` : "-"} />
+       </div>
+       {band.entry && band.entry.available && !band.entry.inside && (
+        <div style={{ marginTop:8, fontSize:".7rem", color:"var(--warning)" }}>The single digit is under 50% of the tape — the band carries the edge, not digit {band.entry.digit} alone.</div>
+       )}
+      </div>
+     ) : (
+      <div style={{ fontSize:".78rem", color:"var(--muted)", border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem" }}>
+       No barrier in {band.band_range?.min_barrier}..{band.band_range?.max_barrier} clears the {band.min_confidence_pct?.toFixed(0)}% floor on this tape. Standing down — no over, no under, no entry.
+      </div>
+     )}
+     {band.reason && <div style={{ fontSize:".78rem", color:"var(--muted)", lineHeight:1.5 }}><b style={{ color:"var(--fg)" }}>Evidence: </b>{band.reason}</div>}
+     {(band.bands?.length || 0) > 0 && (
+      <div>
+       <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>BAND RANKING · {band.band_range?.min_barrier}..{band.band_range?.max_barrier}</div>
+       <div style={{ display:"grid", gap:4 }}>
+        {band.bands.map((r: any, i: number) => (
+         <div key={i} style={{ display:"grid", gridTemplateColumns:"86px 66px 1fr 76px 66px", gap:8, alignItems:"center", fontSize:".72rem", opacity:r.playable ? 1 : .55 }}>
+          <span style={{ color:"var(--muted)" }}>{r.side} {r.barrier}</span>
+          <span className="chip chip-violet">{r.confidence?.toFixed(1)}%</span>
+          <div style={{ background:"rgba(35,43,77,0.5)", borderRadius:999, height:10, overflow:"hidden" }}>
+           <div style={{ width:`${Math.min(100,Math.max(2,r.confidence ?? 0))}%`, height:"100%", background:r.playable ? "linear-gradient(90deg,var(--success),var(--primary))" : "rgba(120,130,160,0.5)", borderRadius:999 }} />
+          </div>
+          <span style={{ fontFamily:"ui-monospace,monospace", color:"var(--muted)" }}>{r.payout?.toFixed(2)}x</span>
+          <span style={{ fontFamily:"ui-monospace,monospace", color:r.playable ? "var(--success)" : "var(--muted-2)" }}>{r.playable ? "PLAY" : "pass"}</span>
+         </div>
+        ))}
+       </div>
+      </div>
      )}
     </div>
    )}

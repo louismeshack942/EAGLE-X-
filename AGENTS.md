@@ -592,3 +592,44 @@ Deployed service `eaglex-backend-excn` (Render, frankfurt) had been trading
 placed, both losses, CF benched. The kill switch was engaged there first.
 
 Suite: 417 passed. `_patch.py` scratch file deleted.
+
+
+## Band Predictor (2026-09-20) — OVER 3..UNDER 8, 68% floor, entry digit
+
+Owner's spec: restrict OVER/UNDER to the middle band, attach the market's
+ENTRY digit at that exact prediction, and require confidence > 68%. Worked
+example: "over 3, entry digit 4, confidence 78%".
+
+`CockpitEngine.band_predict()` (`backend/app/services/cockpit.py`), route
+`GET /cockpit/band/{symbol}`, twin panel "BAND PREDICTOR · OVER 3 → UNDER 8".
+
+- **Band:** barriers **3..8**, both sides (so it spans OVER 3 .. UNDER 8).
+  Note UNDER 8 is the mirror of OVER 2, so taking both sides over 3..8 makes
+  the range symmetric — the user's "over 3 to under 8" read literally.
+- **Payout 10/winning-digits.** OVER 3 wins 4..9 (6 digits) -> 1.67x,
+  breakeven 60%. UNDER 8 wins 0..7 (8 digits) -> 1.25x, breakeven 80%. The
+  per-row `breakeven_pct` is the real bar; `BREAKEVEN_PCT` (90) is the Digit
+  Differs bar and is NOT what OVER/UNDER is judged against.
+- **Confidence = Wilson lower bound (95%)** of the observed band rate. This
+  is deliberately conservative: the owner said 78%, and raw-vs-Wilson diverge
+  a lot below n~200, so raw would have been the misleading number.
+- **Gate:** `confidence >= 68% AND ev > 0`. On a fair tape nothing clears it
+  and the verdict is FAIR — no trade, which is the correct answer.
+- **ENTRY digit = the winning digit adjacent to the barrier**: OVER b -> b+1,
+  UNDER b -> b-1. OVER 3 -> digit 4, exactly the owner's example. It is
+  reported with its own tape share, and `inside` is False when that single
+  digit is under 50% (an over 3 band can be 78% while digit 4 is only 12% —
+  the band carries the edge, not the one digit). This is surfaced, never
+  hidden.
+- **Ranking:** by confidence, tie-break EV. A "guard the user asked for"
+  (all barriers from b to the edge must also clear) was tried and REMOVED:
+  it is unsatisfiable, because OVER 9 has zero winning digits, so no OVER
+  band can ever be "closed". Do not re-add it.
+
+Verified live: `n=136 · UNDER 8 · 83.5% confidence · ENTRY digit 7 · EV +$0.121`.
+
+Tests: `tests/test_cockpit_band.py` (33 tests) incl. the owner's worked
+example pinned to observed 85% -> confidence ~78%. Suite: 450 passed.
+
+Still advisory — it builds a card and places nothing, like every cockpit
+method.

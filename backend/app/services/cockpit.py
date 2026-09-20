@@ -24,6 +24,16 @@ MIN_OBSERVED_PCT = 51.0
 MIN_EDGE_PCT = 3.0
 MIN_EV = 0.0
 BREAKEVEN_MARGIN = 1.0
+
+# Owner's band spec: rank OVER 3 .. UNDER 8 (the middle barriers, where the
+# payout is good enough to matter) and only publish a play whose confidence
+# clears this floor. `BREAKEVEN_PCT` is the Digit Differs bar (1 payout in 10
+# -> 90% to break even); it is NOT the bar for OVER/UNDER, whose real
+# breakeven is per-barrier and reported per row.
+BAND_MIN_BARRIER = 3
+BAND_MAX_BARRIER = 8
+MIN_CONFIDENCE_PCT = 68.0
+BREAKEVEN_PCT = 90.0
 _TICK_DIR = Path(__file__).resolve().parent / "data" / "ticks"
 
 
@@ -538,6 +548,161 @@ class CockpitEngine:
             "confidence_over": over_fin, "confidence_under": under_fin,
             "entry": entry_fin, "over_digits": over_rows, "under_digits": under_rows,
             "ranked": ranked,
+        }
+
+
+    def band_predict(self, symbol: str, window: int = 250, duration: str = "5t",
+                     stake: float = 1.0) -> dict:
+        """Owner's band spec: OVER 3..UNDER 8, confidence floor 68%, entry digit.
+
+        Ranks every barrier in the band (OVER 3..8 and UNDER 3..8) and
+        publishes the strongest play whose CONFIDENCE (Wilson lower bound at
+        95%) clears MIN_CONFIDENCE_PCT, together with the exact ENTRY digit
+        inside that band. Advisory only - it answers, it never fires.
+        """
+        from app.core.queue import tick_queue
+
+        window = max(20, int(window))
+
+        def digit_tape() -> List[str]:
+            """Live digits: disk tape first, then the in-memory queue.
+
+            Demo ticks are never allowed to drive the verdict - a synthetic
+            tape is what manufactured the phantom edges.
+            """
+            out: List[str] = []
+            for t in tick_recorder.load(symbol, limit=max(2000, window * 4)):
+                if t.get("provider") == "deriv_live":
+                    d = t.get("digit")
+                    if d is not None and 0 <= int(d) <= 9:
+                        out.append(str(int(d)))
+            if len(out) < window:
+                for t in tick_queue.recent(symbol, limit=max(2000, window * 4)):
+                    d = getattr(t, "digit", None)
+                    if (d is not None and 0 <= int(d) <= 9
+                            and getattr(t, "provider", "demo") == "deriv_live"):
+                        out.append(str(int(d)))
+            return out
+
+        def wilson_lb(p: float, n_: int, z: float = 1.96) -> float:
+            """Wilson score lower bound (95%) - the confidence we publish."""
+            if n_ <= 0:
+                return 0.0
+            denom = 1 + z * z / n_
+            center = (p + z * z / (2 * n_)) / denom
+            margin = z * ((p * (1 - p) + z * z / (4 * n_)) / n_) ** 0.5 / denom
+            return max(0.0, min(1.0, center - margin))
+
+        d_counts = {k: 0 for k in range(10)}
+        for d in digit_tape():
+            d_counts[int(d)] += 1
+        n = sum(d_counts.values())
+
+        def band_rows() -> Tuple[List[dict], List[dict]]:
+            """One row per barrier per side in the 3..8 band."""
+            overs: List[dict] = []
+            unders: List[dict] = []
+            if n <= 0:
+                return overs, unders
+            for b in range(BAND_MIN_BARRIER, BAND_MAX_BARRIER + 1):
+                wins_o = sum(d_counts[k] for k in range(b + 1, 10))
+                wins_u = sum(d_counts[k] for k in range(0, b))
+                outs_o, outs_u = 9 - b, b
+                # Payout over N winning digits is 10/N (OVER 3 -> 1.67x).
+                pay_o = 10.0 / outs_o if outs_o else 0.0
+                pay_u = 10.0 / outs_u if outs_u else 0.0
+                for side, wins, outs, pay in (("OVER", wins_o, outs_o, pay_o),
+                                              ("UNDER", wins_u, outs_u, pay_u)):
+                    p = wins / n
+                    be = 100.0 / pay if pay else 100.0
+                    conf = wilson_lb(p, n) * 100.0
+                    ev = p * pay - 1.0
+                    row = {
+                        "side": side, "barrier": b,
+                        "winning_digits": outs,
+                        "payout": round(pay, 4),
+                        "observed_pct": round(p * 100, 2),
+                        "confidence": round(conf, 2),
+                        "breakeven_pct": round(be, 2),
+                        "edge_pp": round(p * 100 - be, 2),
+                        "ev": round(ev, 4),
+                        "sample": n,
+                        "playable": conf >= MIN_CONFIDENCE_PCT and ev > 0,
+                    }
+                    (overs if side == "OVER" else unders).append(row)
+            return overs, unders
+
+        rows_over, rows_under = band_rows()
+        playable = [r for r in (rows_over + rows_under) if r["playable"]]
+        band = max(playable, key=lambda r: (r["confidence"], r["ev"])) if playable else None
+
+        def entry_digit_for(r: Optional[dict]) -> dict:
+            """The entry digit = the winning digit adjacent to the barrier.
+
+            OVER b wins on b+1..9, so the entry is b+1 (OVER 3 -> digit 4,
+            exactly the owner's example); UNDER b wins on 0..b-1, so it is b-1.
+            This is the tightest priced win in the band: the user is buying
+            "the tick lands on the digit just past the barrier", not the whole
+            span. `inside` is False when that digit's own rate is under 50%.
+            """
+            if not r:
+                return {"digit": None, "count": 0, "pct": 0.0, "confidence": 0.0,
+                        "wilson_lb": 0.0, "inside": False, "available": False}
+            b, side = r["barrier"], r["side"]
+            digit = b + 1 if side == "OVER" else b - 1
+            if not 0 <= digit <= 9:
+                return {"digit": None, "count": 0, "pct": 0.0, "confidence": 0.0,
+                        "wilson_lb": 0.0, "inside": False, "available": False}
+            c = d_counts[digit]
+            p = c / n if n else 0.0
+            return {
+                "digit": digit, "count": c,
+                "pct": round(p * 100, 2),
+                "confidence": round(p * 100, 2),
+                "wilson_lb": round(wilson_lb(p, n) * 100.0, 2) if n else 0.0,
+                "inside": p >= 0.5,
+                "available": True,
+            }
+
+        entry = entry_digit_for(band)
+        if band and entry["available"]:
+            band = dict(band, entry_digit=entry["digit"])
+
+        if band:
+            reason = (
+                f"Tape n={n} - band {band['side']} {band['barrier']} "
+                f"(wins {band['winning_digits']}/10 digits at {band['payout']}x) - "
+                f"confidence {band['confidence']:.1f}% vs breakeven "
+                f"{band['breakeven_pct']:.1f}% - EV {band['ev']:+.3f}/$ - "
+                f"ENTRY digit {entry['digit']} ({entry['confidence']:.1f}% of tape "
+                f"on its own digit)"
+                + ("" if entry["inside"] else " (under 50% - the band carries it, "
+                   "the single digit does not)")
+            )
+        else:
+            best = max([r["confidence"] for r in rows_over + rows_under] or [0.0])
+            reason = (
+                f"Tape n={n} - no band in {BAND_MIN_BARRIER}..{BAND_MAX_BARRIER} "
+                f"clears the {MIN_CONFIDENCE_PCT:.0f}% floor (best reading "
+                f"{best:.1f}%). The bureau stays silent - no over, no under."
+            )
+
+        return {
+            "symbol": symbol, "window": window, "duration": duration, "stake": stake,
+            "n": n, "provider": "deriv_live",
+            "verdict": "EDGE" if band else "FAIR",
+            "reason": reason,
+            "band_range": {"min_barrier": BAND_MIN_BARRIER,
+                           "max_barrier": BAND_MAX_BARRIER},
+            "min_confidence_pct": MIN_CONFIDENCE_PCT,
+            "breakeven_pct": BREAKEVEN_PCT,
+            "band": band,
+            "bands": sorted(rows_over + rows_under,
+                            key=lambda r: r["confidence"], reverse=True),
+            "over_bands": rows_over,
+            "under_bands": rows_under,
+            "entry": entry,
+            "ts": datetime.now(timezone.utc).isoformat(),
         }
 
 

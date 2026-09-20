@@ -1105,6 +1105,14 @@ def cockpit_fbi(symbol: str, window: int = 250,
                               duration=duration, stake=stake)
 
 
+@app.get("/cockpit/band/{symbol}")
+def cockpit_band(symbol: str, window: int = 250,
+                 duration: str = "5t", stake: float = 1.0):
+    """OVER 3..UNDER 8 band card with a 68% confidence floor + entry digit."""
+    return cockpit_engine.band_predict(symbol, window=window,
+                                       duration=duration, stake=stake)
+
+
 @app.post("/cockpit/strategy/{symbol}")
 def cockpit_strategy(symbol: str, body: dict):
     """Compose a bundle of user predictions into one advisory card."""
