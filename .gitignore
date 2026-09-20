@@ -28,3 +28,4 @@ twin/.next/
 twin/out/
 twin/tsconfig.tsbuildinfo
 .agent_tmp/
+.run/
