@@ -570,11 +570,22 @@ endpoint cannot place an order — a structural limit, not a policy one.
   front of the only `{"buy": ...}` send in the codebase).
 - twin's LIVE MONEY panel removed; the cockpit is read-only.
 
-**Kill switch is not enough on a stale deploy.** `POST /guard/kill` is
-persisted via `settings_store`, and `auto_trader` consults it per scan
-(line ~828) — but the deployed OLD code re-armed live trading on cold boot
-(`_autostart_cf` bypassed the route guard). Only deploying the new code fixes
-that; the kill switch is a stopgap.
+**Kill switch is not enough on a stale deploy — and it is NOT durable.**
+`POST /guard/kill` writes through `settings_store`, but that store is
+`backend/data/store.json` inside the container. Render's filesystem is
+ephemeral, so **every restart wipes the kill flag back to `killed: false`**.
+Observed live: after a restart `/guard` returned `killed: false` and the CF
+was back at `running: true, mode: live`. `auto_trader` does consult the guard
+per scan (line ~828, `KILL_SWITCH` sets `running=False`), and the old code
+does refuse live mode without a token — but on a service that already has
+`DERIV_API_TOKEN` set, a cold boot with `CF_AUTOSTART=live` re-arms real
+trading unattended. Only deploying this code fixes it.
+
+**Emergency mitigation available without a deploy** (verified in `start()`):
+clear `DERIV_API_TOKEN` (and `CF_AUTOSTART`) in the Render dashboard. The old
+code's `start()` refuses live mode when no token resolves
+(`"LIVE refused: no Deriv token connected"`), so the autostart ends up
+started-but-not-trading. Belt and braces: also clear `DERIV_PAT_APP_ID`.
 
 Deployed service `eaglex-backend-excn` (Render, frankfurt) had been trading
 **real money**: balance ~$11,789.80, `trading_enabled: true`, two real trades
