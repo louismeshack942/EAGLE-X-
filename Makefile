@@ -2,16 +2,16 @@
 
 install:
 	cd backend && pip install -r requirements.txt
-	cd frontend && npm install
+	cd twin && npm install
 
 test:
 	cd backend && python -m pytest tests/ -q
 
 build:
-	cd frontend && npm run build
+	cd twin && npm run build
 
 dev-backend:
 	cd backend && python -m uvicorn app.main:app --reload --port 8000
 
 dev-frontend:
-	cd frontend && npm run dev
+	cd twin && npm run dev

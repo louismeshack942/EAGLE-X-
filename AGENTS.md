@@ -42,14 +42,15 @@ frontend from the same origin. Single port, single health check, no proxy.
 This was a deliberate rebuild after repeated 502s caused by a two-service
 deployment (proxy, cross-service URLs, renamed services, wrong health checks).
 
-- `frontend/` — Next.js 14, `output: "export"` → static site in `frontend/out`.
-  All pages are client components; API calls are plain relative fetches
-  (same origin) via `lib/api.ts` (`apiGet/apiPost/apiPatch/apiDel/api/fmtUsd/API_BASE`).
+- `twin/` — Next.js 14, `output: "export"` → static site in `twin/out`. This is
+  the ONLY frontend (the old `frontend/` Starting-XI build was deleted).
+  Pages: `/` landing, `/auth`, `/app` (the cockpit); all client components;
+  API calls are plain relative fetches (same origin).
 - `backend/` — FastAPI. `app/main.py` holds all routes; a catch-all HTTP
   middleware (`serve_frontend`) converts 404 GETs into SPA pages/static files
   when `FRONTEND_DIR` is set. API routes resolve first (routes win over the
   middleware). `/api/*` 404s stay JSON.
-- `Dockerfile` (repo root) — multi-stage: node builds `frontend/out`, poetry
+- `Dockerfile` (repo root) — multi-stage: node builds `twin/out`, poetry
   installs backend deps, python runtime runs uvicorn with
   `FRONTEND_DIR=/app/frontend_static`. Port comes from `$PORT` (default 8000).
 - `render.yaml` — single service `eaglex`, frankfurt, free, healthCheckPath `/health`.
@@ -165,16 +166,8 @@ decimal precision and prefers the stamped digit when present.
 `backend/app/services/club.py` — Team Manager briefing, Board/Sponsors
 report, News Desk headlines, Fans chants, and market-trend Alerts, all
 derived from live analytics. Routes: `/club`, `/club/manager`, `/club/board`,
-`/club/news`, `/club/fans`, `/club/alerts`. Frontend panel:
-`frontend/components/panels/ClubPanel.tsx` (tab-based, on the dashboard).
+`/club/news`, `/club/fans`, `/club/alerts`.
 Tests: `test_club_endpoints` in `backend/tests/test_api.py`.
-
-## Videos
-
-`scripts/gen_videos.py` — Pillow slides + edge-tts narration (`JennyNeural`,
-rate -5%) + ffmpeg into MP4. Never espeak. `/videos/*.mp4` served statically;
-`videos.json` manifest drives the Video Hub UI list (elided titles, no
-"THE CLUB" naming).
 
 
 ## Bottom-Up Profitability Engine (2026-08-26 directive)
@@ -328,9 +321,9 @@ stays under the ceiling AND health/regime/meta gates pass.
 
 ## Commands
 
-- Frontend build: `cd frontend && npm run build` → `out/`
+- Frontend build: `cd twin && npm run build` → `twin/out`
 - Backend tests: `cd backend && ../backend/.venv/bin/python -m pytest tests/ -q` (51 tests)
-- Run unified locally: `cd backend && FRONTEND_DIR=$PWD/../frontend/out ../backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 12000`
+- Run unified locally: `cd backend && FRONTEND_DIR=$PWD/../twin/out ../backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 12000`
 
 ## Render traps (learned the hard way)
 
@@ -470,4 +463,5 @@ lie), and `martingale.payout` reported `0.0` while `entry.payout` reported
 commas in the added lines (the 6/1 in cockpit.py are pre-existing baseline).
 
 The deployed frontend is `twin/` (the Pro Trader twin) - the root Dockerfile
-builds it in stage 1. `frontend/` (the video/learn build) is NOT shipped.
+builds it in stage 1. It is now the ONLY frontend: the `frontend/` Starting-XI
+build (and its video/learn pages) was deleted.

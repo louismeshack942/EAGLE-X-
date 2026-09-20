@@ -5,7 +5,7 @@ Trading intelligence platform for Deriv synthetic indices (R_10, R_25, R_50, R_7
 ## Architecture
 
 ```
-frontend/  Next.js 14 (dashboard, splash, learn, videos)
+twin/      Next.js 14 (landing, auth, cockpit app)
 backend/   FastAPI + async tick ingestion, analytics, auto-trader
 ```
 

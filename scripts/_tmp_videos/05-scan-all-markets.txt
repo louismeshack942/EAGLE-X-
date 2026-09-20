@@ -1,2 +1,0 @@
-file '/workspace/eagle-x/scripts/_tmp_videos/05-scan-all-markets-0.mp4'
-file '/workspace/eagle-x/scripts/_tmp_videos/05-scan-all-markets-1.mp4'

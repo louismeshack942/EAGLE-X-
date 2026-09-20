@@ -1,2 +1,0 @@
-file '/workspace/eagle-x/scripts/_tmp_videos/07-place-differs-trade-0.mp4'
-file '/workspace/eagle-x/scripts/_tmp_videos/07-place-differs-trade-1.mp4'

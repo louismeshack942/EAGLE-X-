@@ -1,6 +1,6 @@
 #!/bin/bash
 cd /workspace/project/EAGLE-X-/backend
-export FRONTEND_DIR=/workspace/project/EAGLE-X-/frontend/out
+export FRONTEND_DIR=/workspace/project/EAGLE-X-/twin/out
 mkdir -p /workspace/project/EAGLE-X-/.run
 LOG=/workspace/project/EAGLE-X-/.run/eaglex.log
 while true; do

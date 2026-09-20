@@ -9,8 +9,6 @@ backend/data/
 # Node
 node_modules/
 .next/
-frontend/node_modules/
-frontend/.next/
 
 # Env
 .env
@@ -24,11 +22,6 @@ frontend/.next/
 
 # OS
 .DS_Store
-frontend/out/
-
-# Splash build intermediates (source footage is re-downloadable)
-scripts/_splash_src/
-scripts/_splash_tmp/
 
 # Twin app build artifacts
 twin/.next/
