@@ -465,3 +465,39 @@ commas in the added lines (the 6/1 in cockpit.py are pre-existing baseline).
 The deployed frontend is `twin/` (the Pro Trader twin) - the root Dockerfile
 builds it in stage 1. It is now the ONLY frontend: the `frontend/` Starting-XI
 build (and its video/learn pages) was deleted.
+
+## Live-money cockpit (2026-09-20)
+
+`twin/` could analyse but not trade — zero POST calls, no account UI. The
+live path now exists end to end:
+
+- `deriv_trader.get_proposal()` prices a contract WITHOUT buying it
+  (payout / ask_price / implied multiple / breakeven). This is the number
+  Deriv is actually paying; `DEFAULT_PAYOUTS` in pro_trader.py is only a
+  guess and must not price a real order.
+- Routes: `GET/POST/DELETE /live/account`, `GET /live/quote/{symbol}`.
+  Connect reuses `auth._validate_token` (all-or-nothing — a bad token is
+  never stored) and surfaces its failure as HTTP 400, not a 500.
+  `GET /live/account` re-reads the balance from Deriv every call.
+- `POST /trade` now REFUSES a VRTC (demo) account unless
+  `allow_demo=true` — the owner trades real money, so a virtual account
+  must never quietly book a pretend win. `TradeBody.allow_demo` is the
+  escape hatch.
+- `/live/` is in `_API_PREFIXES` so unknown `/live/*` stays JSON 404.
+- twin's LIVE MONEY panel: connect, REAL MONEY/DEMO badge, live balance,
+  stake/ticks, six manual contracts + "Trade FBI ENTRY", a confirmation
+  dialog per order, settled P&L, and the live autopilot toggle.
+
+**Known gap (deliberate):** the auto-trader's live path still sizes on the
+assumed payout table, not `/live/quote`. Before trusting live autopilot,
+wire proposals through the CF. Manual trading is the honest path today.
+
+**Paper numbers are not evidence.** The 279-entry journal is 100% paper; the
+paper simulator in `auto_trader._simulate_contract_outcome` adds the
+strategy's *claimed* edge straight into the win probability, so it can
+never discover a fake edge. Two payout inconsistencies live in that data:
+`PAYOUTS` in market_master.py quotes plain OVER/UNDER at 1.94 while
+`_digit_payout` (the repo's own formula, `(1-edge)/p_fair`) says OVER 2 =
+1.41 and OVER 4 = 1.97. The journal also contains an OVER batch settled at
+1.95 and a MATCHES batch settled at 1.10 (should be ~9). Do not read
+profitability into any of it.
