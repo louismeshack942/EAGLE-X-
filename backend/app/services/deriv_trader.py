@@ -374,7 +374,23 @@ class DerivTrader:
         if any step failed — an error never masquerades as a win or a loss.
         NEVER raises: callers (the /trade endpoint, the CF loop) must get a
         structured rejection, not a 500 or a dead task.
+
+        ANALYSIS-ONLY: refuses before any network call. This sits directly in
+        front of the only {"buy": ...} send in the codebase, so it is the
+        last line of defence no matter which caller reached it.
         """
+        if self.settings.analysis_only:
+            logger.warning(
+                "ANALYSIS-ONLY: place_trade refused at the last line of defence "
+                "(%s %s, $%.2f) — no order sent",
+                symbol, contract_type, amount,
+            )
+            return {
+                "status": "error",
+                "step": "analysis_only",
+                "error": "ANALYSIS-ONLY deployment: order placement disabled at source.",
+                "analysis_only": True,
+            }
         try:
             return await self._execute_trade(
                 symbol=symbol, contract_type=contract_type, amount=amount,

@@ -35,6 +35,12 @@ class GeoRestrictedError(ConnectionError):
     """Deriv refuses all symbols for this egress IP (e.g. US clients)."""
 
 
+# Credential-free public market-data endpoint. Streams the synthetic board
+# from any region (the generic ws.derivws.com endpoint geo-blocks) and cannot
+# place orders, so it is the correct feed for an analysis-only deployment.
+PUBLIC_WS_URL = "wss://api.derivws.com/trading/v1/options/ws/public"
+
+
 class LiveState:
     """Connection/mode bookkeeping shared across the app."""
 
@@ -76,18 +82,25 @@ class DerivClient:
         self.authorized = False
 
     async def _connect(self) -> bool:
-        """Resolve the URL via the trader, which mints a FRESH account OTP.
+        """Resolve the URL. ANALYSIS-ONLY deployments use the PUBLIC endpoint.
 
-        The generic endpoint (wss://ws.derivws.com) geo-blocks entire regions
-        (serves zero synthetic symbols to DE/US egress). The OTP URL
-        (wss://api.derivws.com/trading/v1/options/ws/...?otp=...) decides by
-        the authorized ACCOUNT instead — the same egress IP that got
-        InvalidSymbol on the generic endpoint streams real ticks once the
-        account's OTP URL is used. OTP URLs are single-use, so resolve a
-        fresh one per connection; fall back to the generic endpoint when no
-        account is connected (or minting fails).
+        wss://api.derivws.com/trading/v1/options/ws/public needs NO
+        authentication and NO OTP — it streams the full 41-symbol synthetic
+        board (verified: R_100 ticks, 89 active_symbols) even from an egress
+        that the generic endpoint geo-blocks outright. That is exactly what an
+        analysis-only deployment wants: real ticks, zero credentials on the
+        box. It also cannot place an order, so it is a hard structural limit,
+        not a policy one.
+
+        When trading is deliberately re-enabled we fall back to the account
+        OTP path (the public endpoint is market-data only).
         """
         try:
+            if self.settings.analysis_only:
+                self.ws = await websockets.connect(
+                    PUBLIC_WS_URL, ping_interval=20, ping_timeout=10, open_timeout=10
+                )
+                return True
             token = await resolve_token()
             url = await deriv_trader._url(token)
             self.ws = await websockets.connect(url, ping_interval=20, ping_timeout=10, open_timeout=10)
@@ -107,12 +120,20 @@ class DerivClient:
             pass
 
     async def authorize(self) -> bool:
-        """Optional: only needed for trading. Market data streams regardless."""
+        """Optional: only needed for trading. Market data streams regardless.
+
+        ANALYSIS-ONLY: when settings.analysis_only is set we authorize with
+        read_only=1. That is a SERVER-SIDE lock — Deriv itself refuses any
+        buy on this session, so it holds even if our own guard were bypassed.
+        """
         token = await resolve_token()
         if not self.ws or not token:
             return False
         try:
-            await self.ws.send(json.dumps({"authorize": token}))
+            payload = {"authorize": token}
+            if self.settings.analysis_only:
+                payload["read_only"] = 1
+            await self.ws.send(json.dumps(payload))
             raw = await asyncio.wait_for(self.ws.recv(), timeout=10)
             msg = json.loads(raw)
             if "error" in msg:
@@ -143,7 +164,11 @@ class DerivClient:
 
         await self._detect_country()
         # Authorize when a token exists — but never block market data on it.
-        await self.authorize()
+        # The public endpoint is unauthenticated: there is no account session
+        # to authorize, and sending a token would only draw an error. Skipping
+        # it is what makes this feed credential-free.
+        if not self.settings.analysis_only:
+            await self.authorize()
 
         for symbol in symbols:
             await self._subscribe(symbol)
@@ -201,11 +226,16 @@ async def stream_lifecycle(
     The live connection is re-probed periodically even while demo runs.
     """
     client = DerivClient()
+    settings = get_settings()
     while True:
         # Live-only mode: once a token is configured (env or vault), demo
         # ticks are NEVER emitted — a fake tape is worse than an honest
-        # "reconnecting" state. Without any token, demo is all there is.
-        token_configured = bool(await resolve_token())
+        # "reconnecting" state. ANALYSIS-ONLY deployments are likewise
+        # live-only: the public feed needs no token, so the absence of one
+        # says nothing about live availability, and falling back to the GBM
+        # generator would silently manufacture the fake digits this system
+        # has already been burned by once.
+        token_configured = bool(await resolve_token()) or settings.analysis_only
         try:
             async for tick in client.stream(symbols):
                 on_tick(tick)

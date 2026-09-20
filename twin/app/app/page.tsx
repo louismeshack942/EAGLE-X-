@@ -149,82 +149,13 @@ async function loadFbi() {
  }
 }
 
-// ---------------- LIVE MONEY (real Deriv account) ----------------
-// Manual trading first: connect, see the real balance, place one real trade
-// and read the real settlement. Cashout and autopilot come after this.
-type LiveAcct = { connected: boolean; live?: boolean; loginid?: string; currency?: string;
-  balance?: number | null; account_id?: string; mode?: string; message?: string };
+// ---------------- ANALYSIS ONLY ----------------
+// This deployment connects no Deriv account and places no orders. The whole
+// live-money surface (token connect, balance, order buttons, autopilot) was
+// removed rather than hidden: the backend refuses order placement at source,
+// so leaving trade UI here would be a lie. The cockpit reads the tape and
+// reports. See AGENTS.md "Analysis-only deployment".
 
-const [acct, setAcct] = useState<LiveAcct | null>(null);
-const [acctErr, setAcctErr] = useState<string | null>(null);
-const [tokenInput, setTokenInput] = useState<string>("");
-const [appIdInput, setAppIdInput] = useState<string>("");
-const [connBusy, setConnBusy] = useState<boolean>(false);
-const [stake, setStake] = useState<number>(1);
-const [dur, setDur] = useState<number>(5);
-const [tradeBusy, setTradeBusy] = useState<boolean>(false);
-const [lastTrade, setLastTrade] = useState<any>(null);
-const [liveErr, setLiveErr] = useState<string | null>(null);
-
-async function loadAccount() {
- try {
-  const res = await fetch(`/live/account?_cb=${Date.now()}`, { headers: { Accept: "application/json" } });
-  const data = await res.json().catch(() => null);
-  if (data) { setAcct(data); setAcctErr(null); }
- } catch (e: any) { setAcctErr(e?.message ?? "account read failed"); }
-}
-
-async function connectAccount() {
- setConnBusy(true); setLiveErr(null); setAcctErr(null);
- try {
-  const res = await fetch("/live/account", {
-   method: "POST",
-   headers: { "Content-Type": "application/json", Accept: "application/json" },
-   body: JSON.stringify({ token: tokenInput.trim(), app_id: appIdInput.trim() || null }),
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
-  setTokenInput(""); setAppIdInput("");
-  await loadAccount();
- } catch (e: any) {
-  setAcctErr(e?.message ?? "connect failed");
- } finally { setConnBusy(false); }
-}
-
-async function disconnectAccount() {
- setConnBusy(true);
- try { await fetch("/live/account", { method: "DELETE" }); await loadAccount(); }
- catch (e: any) { setAcctErr(e?.message ?? "disconnect failed"); }
- finally { setConnBusy(false); }
-}
-
-async function placeLiveTrade(side: string, digit: number | null) {
- if (!acct?.connected) { setLiveErr("Connect a Deriv account first."); return; }
- if (!confirm(`PLACE REAL TRADE\n\n${side}${digit != null ? " " + digit : ""} on ${symbol}\nStake: $${stake.toFixed(2)}\n\nThis uses real money. Continue?`)) return;
- setTradeBusy(true); setLiveErr(null); setLastTrade(null);
- try {
-  const res = await fetch("/trade", {
-   method: "POST",
-   headers: { "Content-Type": "application/json", Accept: "application/json" },
-   body: JSON.stringify({
-    symbol, direction: side, amount: stake,
-    duration: dur, duration_unit: "t", digit: digit ?? null,
-   }),
-  });
-  const data = await res.json().catch(() => null);
-  if (!data) throw new Error("empty response");
-  if (data.status === "error") throw new Error(data.error || `failed at ${data.step || "?"}`);
-  setLastTrade(data);
-  await loadAccount();
- } catch (e: any) {
-  setLiveErr(e?.message ?? "trade failed");
- } finally { setTradeBusy(false); }
-}
-
-// The autopilot toggle is deliberately absent: the auto-trader is
-// adviser-only, so there is no live autopilot to arm from this cockpit.
-
-useEffect(() => { loadAccount(); }, []);
 const tickList: any[] = ticks?.ticks ?? [];
 const quotes: number[] = [];
 tickList.forEach((t: any) => {
@@ -344,107 +275,16 @@ return (
  </div>
  </div>
  <div style={{ maxWidth:1240, margin:"0 auto", padding:"16px 1rem 0" }}>
- <section className="card-glow" style={{ padding:"1rem", border:"1px solid rgba(40,209,124,0.35)" }}>
-  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
-   <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--success)", letterSpacing:".08em" }}>LIVE MONEY · REAL DERIV ACCOUNT</h2>
-   {acct?.connected
-    ? <span className="chip" style={{ background:acct.loginid?.toUpperCase().startsWith("VRTC") ? "rgba(242,197,24,0.14)" : "rgba(40,209,124,0.14)", borderColor:acct.loginid?.toUpperCase().startsWith("VRTC") ? "rgba(242,197,24,0.4)" : "rgba(40,209,124,0.45)", color:acct.loginid?.toUpperCase().startsWith("VRTC") ? "var(--warning)" : "var(--success)", fontWeight:800 }}>
-      {acct.loginid?.toUpperCase().startsWith("VRTC") ? "DEMO ACCOUNT" : "REAL MONEY"}</span>
-    : <span className="chip" style={{ color:"var(--muted)" }}>not connected</span>}
+ <section className="card-glow" style={{ padding:"1rem", border:"1px solid rgba(185,102,255,0.35)" }}>
+  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+   <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--primary)", letterSpacing:".08em" }}>ANALYSIS ONLY - NO TRADING</h2>
+   <span className="chip" style={{ background:"rgba(185,102,255,0.14)", borderColor:"rgba(185,102,255,0.4)", color:"var(--primary)", fontWeight:800 }}>orders disabled</span>
   </div>
-
-  {liveErr && <div style={{ fontSize:".76rem", color:"var(--danger)", marginBottom:8, whiteSpace:"pre-wrap" }}>{liveErr}</div>}
-  {acctErr && <div style={{ fontSize:".76rem", color:"var(--warning)", marginBottom:8 }}>{acctErr}</div>}
-
-  {!acct?.connected ? (
-   <div style={{ display:"grid", gap:8 }}>
-    <div style={{ fontSize:".78rem", color:"var(--muted)" }}>
-     Connect the Deriv account you will trade with. For a <b>pat_</b> token, also paste the app id from the app you created it in.
-    </div>
-    <input value={tokenInput} onChange={e => setTokenInput(e.target.value)} type="password" placeholder="Deriv API token (pat_… or legacy)"
-      style={{ width:"100%", padding:".55rem .7rem", borderRadius:8, border:"1px solid var(--border)", background:"var(--card-2)", color:"var(--fg)", fontFamily:"ui-monospace,monospace", fontSize:".78rem" }} />
-    <input value={appIdInput} onChange={e => setAppIdInput(e.target.value)} placeholder="App id (only needed for pat_ tokens)"
-      style={{ width:"100%", padding:".55rem .7rem", borderRadius:8, border:"1px solid var(--border)", background:"var(--card-2)", color:"var(--fg)", fontFamily:"ui-monospace,monospace", fontSize:".78rem" }} />
-    <button className="btn" disabled={connBusy || !tokenInput.trim()} onClick={connectAccount}
-      style={{ padding:".55rem 1.1rem", fontSize:".82rem", fontWeight:700, background:"linear-gradient(135deg,var(--success),var(--accent))", color:"#04140c", border:"none", opacity:(connBusy || !tokenInput.trim()) ? .6 : 1 }}>
-      {connBusy ? "Validating with Deriv…" : "Connect account"}</button>
-    <div style={{ fontSize:".7rem", color:"var(--muted-2)" }}>
-     The token is validated against Deriv before it is stored, and is never shown back to you.
-    </div>
-   </div>
-  ) : (
-   <div style={{ display:"grid", gap:12 }}>
-    <div style={{ display:"grid", gap:6, gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))" }}>
-     <div style={{ background:"var(--card-2)", border:"1px solid var(--border)", borderRadius:10, padding:".7rem .8rem" }}>
-      <div style={{ fontSize:".64rem", color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em" }}>Balance</div>
-      <div style={{ fontSize:"1.5rem", fontWeight:800, fontFamily:"ui-monospace,monospace", color:"var(--success)" }}>
-       {acct.balance != null ? `${acct.currency || "USD"} ${fmt(acct.balance,2)}` : "—"}</div>
-     </div>
-     <div style={{ background:"var(--card-2)", border:"1px solid var(--border)", borderRadius:10, padding:".7rem .8rem" }}>
-      <div style={{ fontSize:".64rem", color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em" }}>Account</div>
-      <div style={{ fontSize:".85rem", fontWeight:700, fontFamily:"ui-monospace,monospace", marginTop:6 }}>{acct.loginid || "—"}</div>
-     </div>
-     <div style={{ background:"var(--card-2)", border:"1px solid var(--border)", borderRadius:10, padding:".7rem .8rem" }}>
-      <div style={{ fontSize:".64rem", color:"var(--muted)", textTransform:"uppercase", letterSpacing:".06em" }}>Feed</div>
-      <div style={{ fontSize:".85rem", fontWeight:700, marginTop:6, color:acct.mode === "live" ? "var(--success)" : "var(--warning)" }}>{acct.mode || "—"}</div>
-     </div>
-    </div>
-
-    <div style={{ display:"flex", gap:8, alignItems:"flex-end", flexWrap:"wrap" }}>
-     <label style={{ fontSize:".68rem", color:"var(--muted)" }}>Stake
-      <input type="number" min={0.35} step={0.5} value={stake} onChange={e => setStake(Math.max(0.35, Number(e.target.value) || 0.35))}
-        style={{ display:"block", width:90, marginTop:4, padding:".45rem .55rem", borderRadius:8, border:"1px solid var(--border)", background:"var(--card-2)", color:"var(--fg)", fontFamily:"ui-monospace,monospace" }} />
-     </label>
-     <label style={{ fontSize:".68rem", color:"var(--muted)" }}>Ticks
-      <input type="number" min={1} step={1} value={dur} onChange={e => setDur(Math.max(1, Number(e.target.value) || 1))}
-        style={{ display:"block", width:80, marginTop:4, padding:".45rem .55rem", borderRadius:8, border:"1px solid var(--border)", background:"var(--card-2)", color:"var(--fg)", fontFamily:"ui-monospace,monospace" }} />
-     </label>
-     <span style={{ fontSize:".68rem", color:"var(--muted)" }}>Market <b style={{ fontFamily:"ui-monospace,monospace", color:"var(--fg)" }}>{symbol}</b></span>
-    </div>
-
-    <div>
-     <div style={{ fontSize:".68rem", color:"var(--muted)", marginBottom:6, textTransform:"uppercase", letterSpacing:".06em" }}>Place a real trade</div>
-     <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-      {([["MATCHES","MATCHES"],["DIFFERS","DIFFERS"],["OVER","OVER 4"],["UNDER","UNDER 5"],["EVEN","EVEN"],["ODD","ODD"]] as Array<[string,string]>).map(([side,label]) => (
-       <button key={side} className="btn btn-ghost" disabled={tradeBusy}
-         onClick={() => {
-          const dig = side === "OVER" ? 4 : side === "UNDER" ? 5 : side === "MATCHES" ? (fbi?.entry?.digit ?? 0) : null;
-          placeLiveTrade(side, dig);
-         }}
-         style={{ padding:".5rem .85rem", fontSize:".76rem", fontWeight:700, opacity:tradeBusy ? .5 : 1,
-           borderColor: side === "MATCHES" ? "rgba(185,102,255,0.5)" : undefined }}>
-         {label}
-        </button>
-       ))}
-      <button className="btn" disabled={tradeBusy || !fbi?.entry?.available}
-        onClick={() => { const e = fbi?.entry; if (e?.side) placeLiveTrade(e.side, e.digit); }}
-        style={{ padding:".5rem 1rem", fontSize:".76rem", fontWeight:800, background:"linear-gradient(135deg,#e11d48,var(--accent))", color:"#fff", border:"none", opacity:(tradeBusy || !fbi?.entry?.available) ? .5 : 1 }}>
-        ⚡ Trade FBI ENTRY {fbi?.entry?.available ? `(${fbi.entry.side} ${fbi.entry.digit})` : "(no verdict yet)"}
-      </button>
-     </div>
-     <div style={{ fontSize:".68rem", color:"var(--muted-2)", marginTop:6 }}>
-      Every order asks for confirmation, uses real money, and is booked only after Deriv confirms settlement.
-     </div>
-    </div>
-
-    {lastTrade && (
-     <div style={{ border:`1px solid ${lastTrade.won ? "rgba(40,209,124,0.5)" : "rgba(255,93,122,0.5)"}`, background:lastTrade.won ? "rgba(40,209,124,0.07)" : "rgba(255,93,122,0.07)", borderRadius:10, padding:".7rem .8rem" }}>
-      <div style={{ fontWeight:800, color:lastTrade.won ? "var(--success)" : "var(--danger)", fontSize:".9rem" }}>
-       {lastTrade.won ? "WON" : "LOST"} · P&L {Number(lastTrade.pnl) >= 0 ? "+" : ""}${fmt(lastTrade.pnl,2)}</div>
-      <div style={{ fontSize:".68rem", color:"var(--muted)", marginTop:4, fontFamily:"ui-monospace,monospace" }}>
-       buy ${fmt(lastTrade.buy_price,2)} → payout ${fmt(lastTrade.payout,2)} · contract {lastTrade.contract_id}</div>
-     </div>
-    )}
-
-    <div style={{ display:"flex", gap:8, flexWrap:"wrap", borderTop:"1px solid var(--border)", paddingTop:10 }}>
-     <button className="btn btn-ghost" onClick={loadAccount} style={{ padding:".45rem .8rem", fontSize:".74rem" }}>Refresh balance</button>
-     <button className="btn btn-ghost" disabled={connBusy} onClick={disconnectAccount} style={{ padding:".45rem .8rem", fontSize:".74rem" }}>Disconnect</button>
-     <span style={{ fontSize:".68rem", color:"var(--muted-2)", alignSelf:"center" }}>
-      Trading is manual only — the autopilot is off in practical view.
-     </span>
-    </div>
-   </div>
-  )}
+  <div style={{ fontSize:".74rem", color:"var(--muted)", marginTop:8, lineHeight:1.55 }}>
+   This deployment reads the live Deriv tape and publishes analysis. It connects no
+   account and cannot place an order: order placement is disabled at the source, and
+   the market feed reads a public tick stream. Nothing here can move money.
+  </div>
  </section>
  </div>
  <div style={{ maxWidth:1240, margin:"0 auto", padding:"16px 1rem 0", display:"grid", gap:16, gridTemplateColumns:"minmax(0,1.4fr) minmax(280px,0.6fr)" }}>

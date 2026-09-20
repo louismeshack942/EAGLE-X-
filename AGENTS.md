@@ -535,3 +535,49 @@ Two bugs found while wiring it (both real, both fixed):
 the symbol list, so the tape is DemoGenerator and the analytics there are
 meaningless. That is the ENVIRONMENT, not the code — the Frankfurt service
 streams real ticks. Do not judge the engine from a `us` sandbox.
+
+
+## ANALYSIS-ONLY mode + the public feed (2026-09-20)
+
+Owner's final instruction: **drop everything that needs a Deriv connection** —
+no token, no account, no real money, analysis only. Supersedes adviser-only
+(which still allowed a manual trade from the LIVE MONEY panel).
+
+The unlock is a Deriv endpoint the repo had never used:
+
+    wss://api.derivws.com/trading/v1/options/ws/public
+
+**No authentication, no OTP, no token.** Verified from a `us` sandbox (the
+same egress the generic endpoint geo-blocks): streams real R_100 ticks
+(quote 589.55) and 41 open synthetic symbols — `active_symbols` there uses
+`underlying_symbol` / `underlying_symbol_name`, not `symbol` / `display_name`.
+This kills the geo-block problem AND the credential problem at once: the
+deployment holds no secret, so there is nothing to leak or misuse, and the
+endpoint cannot place an order — a structural limit, not a policy one.
+
+- `settings.analysis_only` (default **True**; `ANALYSIS_ONLY=0` to re-enable
+  trading). This is the top-level switch.
+- `DerivClient._connect` uses `PUBLIC_WS_URL` when analysis-only; `stream()`
+  skips `authorize()` entirely (the endpoint has no account session).
+- `stream_lifecycle`: `token_configured = bool(await resolve_token()) or
+  settings.analysis_only`. Without this the tokenless analysis box would fall
+  back to `DemoGenerator` GBM ticks — **the exact fabricated-tape trap that
+  produced the phantom edges**. Analysis-only is therefore ALWAYS live-only;
+  an outage shows "reconnecting", never fake digits.
+- Refused at every entry: `/trade`, `POST /auth/token`, `POST /live/account`,
+  `_bootstrap_env_token` (no token is even loaded onto the box),
+  `_autostart_cf`, `auto_trader.start`, and `deriv_trader.place_trade` (in
+  front of the only `{"buy": ...}` send in the codebase).
+- twin's LIVE MONEY panel removed; the cockpit is read-only.
+
+**Kill switch is not enough on a stale deploy.** `POST /guard/kill` is
+persisted via `settings_store`, and `auto_trader` consults it per scan
+(line ~828) — but the deployed OLD code re-armed live trading on cold boot
+(`_autostart_cf` bypassed the route guard). Only deploying the new code fixes
+that; the kill switch is a stopgap.
+
+Deployed service `eaglex-backend-excn` (Render, frankfurt) had been trading
+**real money**: balance ~$11,789.80, `trading_enabled: true`, two real trades
+placed, both losses, CF benched. The kill switch was engaged there first.
+
+Suite: 417 passed. `_patch.py` scratch file deleted.

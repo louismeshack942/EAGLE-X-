@@ -411,6 +411,19 @@ class AutoTrader:
         if self.running:
             return {"status": "already running", "mode": self.mode}
         self.mode = mode if mode in ("paper", "live") else "paper"
+        # ANALYSIS-ONLY: refuse live mode HERE, at the single entry point.
+        # The HTTP route already refuses, but _autostart_cf() calls start()
+        # directly — so without this check a cold boot with CF_AUTOSTART=live
+        # would re-arm real trading and bypass the route guard entirely.
+        if self.mode == "live" and self.settings.cf_adviser_only:
+            return {
+                "status": "error",
+                "message": (
+                    "ANALYSIS-ONLY: the auto-trader will not run in live mode. "
+                    "It analyses and journals but never touches the account."
+                ),
+                "analysis_only": True,
+            }
         balance = 10.0
         if self.mode == "live":
             # Live mode plays with the REAL account — never with a made-up $10.

@@ -397,7 +397,22 @@ async def deriv_callback(
 
 @router.post("/token")
 async def connect_token(body: TokenBody):
-    """Manually connect by pasting a token over HTTPS. Validated before storage."""
+    """Manually connect by pasting a token over HTTPS. Validated before storage.
+
+    ANALYSIS-ONLY: refuses outright, before validation, so no account token is
+    ever stored on this deployment. The public market-data feed needs no
+    credentials, so there is nothing here for a token to do.
+    """
+    if get_settings().analysis_only:
+        return {
+            "connected": False,
+            "analysis_only": True,
+            "error": (
+                "ANALYSIS-ONLY: account connection is disabled. This deployment "
+                "streams the public market feed and never holds an account token. "
+                "Set ANALYSIS_ONLY=0 to connect an account."
+            ),
+        }
     try:
         info = await _validate_token(body.token, body.app_id)
     except Exception as exc:

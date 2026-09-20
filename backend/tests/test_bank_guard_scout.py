@@ -229,12 +229,32 @@ class TestNewEndpoints:
             r = client.get(path)
             assert r.status_code == 200, path
 
-    def test_kill_switch_blocks_manual_trade(self):
+    def test_kill_switch_blocks_manual_trade(self, monkeypatch):
+        # analysis_only would refuse every order before the guard is even
+        # consulted, which would make this test pass for the wrong reason.
+        # With it off we prove the KILL SWITCH itself still blocks.
+        from app.main import settings as app_settings
+        monkeypatch.setattr(app_settings, "analysis_only", False)
         client.post("/guard/kill", params={"reason": "test block"})
         r = client.post("/trade", json={"symbol": "R_100", "direction": "CALL", "amount": 1.0, "duration": 5})
         assert r.json().get("status") == "error"
         assert "KILL_SWITCH" in r.json().get("error", "")
         client.post("/guard/release")
+
+    def test_analysis_only_blocks_manual_trade_by_default(self):
+        """The deployment default must refuse every manual order."""
+        r = client.post("/trade", json={"symbol": "R_100", "direction": "CALL",
+                                        "amount": 1.0, "duration": 5})
+        assert r.json().get("status") == "error"
+        assert r.json().get("analysis_only") is True
+
+    def test_analysis_only_refuses_auto_trader_live_mode(self):
+        """The route guard AND start() must both refuse live mode, so the
+        _autostart_cf bypass cannot re-arm real trading on a cold boot."""
+        r = client.post("/auto-trader/start", json={"mode": "live"})
+        assert r.json().get("status") == "error"
+        assert r.json().get("adviser_only") is True
+        assert client.get("/auto-trader/status").json().get("running") is False
 
     def test_trader_status_exposes_bank_and_guard(self):
         r = client.get("/auto-trader/status")

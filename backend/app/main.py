@@ -104,7 +104,18 @@ async def _bootstrap_env_token() -> None:
     reconnected. Env vars DO survive: validate the PAT via the REST flow,
     mint the OTP websocket URL and fill the vault BEFORE the first stream
     attempt, so the very first connection is live.
+
+    ANALYSIS-ONLY deployments skip this entirely: the public feed needs no
+    credentials, so there is no reason for an account token to exist on the
+    box. That is the cleanest possible posture — nothing to leak, nothing to
+    misuse. Set ANALYSIS_ONLY=0 to restore the auto-connect.
     """
+    if settings.analysis_only:
+        logger.info(
+            "ANALYSIS-ONLY: skipping account bootstrap — the public market-data "
+            "feed requires no credentials and no token is loaded"
+        )
+        return
     token = settings.deriv_api_token.strip()
     if not token:
         return
@@ -163,11 +174,18 @@ async def lifespan(app: FastAPI):
 
 
 async def _autostart_cf() -> None:
-    """Standing order: the CF never stops. After any restart/deploy, put him
-    back on the pitch automatically when CF_AUTOSTART is set. Waits for the
-    account connection, then starts him in the configured mode."""
+    """Put the CF back on the pitch after a restart/deploy when CF_AUTOSTART
+    is set. Wait for the account connection, then start in the configured mode.
+
+    ANALYSIS-ONLY deployments leave CF_AUTOSTART empty so a cold boot can
+    never resume trading. Even if it is set, start() refuses live mode on its
+    own — this is defence in depth, not the only lock.
+    """
     mode = settings.cf_autostart.strip().lower()
     if mode not in ("live", "paper"):
+        return
+    if settings.analysis_only:
+        logger.info("ANALYSIS-ONLY: CF autostart skipped — no autopilot on this box")
         return
     from app.services.auto_trader import auto_trader
     for attempt in range(15):
@@ -177,6 +195,11 @@ async def _autostart_cf() -> None:
         result = await auto_trader.start(mode=mode)
         if result.get("status") in ("started", "already running"):
             logger.info("boot: CF auto-resumed (%s mode) — CF_AUTOSTART honored", mode)
+            return
+        if result.get("analysis_only"):
+            logger.info(
+                "boot: CF auto-resume refused — ANALYSIS-ONLY (live mode disabled)"
+            )
             return
         logger.info("boot: CF auto-resume attempt %d refused: %s", attempt + 1, result.get("message"))
     logger.error("boot: CF auto-resume gave up after 15 attempts — start him from the dashboard")
@@ -505,7 +528,7 @@ async def auto_trader_start(body: Optional[AutoTraderStartBody] = None):
             "error": (
                 "Auto-trader is ADVISER-ONLY: live execution is disabled. "
                 "The CF analyses and journals but places no real trades. "
-                "Trade manually from the LIVE MONEY panel, or set "
+                "There is no manual trading panel on this deployment — set "
                 "CF_ADVISER_ONLY=0 on the server to re-arm it."
             ),
             "adviser_only": True,
@@ -526,6 +549,19 @@ def auto_trader_status():
 # ---------------- Trade ----------------
 @app.post("/trade")
 async def trade(body: TradeBody):
+    # ANALYSIS-ONLY: no order may be placed on any path. This is the manual
+    # route and it reaches the REAL account, so it is refused first, before
+    # the guard, before any token is even resolved.
+    if settings.analysis_only:
+        return {
+            "status": "error",
+            "error": (
+                "ANALYSIS-ONLY: order placement is disabled. This deployment "
+                "reads the market and produces analysis; it never trades. "
+                "Set ANALYSIS_ONLY=0 to re-enable."
+            ),
+            "analysis_only": True,
+        }
     # Manual trades also go through the Guard: kill switch + tilt detector.
     guard_block = [v for v in risk_guard.check(auto_trader.daily_pnl) if v.startswith("KILL_SWITCH")]
     if guard_block:
@@ -634,7 +670,19 @@ async def live_connect(body: LiveConnectBody):
     """Connect (or replace) the Deriv account used for real trading.
 
     Delegates to the same all-or-nothing validation as /auth/token: on
-    failure the token is never stored."""
+    failure the token is never stored.
+
+    ANALYSIS-ONLY: refuses before touching the network, so no account token
+    can be stored on this deployment. The public feed supplies the tape."""
+    if settings.analysis_only:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "ANALYSIS-ONLY: account connection is disabled. This deployment "
+                "streams the public market feed and holds no account token. "
+                "Set ANALYSIS_ONLY=0 to connect an account."
+            ),
+        )
     from app.api.auth import _validate_token  # local: avoid import cycle
 
     try:

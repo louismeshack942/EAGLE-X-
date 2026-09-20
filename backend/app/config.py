@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # analyses and journals, but its hands never touch the account. Set
     # CF_ADVISER_ONLY=0 to re-arm it.
     cf_adviser_only: bool = True
+    # Analysis-only: no BUY is ever sent, on any path. The market-data feed
+    # authenticates read-only (Deriv authorize with read_only=1), so the
+    # session physically cannot place an order even if code tried. Set
+    # ANALYSIS_ONLY=0 only if you deliberately want to trade again.
+    analysis_only: bool = True
     # App id that owns the PAT token (developers.deriv.com). Required for the
     # boot-time auto-connect: DERIV_API_TOKEN + DERIV_PAT_APP_ID together make
     # the live feed survive every restart without manual reconnects.

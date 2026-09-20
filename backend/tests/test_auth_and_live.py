@@ -9,6 +9,7 @@ from app.services.token_vault import TokenVault, VAULT
 from app.services.deriv_client import DerivClient, GeoRestrictedError, LiveState
 from app.services.deriv_trader import DerivTrader
 from app.models.tick import Tick
+from app.config import Settings, get_settings
 
 
 @pytest.mark.asyncio
@@ -509,9 +510,52 @@ async def test_stream_lifecycle_never_emits_demo_when_token_configured(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_stream_lifecycle_uses_demo_without_token(monkeypatch):
-    """No token anywhere -> demo fallback remains (nothing else is possible)."""
+async def test_analysis_only_never_falls_back_to_demo_tape(monkeypatch):
+    """With no token the public feed still must not degrade into synthetic
+    GBM ticks: a fabricated tape already produced phantom edges once."""
     from app.services import deriv_client
+
+    monkeypatch.setattr(deriv_client.get_settings(), "analysis_only", True)
+
+    async def no_token():
+        return ""
+    monkeypatch.setattr(deriv_client, "resolve_token", no_token)
+
+    async def boom(self, symbols):
+        raise ConnectionError("live blip")
+        yield
+    monkeypatch.setattr(deriv_client.DerivClient, "stream", boom)
+
+    demo_used = {"n": 0}
+
+    class FakeDemo:
+        async def stream(self, symbol):
+            demo_used["n"] += 1
+            raise TimeoutError("probe")
+            yield
+
+    ticks = []
+    task = asyncio.create_task(
+        deriv_client.stream_lifecycle(["R_100"], ticks.append, lambda: FakeDemo())
+    )
+    await asyncio.sleep(0.1)
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    assert demo_used["n"] == 0, "analysis-only must never emit synthetic ticks"
+    assert deriv_client.LIVE_STATE.mode == "live"
+    assert not ticks, "no ticks may be fabricated while reconnecting"
+
+
+@pytest.mark.asyncio
+async def test_stream_lifecycle_uses_demo_without_token(monkeypatch):
+    """Trading builds with no token anywhere -> demo fallback remains.
+    (ANALYSIS-ONLY builds never fall back to demo; asserted below.)"""
+    from app.services import deriv_client
+
+    monkeypatch.setattr(deriv_client.get_settings(), "analysis_only", False)
 
     async def no_token():
         return ""
@@ -544,6 +588,9 @@ async def test_bootstrap_env_token_connects_pat_at_boot(monkeypatch):
     at boot — restarts no longer boot tokenless into demo data."""
     from app import main as main_module
     await VAULT.clear()
+    # Exercise the real bootstrap path; ANALYSIS-ONLY (the deployment default)
+    # deliberately skips it, and that skip is asserted separately below.
+    monkeypatch.setattr(main_module.settings, "analysis_only", False)
     monkeypatch.setattr(main_module.settings, "deriv_api_token", "pat_envtoken")
     monkeypatch.setattr(main_module.settings, "deriv_pat_app_id", "4521")
 
@@ -626,8 +673,14 @@ async def test_trader_url_revalidates_pat_when_vault_cleared(monkeypatch):
 @pytest.mark.asyncio
 async def test_place_trade_never_raises(monkeypatch):
     """place_trade returns a structured error dict even when connecting
-    fails outright — /trade must answer JSON, never a 500."""
+    fails outright — /trade must answer JSON, never a 500.
+
+    Runs with analysis_only off so the connectivity path is actually
+    exercised; the ANALYSIS-ONLY refusal is tested separately below.
+    """
+    monkeypatch.setattr(get_settings(), "analysis_only", False)
     trader = DerivTrader()
+    monkeypatch.setattr(trader.settings, "analysis_only", False)
     try:
         await VAULT.clear()
         async def boom(self, token=None):
@@ -648,6 +701,25 @@ async def test_place_trade_never_raises(monkeypatch):
         assert result["step"] == "connect"
     finally:
         await VAULT.clear()
+
+
+async def test_analysis_only_refuses_before_any_network_call(monkeypatch):
+    """ANALYSIS-ONLY is enforced in place_trade, directly in front of the
+    only buy send in the codebase. Nothing may reach the network."""
+    trader = DerivTrader()
+    monkeypatch.setattr(trader.settings, "analysis_only", True)
+
+    async def must_not_be_called(self, token=None):
+        raise AssertionError("ANALYSIS-ONLY reached the network — it must not")
+
+    monkeypatch.setattr(DerivTrader, "_url", must_not_be_called)
+    result = await trader.place_trade(
+        symbol="R_100", contract_type="DIGITDIFF", amount=1.0,
+        duration=5, api_token="pat_x", digit=0,
+    )
+    assert result["status"] == "error"
+    assert result["step"] == "analysis_only"
+    assert result["analysis_only"] is True
 
 
 @pytest.mark.asyncio
@@ -753,6 +825,9 @@ async def test_autostart_cf_retries_until_started(monkeypatch):
     retrying until the balance read succeeds."""
     from app import main as main_module
     from app.services.auto_trader import auto_trader
+    # The autostart mechanism still exists for deliberate trading deployments;
+    # ANALYSIS-ONLY (the default) skips it, asserted separately below.
+    monkeypatch.setattr(main_module.settings, "analysis_only", False)
     monkeypatch.setattr(main_module.settings, "cf_autostart", "live")
     calls = {"n": 0}
 
@@ -771,6 +846,71 @@ async def test_autostart_cf_retries_until_started(monkeypatch):
         assert auto_trader.running
     finally:
         auto_trader.running = False
+
+
+@pytest.mark.asyncio
+async def test_analysis_only_skips_bootstrap_and_stores_no_token(monkeypatch):
+    """ANALYSIS-ONLY must not load an account token onto the box at all —
+    the public feed needs none, so the safest posture is holding nothing."""
+    from app import main as main_module
+    await VAULT.clear()
+    monkeypatch.setattr(main_module.settings, "analysis_only", True)
+    monkeypatch.setattr(main_module.settings, "deriv_api_token", "pat_envtoken")
+    monkeypatch.setattr(main_module.settings, "deriv_pat_app_id", "4521")
+
+    async def must_not_run(token, app_id):
+        raise AssertionError("ANALYSIS-ONLY contacted Deriv to validate a token")
+
+    monkeypatch.setattr("app.api.auth._pat_validate", must_not_run)
+    try:
+        await main_module._bootstrap_env_token()
+        assert await VAULT.get() is None, "no token may be stored in analysis-only mode"
+    finally:
+        await VAULT.clear()
+
+
+@pytest.mark.asyncio
+async def test_analysis_only_skips_cf_autostart(monkeypatch):
+    """A cold boot must never re-arm the autopilot on an analysis box,
+    even with CF_AUTOSTART=live set in the environment."""
+    from app import main as main_module
+    from app.services.auto_trader import auto_trader
+    monkeypatch.setattr(main_module.settings, "analysis_only", True)
+    monkeypatch.setattr(main_module.settings, "cf_autostart", "live")
+    calls = {"n": 0}
+
+    async def fake_start(mode="paper", api_token=None):
+        calls["n"] += 1
+        auto_trader.running = True
+        return {"status": "started"}
+
+    monkeypatch.setattr(auto_trader, "start", fake_start)
+    auto_trader.running = False
+    try:
+        await asyncio.wait_for(main_module._autostart_cf(), timeout=15)
+        assert calls["n"] == 0, "autostart must not run in analysis-only mode"
+        assert not auto_trader.running
+    finally:
+        auto_trader.running = False
+
+
+@pytest.mark.asyncio
+async def test_analysis_only_uses_public_credential_free_feed(monkeypatch):
+    """The feed must connect to the public endpoint with no token and no
+    authorize call — that is what makes it read-only at the protocol level."""
+    from app.services import deriv_client as dc
+    client = DerivClient()
+    monkeypatch.setattr(client.settings, "analysis_only", True)
+    captured = {}
+
+    async def fake_connect(url, **kw):
+        captured["url"] = url
+        return object()
+
+    monkeypatch.setattr(dc.websockets, "connect", fake_connect)
+    assert await client._connect() is True
+    assert captured["url"] == dc.PUBLIC_WS_URL
+    assert "otp" not in captured["url"], "the public feed must carry no account OTP"
 
 
 @pytest.mark.asyncio
