@@ -501,3 +501,37 @@ never discover a fake edge. Two payout inconsistencies live in that data:
 1.41 and OVER 4 = 1.97. The journal also contains an OVER batch settled at
 1.95 and a MATCHES batch settled at 1.10 (should be ~9). Do not read
 profitability into any of it.
+
+## Adviser-only autopilot (2026-09-20)
+
+Owner's instruction: the auto-trader may analyse but MUST NOT place a real
+trade, and is out of practical view. Enforced in depth — a hidden button
+still leaves the route reachable.
+
+- `settings.cf_adviser_only` (default **True**). Set `CF_ADVISER_ONLY=0`
+  to re-arm.
+- `POST /auto-trader/start` refuses `mode=live` outright.
+- `auto_trader.place_trade` refuses at the point of order (last line of
+  defence), so no route can reach the account.
+- The pre-trade Telegram alert is suppressed in adviser mode — announcing a
+  trade that will not happen is a lie.
+- twin's autopilot toggle is removed.
+
+This **supersedes the "CF never-stop" standing order for live execution**:
+the CF still analyses continuously in adviser mode, but the earlier
+"CF_AUTOSTART=live" auto-resume no longer results in trades. That is
+deliberate and is the owner's current intent.
+
+Two bugs found while wiring it (both real, both fixed):
+- An ABORTED order was counted as a LOSS. `place_trade` returns
+  `won=None` on abort, and `worst = "loss" if any(not o["won"])` reads
+  `not None` as True. That corrupted the loss streak, the 2-loss bench
+  trigger and the risk escalation — a refused/failed trade could bench the
+  CF. Aborted orders are now excluded from settlement.
+- The trade alert fired BEFORE the order was attempted, so a refused trade
+  still broadcast as if placed.
+
+**Sandbox caveat:** the dev sandbox runs in `us`, where Deriv geo-blocks
+the symbol list, so the tape is DemoGenerator and the analytics there are
+meaningless. That is the ENVIRONMENT, not the code — the Frankfurt service
+streams real ticks. Do not judge the engine from a `us` sandbox.
