@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     # Empty = stay stopped until the dashboard starts him. The owner's
     # standing order is that the CF never stops, so production sets "live".
     cf_autostart: str = ""
+    # Adviser-only mode. When true the auto-trader is structurally unable to
+    # place a real trade: /auto-trader/start refuses live mode outright, and
+    # any live execution is refused at the point of order. The CF still
+    # analyses and journals, but its hands never touch the account. Set
+    # CF_ADVISER_ONLY=0 to re-arm it.
+    cf_adviser_only: bool = True
     # App id that owns the PAT token (developers.deriv.com). Required for the
     # boot-time auto-connect: DERIV_API_TOKEN + DERIV_PAT_APP_ID together make
     # the live feed survive every restart without manual reconnects.

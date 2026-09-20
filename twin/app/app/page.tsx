@@ -165,7 +165,6 @@ const [dur, setDur] = useState<number>(5);
 const [tradeBusy, setTradeBusy] = useState<boolean>(false);
 const [lastTrade, setLastTrade] = useState<any>(null);
 const [liveErr, setLiveErr] = useState<string | null>(null);
-const [autoOn, setAutoOn] = useState<boolean>(false);
 
 async function loadAccount() {
  try {
@@ -222,20 +221,8 @@ async function placeLiveTrade(side: string, digit: number | null) {
  } finally { setTradeBusy(false); }
 }
 
-async function toggleAuto() {
- setLiveErr(null);
- try {
-  const path = autoOn ? "/auto-trader/stop" : "/auto-trader/start";
-  const res = await fetch(path, {
-   method: "POST",
-   headers: { "Content-Type": "application/json", Accept: "application/json" },
-   body: autoOn ? undefined : JSON.stringify({ mode: "live" }),
-  });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.detail || `HTTP ${res.status}`);
-  setAutoOn(!autoOn);
- } catch (e: any) { setLiveErr(e?.message ?? "autopilot failed"); }
-}
+// The autopilot toggle is deliberately absent: the auto-trader is
+// adviser-only, so there is no live autopilot to arm from this cockpit.
 
 useEffect(() => { loadAccount(); }, []);
 const tickList: any[] = ticks?.ticks ?? [];
@@ -452,9 +439,9 @@ return (
     <div style={{ display:"flex", gap:8, flexWrap:"wrap", borderTop:"1px solid var(--border)", paddingTop:10 }}>
      <button className="btn btn-ghost" onClick={loadAccount} style={{ padding:".45rem .8rem", fontSize:".74rem" }}>Refresh balance</button>
      <button className="btn btn-ghost" disabled={connBusy} onClick={disconnectAccount} style={{ padding:".45rem .8rem", fontSize:".74rem" }}>Disconnect</button>
-     <button className="btn btn-ghost" onClick={toggleAuto}
-       style={{ padding:".45rem .8rem", fontSize:".74rem", fontWeight:700, color:autoOn ? "var(--danger)" : "var(--warning)", borderColor:autoOn ? "rgba(255,93,122,0.45)" : "rgba(242,197,24,0.45)" }}>
-      {autoOn ? "■ Stop autopilot" : "▶ Start autopilot (live)"}</button>
+     <span style={{ fontSize:".68rem", color:"var(--muted-2)", alignSelf:"center" }}>
+      Trading is manual only — the autopilot is off in practical view.
+     </span>
     </div>
    </div>
   )}

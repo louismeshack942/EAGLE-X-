@@ -495,7 +495,22 @@ def contracts_get(cid: str):
 @app.post("/auto-trader/start")
 async def auto_trader_start(body: Optional[AutoTraderStartBody] = None):
     body = body or AutoTraderStartBody()
-    return await auto_trader.start(mode=body.mode or "paper", api_token=body.api_token)
+    mode = body.mode or "paper"
+    # ADVISER-ONLY: refuse live mode outright. The CF may analyse, but its
+    # hands never touch the account. Enforced here AND at the order point
+    # (auto_trader.place_trade) so no route can reach the account.
+    if mode == "live" and settings.cf_adviser_only:
+        return {
+            "status": "error",
+            "error": (
+                "Auto-trader is ADVISER-ONLY: live execution is disabled. "
+                "The CF analyses and journals but places no real trades. "
+                "Trade manually from the LIVE MONEY panel, or set "
+                "CF_ADVISER_ONLY=0 on the server to re-arm it."
+            ),
+            "adviser_only": True,
+        }
+    return await auto_trader.start(mode=mode, api_token=body.api_token)
 
 
 @app.post("/auto-trader/stop")

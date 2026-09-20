@@ -508,7 +508,22 @@ class AutoTrader:
         """Execute one contract. Live mode waits for the REAL settlement —
         a successful purchase is not a win. A failed step ABORTS the trade:
         no fake P&L, no phantom losses, loud logging, and no journal entry.
+
+        ADVISER-ONLY: when cf_adviser_only is set, this refuses to touch the
+        account at all. The refusal is structural, not cosmetic — hiding a
+        button would still leave the route reachable.
         """
+        if self.mode == "live" and self.settings.cf_adviser_only:
+            self._log(
+                "ADVISER-ONLY: live execution refused — the CF is not permitted "
+                "to touch the account. Analysis continues; nothing was placed."
+            )
+            return {
+                "won": None,
+                "pnl": 0.0,
+                "aborted": True,
+                "adviser_only": True,
+            }
         vault_token = await VAULT.get()
         if self.mode == "live" and (api_token or vault_token or self.settings.deriv_api_token):
             token = api_token or vault_token or self.settings.deriv_api_token
@@ -980,19 +995,35 @@ class AutoTrader:
                         self._log(
                             f"FLUID PLAY: Kelly stakes {splits} — {best_symbol} {names}"
                         )
-                    telegram_notifier.send_trade_alert(
-                        best_symbol, plays[0]["name"], stakes[0],
-                        plays[0].get("duration_seconds", 5),
-                    )
-                    self._log(
-                        f"Placing trade: {best_symbol} {plays[0]['name']} "
-                        f"stake={stakes[0]} (z={plays[0].get('z')}, EV {plays[0].get('ev')})"
-                    )
+                    # Adviser-only: never announce a trade that won't happen.
+                    if self.mode == "live" and self.settings.cf_adviser_only:
+                        self._log(
+                            f"ADVISER-ONLY call: {best_symbol} {plays[0]['name']} "
+                            f"would stake ${stakes[0]} (z={plays[0].get('z')}, "
+                            f"EV {plays[0].get('ev')}) — NOT placed."
+                        )
+                    else:
+                        telegram_notifier.send_trade_alert(
+                            best_symbol, plays[0]["name"], stakes[0],
+                            plays[0].get("duration_seconds", 5),
+                        )
+                        self._log(
+                            f"Placing trade: {best_symbol} {plays[0]['name']} "
+                            f"stake={stakes[0]} (z={plays[0].get('z')}, EV {plays[0].get('ev')})"
+                        )
                     outcomes = await asyncio.gather(
                         *(self.place_trade(p, s, api_token) for p, s in zip(plays, stakes))
                     )
                     mark_strike_fired(plays)  # rotation: same strike can't fire again for 30s
-                    worst = "loss" if any(not o["won"] for o in outcomes) else "win"
+                    # An ABORTED order (adviser-only refusal, failed purchase,
+                    # lost settlement) is NOT a loss — nothing was risked and
+                    # nothing settled. Counting it as one would corrupt the
+                    # streak, the bench trigger and the risk escalation.
+                    settled = [o for o in outcomes if not o.get("aborted")]
+                    if not settled:
+                        await asyncio.sleep(3.0)
+                        continue
+                    worst = "loss" if any(not o["won"] for o in settled) else "win"
                     speed = risk_guard.scan_speed()
                     await asyncio.sleep(
                         risk_guard.cooldown_escalator(
