@@ -83,9 +83,51 @@ def parse_request(question: str) -> dict:
         "predictions": predictions,
         "target_runs": target_runs,
         "min_confidence": floor,
+        "explicit_runs": bool(run_match),
+        "symbol": _find_symbol(question),
         "wants_entry_digit": "entry" in q or "digit" in q,
         "wants_scan_all": "all market" in q or "all the market" in q or "scan" in q,
+        # A question that asks for a PROBABILITY rather than a trade plan. These
+        # are answered with the live measured rate per market, not a ladder.
+        "wants_probability": any(w in q for w in (
+            "probabilit", "chance", "odds", "how likely", "likely", "what are the",
+            "percentage", "percent", "how often", "win rate", "winrate",
+        )),
     }
+
+
+def _find_symbol(question: str) -> Optional[str]:
+    """Find an explicitly named market in the text, e.g. "over 5 on R_100".
+
+    Without this, "probability of over 5 on R_100" would be measured across
+    every market and answered with whichever happened to read highest - the
+    user asked about ONE index and must get that index. Matches the code
+    (R_100) and the spoken name ("volatility 100"). Returns None when the
+    question names no market, which means "scan them all".
+    """
+    q = (question or "").lower()
+    m = re.search(r"\b(r_\d+|r\d{2,3}|1hz\d+v|jd\d+|rdbear|rdbull)\b", q)
+    if m:
+        code = m.group(1).upper()
+        # "r100" / "r 100" both mean R_100.
+        if re.fullmatch(r"R\d{2,3}", code):
+            code = f"R_{code[1:]}"
+        return code
+    # Spoken names: "volatility 100", "jump 50", "bear market", "bull market".
+    if "bear market" in q:
+        return "RDBEAR"
+    if "bull market" in q:
+        return "RDBULL"
+    m = re.search(r"\b(?:jump|jd)\s*(\d{1,3})\b", q)
+    if m:
+        return f"JD{m.group(1)}"
+    m = re.search(r"\bvol(?:atility)?\s*(\d{1,3})\b", q)
+    if m:
+        n = m.group(1)
+        if "1s" in q or "1-s" in q or "one second" in q:
+            return f"1HZ{n}V"
+        return f"R_{n}"
+    return None
 
 
 def _compound(probs: List[float]) -> float:
@@ -132,6 +174,7 @@ class MissionPlanner:
         """Check every market against the user's OWN barriers, then rank."""
         candidates: List[dict] = []
         scanned: List[dict] = []
+        probabilities: List[dict] = []
 
         for symbol in symbols[:MAX_MARKETS]:
             try:
@@ -139,6 +182,29 @@ class MissionPlanner:
             except Exception as exc:  # a bad market must never kill the scan
                 logger.warning("mission scan failed for %s: %s", symbol, exc)
                 continue
+
+            # Every leg with real tape gets a probability row, playable or not.
+            # A question like "what is the probability of over 5" must be
+            # answerable from the measurement, never gated on clearing a floor
+            # the user did not ask about.
+            for lg in card["legs"]:
+                if lg.get("observed_pct") is None:
+                    continue
+                probabilities.append({
+                    "symbol": symbol,
+                    "n": card["n"],
+                    "provider": card.get("provider"),
+                    "live": card.get("provider") == "deriv_live" and card["n"] > 0,
+                    "side": lg["side"], "barrier": lg["barrier"],
+                    "observed_pct": lg["observed_pct"],
+                    "confidence": lg["confidence"],
+                    "breakeven_pct": lg["breakeven_pct"],
+                    "edge_pp": lg["edge_pp"], "ev": lg["ev"],
+                    "payout": lg["payout"],
+                    "winning_digits": lg["winning_digits"],
+                    "playable": bool(lg.get("playable")),
+                    "entry": lg.get("entry"),
+                })
 
             playable = [lg for lg in card["legs"] if lg.get("playable")
                         and lg.get("confidence", 0) >= min_confidence]
@@ -183,7 +249,148 @@ class MissionPlanner:
         # confidence is the better run.
         candidates.sort(key=lambda c: (c["play"]["confidence"], c["play"]["ev"]),
                         reverse=True)
-        return {"candidates": candidates, "scanned": scanned}
+        # Probability rows rank by measured rate - the direct answer to
+        # "what is the probability of ...", best market first.
+        probabilities.sort(key=lambda r: r["observed_pct"], reverse=True)
+        return {"candidates": candidates, "scanned": scanned,
+                "probabilities": probabilities}
+
+    def probability(self, question: str, symbols: List[str],
+                    predictions: Optional[List[dict]] = None,
+                    window: int = DEFAULT_WINDOW,
+                    symbol: Optional[str] = None) -> dict:
+        """Answer "what is the probability of over 5?" with the measured rate.
+
+        This is the typed-question path: the user asks for a probability, not a
+        trade plan, so nothing here is gated on a confidence floor or on EV.
+        Every market carrying tape reports its OBSERVED rate for the requested
+        barrier, plus the fair breakeven that payout implies. The distinction
+        that matters: `observed_pct` is what the tape actually did, and
+        `probability` is that same number stated as the answer. A rate above
+        breakeven is a measured edge; below it is a losing proposition, and
+        both are reported plainly.
+        """
+        parsed = parse_request(question)
+        preds = predictions if predictions else parsed["predictions"]
+        base = {
+            "question": question,
+            "requested_predictions": preds,
+            "window": window,
+            "provider": "deriv_live",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "kind": "PROBABILITY",
+        }
+        if not preds:
+            return {**base, "verdict": "NEED_PREDICTIONS", "probabilities": [],
+                    "best": None, "answer": (
+                        "Tell me the barrier you want the probability for - for "
+                        "example \"what is the probability of over 5 on R_100\".")}
+
+        scan_symbols = [symbol] if symbol else symbols
+        rows = self.scan(scan_symbols, preds, window=window)["probabilities"]
+        if not rows:
+            return {**base, "verdict": "NO_TAPE", "probabilities": [],
+                    "best": None, "answer": (
+                        "No market has enough live tape to measure that yet. "
+                        "Nothing is reported until there is real data.")}
+
+        # The headline row: the market with the highest measured chance of the
+        # FIRST requested barrier winning.
+        first = preds[0]
+        for_first = [r for r in rows
+                     if r["side"] == first["side"] and r["barrier"] == first["barrier"]]
+        best = for_first[0] if for_first else rows[0]
+
+        pred_txt = "{} {}".format(first["side"], first["barrier"])
+
+        # A single window manufactures flukes - some digit always looks overfed
+        # by chance, which is exactly how the phantom-edge session happened.
+        # So the rate is confirmed across three windows before this card calls
+        # anything an EDGE. One window alone can only ever be UNCONFIRMED.
+        windows = self._multi_window(best, preds)
+        filled = [w for w in windows if w["satisfied"]]
+        confirmed = (len(filled) >= 2
+                     and all(w["edge_pp"] > 0 for w in filled))
+        if best["edge_pp"] > 0 and best["ev"] > 0:
+            verdict = "EDGE" if confirmed else "UNCONFIRMED"
+        else:
+            verdict = "NO_EDGE"
+
+        lines = [
+            f"{pred_txt} has a {best['observed_pct']:.1f}% measured chance of "
+            f"winning on {best['symbol']} over the last {best['n']} ticks "
+            f"({best['winning_digits']}/10 digits win, {best['payout']:.2f}x "
+            f"payout)."
+        ]
+        if verdict == "EDGE":
+            lines.append(
+                f"That is {best['edge_pp']:+.1f}pp above the "
+                f"{best['breakeven_pct']:.1f}% breakeven this payout needs, "
+                f"EV {best['ev']:+.3f} per $1, and it holds on every window "
+                "checked (" + ", ".join(
+                    f"{w['window']}:{w['edge_pp']:+.1f}pp" for w in windows) + ").")
+        elif verdict == "UNCONFIRMED":
+            lines.append(
+                f"That is {best['edge_pp']:+.1f}pp above the "
+                f"{best['breakeven_pct']:.1f}% breakeven this payout needs, but "
+                "it does NOT hold across windows ("
+                + ", ".join(f"{w['window']}:{w['edge_pp']:+.1f}pp" for w in windows)
+                + ") - one window can fluke, so this is not yet an edge.")
+        else:
+            lines.append(
+                f"Its payout needs {best['breakeven_pct']:.1f}% to break even, "
+                f"so the tape is {best['edge_pp']:+.1f}pp against it - no edge "
+                f"here, EV {best['ev']:+.3f} per $1.")
+        others = [r for r in for_first[1:4]]
+        if others:
+            lines.append("Other markets: " + "; ".join(
+                f"{r['symbol']} {r['observed_pct']:.1f}%" for r in others) + ".")
+
+        return {
+            **base,
+            "verdict": verdict,
+            "probabilities": rows,
+            "best": best,
+            "windows": windows,
+            "probability": best["observed_pct"],
+            "answer": " ".join(lines),
+        }
+
+    def _multi_window(self, row: dict, preds: List[dict],
+                      windows=(100, 250, 1000)) -> List[dict]:
+        """Re-measure the SAME barrier on other windows for the same market.
+
+        A rate that only exists at one window length is a fluke. Each window is
+        measured independently off the live tape.
+
+        `satisfied` marks whether the tape was actually deep enough to fill
+        that window. This is what makes the check real: on a 36-tick tape all
+        three windows read the identical 36 ticks, so they agree trivially and
+        would "confirm" anything. A window that cannot be filled is not
+        evidence, so only satisfied windows may confirm an edge.
+        """
+        out: List[dict] = []
+        for w in windows:
+            try:
+                card = self._cockpit.legs(
+                    row["symbol"],
+                    [{"side": row["side"], "barrier": row["barrier"]}],
+                    window=w)
+            except Exception as exc:
+                logger.warning("window check failed for %s: %s", row["symbol"], exc)
+                continue
+            legs = card.get("legs") or []
+            if not legs or legs[0].get("observed_pct") is None:
+                continue
+            lg = legs[0]
+            out.append({
+                "window": w, "n": card["n"],
+                "satisfied": card["n"] >= w,
+                "observed_pct": lg["observed_pct"],
+                "breakeven_pct": lg["breakeven_pct"],
+                "edge_pp": lg["edge_pp"], "ev": lg["ev"],
+            })
+        return out
 
     def plan(self, question: str, symbols: List[str],
              predictions: Optional[List[dict]] = None,
@@ -191,12 +398,33 @@ class MissionPlanner:
              window: int = DEFAULT_WINDOW,
              min_confidence: Optional[float] = None,
              stake: float = 1.0,
-             balance: Optional[float] = None) -> dict:
-        """The full mission card answering the owner's plain-English request."""
+             balance: Optional[float] = None,
+             force: Optional[str] = None) -> dict:
+        """The full mission card answering the owner's plain-English request.
+
+        `force` lets the caller override intent detection: "plan" pins the run
+        ladder even when the wording reads like a probability question, and
+        "probability" pins the measurement.
+        """
         parsed = parse_request(question)
         preds = predictions if predictions else parsed["predictions"]
         runs = target_runs if target_runs else parsed["target_runs"]
         floor = min_confidence if min_confidence is not None else parsed["min_confidence"]
+
+        # A question that asks for a probability, with no run target and no
+        # scan request, is a measurement question - answer it directly with the
+        # live rate instead of building a trade ladder nobody asked for.
+        wants_prob = parsed["wants_probability"] if force is None else force == "probability"
+        if (preds and wants_prob
+                and not parsed["explicit_runs"] and not parsed["wants_scan_all"]
+                and target_runs is None and predictions is None):
+            # Honour a market named in the question ("... on R_100"). Only fall
+            # back to scanning every market when none was named.
+            named = parsed.get("symbol")
+            if named and named in symbols:
+                return self.probability(question, symbols, preds,
+                                        window=window, symbol=named)
+            return self.probability(question, symbols, preds, window=window)
 
         base = {
             "question": question,
@@ -267,6 +495,7 @@ class MissionPlanner:
             "verdict": verdict,
             "candidates": candidates,
             "scanned": scan["scanned"],
+            "probabilities": scan["probabilities"],
             "selected": selected,
             "runs": runs_math,
             "runs_available": len(live),

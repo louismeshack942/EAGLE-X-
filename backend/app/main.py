@@ -1627,6 +1627,9 @@ class MissionBody(BaseModel):
     window: int = 250
     min_confidence: Optional[float] = None
     symbols: Optional[List[str]] = None
+    # "auto" (default) infers from the question, "probability" forces a
+    # probability readout, "plan" forces the run ladder.
+    kind: str = "auto"
 
 
 @app.post("/ai-copilot/ask")
@@ -1636,19 +1639,34 @@ def copilot_ask(body: CopilotBody):
 
 @app.post("/ai-copilot/mission")
 def copilot_mission(body: MissionBody):
-    """Plan a multi-market trade request against the live tape.
+    """Plan a multi-market trade request, or measure a probability.
 
     Advisory only: returns which markets support the requested barriers,
-    their entry digits, and honest run-ladder maths. It places nothing.
+    their entry digits, honest run-ladder maths, and the measured chance of
+    each barrier winning. It places nothing.
     """
     from app.services.mission import mission_planner
     symbols = body.symbols or get_settings().active_symbols
+    kind = (body.kind or "auto").lower()
+    if kind == "probability":
+        # Honour a market named in the question even on the explicit path -
+        # otherwise "probability of over 5 on R_100" would be answered with
+        # whichever market happened to read highest.
+        from app.services.mission import parse_request
+        named = parse_request(body.question).get("symbol")
+        return mission_planner.probability(
+            body.question, symbols,
+            predictions=body.predictions,
+            window=body.window,
+            symbol=named if named in symbols else None,
+        )
     return mission_planner.plan(
         body.question, symbols,
         predictions=body.predictions,
         target_runs=body.target_runs,
         window=body.window,
         min_confidence=body.min_confidence,
+        force="plan" if kind == "plan" else None,
     )
 
 

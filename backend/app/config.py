@@ -38,10 +38,22 @@ class Settings(BaseSettings):
     deriv_pat_app_id: str = ""
     # Full digit-trading board: every synthetic that offers digit contracts.
     # A wider board means more tables the truth gate can find a real skew on.
+    #
+    # Probed live against contracts_for on the public endpoint (2026-09-20):
+    # exactly 20 of Deriv's 89 active symbols list DIGIT* contracts, and ALL
+    # 20 are here. 1HZ150V/1HZ200V/1HZ250V/1HZ300V were previously listed but
+    # Deriv answers "OfferingsInvalidSymbol - no contract available for this
+    # symbol" for every one of them, so the board was 4 markets short of a lie:
+    # it advertised 15 digit markets, 4 of which cannot take a digit trade.
+    # 1HZ15V and 1HZ90V stream live and DO offer digits — they replaced them.
+    # The step/jump/range/boom/crash/forex/index symbols stream ticks but
+    # offer no DIGIT* contract at all, so they stay off this board.
     deriv_active_symbols: str = (
         "R_10,R_25,R_50,R_75,R_100,"
-        "1HZ10V,1HZ25V,1HZ30V,1HZ50V,1HZ75V,"
-        "1HZ100V,1HZ150V,1HZ200V,1HZ250V,1HZ300V"
+        "1HZ10V,1HZ15V,1HZ25V,1HZ30V,1HZ50V,"
+        "1HZ75V,1HZ90V,1HZ100V,"
+        "JD10,JD25,JD50,JD75,JD100,"
+        "RDBEAR,RDBULL"
     )
     # OAuth: public client, no secret. Register your own app at api.deriv.com
     # and set DERIV_APP_ID for a branded OAuth screen.

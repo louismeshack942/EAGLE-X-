@@ -293,3 +293,244 @@ class TestMissionRoute:
         assert res.status_code == 200
         assert res.json()["requested_predictions"] == [
             {"side": "UNDER", "barrier": 7}]
+
+
+class TestFindSymbol:
+    """A question that names a market must be answered for THAT market."""
+
+    def test_code_is_matched(self):
+        from app.services.mission import _find_symbol
+        assert _find_symbol("probability of over 5 on R_100") == "R_100"
+
+    def test_code_without_underscore(self):
+        from app.services.mission import _find_symbol
+        assert _find_symbol("chance of under 3 on r50") == "R_50"
+
+    def test_one_second_code(self):
+        from app.services.mission import _find_symbol
+        assert _find_symbol("odds on 1HZ25V") == "1HZ25V"
+
+    def test_spoken_volatility_name(self):
+        from app.services.mission import _find_symbol
+        assert _find_symbol("over 6 on volatility 75") == "R_75"
+
+    def test_spoken_one_second_name(self):
+        from app.services.mission import _find_symbol
+        assert _find_symbol("over 3 on volatility 100 1s") == "1HZ100V"
+
+    def test_jump_name(self):
+        from app.services.mission import _find_symbol
+        assert _find_symbol("over 4 on jump 50") == "JD50"
+
+    def test_bear_and_bull(self):
+        from app.services.mission import _find_symbol
+        assert _find_symbol("under 4 on bear market") == "RDBEAR"
+        assert _find_symbol("under 4 on bull market") == "RDBULL"
+
+    def test_no_market_named_returns_none(self):
+        from app.services.mission import _find_symbol
+        assert _find_symbol("what is the probability of over 5") is None
+
+
+class TestProbabilityIntent:
+    def test_plain_probability_question_is_detected(self):
+        p = parse_request("what is the probability of over 5")
+        assert p["wants_probability"] is True
+        assert p["explicit_runs"] is False
+        assert p["wants_scan_all"] is False
+
+    def test_chance_and_odds_words(self):
+        assert parse_request("chance of over 4")["wants_probability"] is True
+        assert parse_request("odds of under 3")["wants_probability"] is True
+
+    def test_run_request_is_not_a_probability_question(self):
+        p = parse_request("over 4 under 7, 5 runs")
+        assert p["wants_probability"] is False
+        assert p["explicit_runs"] is True
+
+    def test_scan_request_is_not_a_probability_question(self):
+        p = parse_request("scan all markets over 4 under 7")
+        assert p["wants_probability"] is False
+        assert p["wants_scan_all"] is True
+
+
+class TestProbabilityAnswer:
+    def test_reports_the_measured_rate_for_one_market(self):
+        _push("R_100", _HIGH_TAPE * 30)   # deep tape so every window has data
+        card = MissionPlanner().probability(
+            "probability of over 4 on R_100", ["R_100"], symbol="R_100")
+        assert card["probability"] > 80
+        assert card["best"]["symbol"] == "R_100"
+
+    def test_a_persistent_skew_is_confirmed_as_an_edge(self):
+        """The skew must survive every window before it is called an EDGE."""
+        _push("R_100", _HIGH_TAPE * 30)
+        card = MissionPlanner().probability(
+            "probability of over 4 on R_100", ["R_100"], symbol="R_100")
+        assert card["verdict"] == "EDGE"
+        assert len(card["windows"]) >= 2
+        assert all(w["edge_pp"] > 0 for w in card["windows"])
+
+    def test_one_window_alone_is_never_called_an_edge(self):
+        """Regression guard for the phantom-edge session: a single thin window
+        must not be reported as an edge."""
+        _push("R_100", _HIGH_TAPE)   # 36 ticks - only the smallest window
+        card = MissionPlanner().probability(
+            "probability of over 4 on R_100", ["R_100"], symbol="R_100")
+        assert card["verdict"] != "EDGE"
+
+    def test_unconfirmed_is_reported_when_windows_disagree(self):
+        """A rate that inverts on a longer window is not an edge."""
+        _push("R_100", _HIGH_TAPE * 4 + _FLAT_TAPE * 40)
+        card = MissionPlanner().probability(
+            "probability of over 4 on R_100", ["R_100"], symbol="R_100")
+        if card["verdict"] == "UNCONFIRMED":
+            assert "does NOT hold" in card["answer"]
+
+    def test_reports_no_edge_when_rate_is_below_breakeven(self):
+        _push("R_100", _FLAT_TAPE)
+        card = MissionPlanner().probability(
+            "probability of over 4 on R_100", ["R_100"], symbol="R_100")
+        assert card["verdict"] == "NO_EDGE"
+        assert "no edge" in card["answer"].lower()
+
+    def test_measured_rate_is_not_gated_by_the_confidence_floor(self):
+        """A probability question is a measurement - it must answer even when
+        nothing clears the 68% trade floor."""
+        _push("R_100", _FLAT_TAPE)
+        card = MissionPlanner().probability(
+            "probability of over 4", ["R_100"], symbol="R_100")
+        assert card["best"] is not None
+        assert card["probability"] is not None
+        assert card["best"]["observed_pct"] is not None
+
+    def test_breakeven_is_reported_alongside_the_rate(self):
+        _push("R_100", _HIGH_TAPE)
+        card = MissionPlanner().probability(
+            "probability of over 4", ["R_100"], symbol="R_100")
+        # OVER 4 wins on digits 5..9 = 5 digits, so payout 10/5 = 2.00x and
+        # breakeven is 50%. The rate must be reported against that.
+        assert card["best"]["winning_digits"] == 5
+        assert card["best"]["payout"] == 2.0
+        assert card["best"]["breakeven_pct"] == 50.0
+
+    def test_named_market_wins_over_the_highest_market(self):
+        """R_100 must be answered even if another market reads higher."""
+        _push("R_100", _FLAT_TAPE)
+        _push("R_50", _HIGH_TAPE)
+        card = MissionPlanner().probability(
+            "probability of over 4 on R_100", ["R_100", "R_50"], symbol="R_100")
+        assert card["best"]["symbol"] == "R_100"
+
+    def test_all_markets_scanned_when_none_is_named(self):
+        _push("R_100", _FLAT_TAPE)
+        _push("R_50", _HIGH_TAPE)
+        card = MissionPlanner().probability(
+            "probability of over 4", ["R_100", "R_50"])
+        assert card["best"]["symbol"] == "R_50"   # highest rate wins
+
+    def test_no_predictions_asks_for_a_barrier(self):
+        card = MissionPlanner().probability("what is the probability", ["R_100"])
+        assert card["verdict"] == "NEED_PREDICTIONS"
+
+    def test_no_tape_is_reported_honestly(self):
+        tick_queue.clear("R_100")
+        tick_recorder.purge("R_100")
+        card = MissionPlanner().probability(
+            "probability of over 4", ["R_100"], symbol="R_100")
+        assert card["verdict"] == "NO_TAPE"
+        assert card["probabilities"] == []
+
+    def test_never_emits_an_order_payload(self):
+        _push("R_100", _HIGH_TAPE)
+        card = MissionPlanner().probability(
+            "probability of over 4", ["R_100"], symbol="R_100")
+        assert "place_payload" not in card
+        assert "scheme_entry" not in card
+
+    def test_kind_is_marked_probability(self):
+        _push("R_100", _HIGH_TAPE)
+        card = MissionPlanner().probability(
+            "probability of over 4", ["R_100"], symbol="R_100")
+        assert card["kind"] == "PROBABILITY"
+
+
+class TestProbabilityRouting:
+    def test_typed_question_returns_a_probability_card(self):
+        _push("R_100", _HIGH_TAPE)
+        res = ai_copilot.ask("what is the probability of over 4 on R_100")
+        assert res["intent"] == "PROBABILITY"
+        assert res["symbol"] == "R_100"
+        assert res["data"]["probability"] is not None
+
+    def test_routing_does_not_raise_on_the_probability_shape(self):
+        """Regression: the router read plan["selected"] unconditionally and
+        raised KeyError on probability cards, which have no run ladder."""
+        _push("R_100", _HIGH_TAPE)
+        res = ai_copilot.ask("what is the probability of over 4 on R_100")
+        assert "selected" not in res["data"] or res["data"]["selected"] == []
+        assert res["answer"]
+
+    def test_run_request_still_returns_a_plan(self):
+        _push("R_100", _LOW_TAPE)
+        res = ai_copilot.ask("over 4 under 7, 2 runs")
+        assert res["intent"] == "MISSION_PLAN"
+        assert "selected" in res["data"]
+
+    def test_route_accepts_probability_kind(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        _push("R_100", _HIGH_TAPE)
+        with TestClient(app) as c:
+            res = c.post("/ai-copilot/mission", json={
+                "question": "probability of over 4",
+                "kind": "probability",
+                "symbols": ["R_100"],
+            })
+        assert res.status_code == 200
+        body = res.json()
+        assert body["kind"] == "PROBABILITY"
+        assert body["probability"] is not None
+
+    def test_explicit_plan_kind_overrides_probability_wording(self):
+        """Clicking "Trade plan" must win over wording that reads like a
+        probability question - the user's explicit choice is authoritative."""
+        _push("R_100", _LOW_TAPE)
+        card = MissionPlanner().plan(
+            "what is the probability of over 4 and under 7", ["R_100"],
+            force="plan")
+        assert card.get("kind") != "PROBABILITY"
+        assert "selected" in card
+
+    def test_route_plan_kind_still_returns_a_plan(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        _push("R_100", _LOW_TAPE)
+        with TestClient(app) as c:
+            res = c.post("/ai-copilot/mission", json={
+                "question": "what is the probability of over 4 and under 7",
+                "kind": "plan",
+                "symbols": ["R_100"],
+            })
+        assert res.status_code == 200
+        assert res.json().get("kind") != "PROBABILITY"
+
+    def test_explicit_probability_kind_honours_a_named_market(self):
+        """Regression: the explicit probability route ignored the market named
+        in the question, so "over 4 on R_100" was answered with whichever
+        other market happened to read highest."""
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        _push("R_100", _FLAT_TAPE)
+        _push("R_50", _HIGH_TAPE)
+        with TestClient(app) as c:
+            res = c.post("/ai-copilot/mission", json={
+                "question": "what is the probability of over 4 on R_100",
+                "kind": "probability",
+                "symbols": ["R_100", "R_50"],
+            })
+        assert res.status_code == 200
+        assert res.json()["best"]["symbol"] == "R_100"

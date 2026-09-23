@@ -687,3 +687,61 @@ Verified live (real Deriv feed, `provider: deriv_live`):
 - `"over 4 under 7, 5 runs"` -> NO_MARKET, best reading 65.3% vs the 68% floor.
 - `"under 8 and over 1, 5 runs"` -> FULL_LADDER, 11 markets, `n=250` each,
   OVER 1 / entry digit 2 / 86.1% / EV +$0.130, 5-in-a-row 49.4%.
+
+## Typed questions + the honest digit board (2026-09-20)
+
+**The board was a lie, twice over.** `deriv_active_symbols` advertised 15 digit
+markets; 4 of them (`1HZ150V/1HZ200V/1HZ250V/1HZ300V`) have NO digit contract -
+Deriv answers `OfferingsInvalidSymbol` for every one. Meanwhile `1HZ15V` and
+`1HZ90V` stream live and DO offer digits, and were missing. A live
+`contracts_for` sweep of Deriv's 89 active symbols returns exactly 20
+digit-capable markets; the board is now exactly that set, and `twin/`'s
+`MARKET_BTNS` matches it (was 7). The step/jump/range/boom/crash/forex/index
+symbols stream ticks but offer no `DIGIT*` contract, so they stay off.
+
+**`Tick.digit` was silently biased on 2dp/4dp markets.** Precision was inferred
+from the float, so `95382.30` stringified to `"95382.3"` and read back as digit
+3 instead of 0. Every jump (2dp) and bear/bull (4dp) market had a skewed digit
+distribution because of it. Deriv stamps `pip_size` on each live tick and that
+is authoritative - `digit` now formats to it first, with the old inference as a
+fallback for legacy payloads. Both `raw` shapes (`{"tick":{...}}` and the bare
+tick dict) are handled.
+
+**Copilot answers typed questions with a probability.** `mission.probability()`
+is the measurement path: the user asks "what is the probability of over 5 on
+R_100" and gets the OBSERVED rate, the breakeven that payout needs, the edge in
+pp, and EV - per market. It is NOT gated by the 68% trade floor, because a
+measurement question is not a trade request; `scan()` now collects a
+`probabilities` row for every leg with tape, playable or not. `_find_symbol()`
+reads a named market out of the text (`R_100`, `r50`, `1HZ25V`, "jump 50",
+"volatility 100 1s", "bear market"), so a question about ONE index is answered
+for that index instead of whichever market read highest.
+
+**Intent routing.** `parse_request` adds `wants_probability` (probability /
+chance / odds / how likely / percent / win rate) and `explicit_runs`. A
+probability question with no run target and no "scan" is routed to the
+measurement path; anything else builds the ladder. `kind` on
+`POST /ai-copilot/mission` (`auto`/`probability`/`plan`) lets the caller pin it -
+the UI's three buttons do. `plan(force=...)` makes the explicit choice
+authoritative over the wording.
+
+**A single window is never called an EDGE.** `probability()` re-measures the
+same barrier on 100/250/1000 and reports all three. EDGE requires >= 2 windows
+that are actually FILLED (`n >= window`) and positive on every one; otherwise a
+positive-reading rate is `UNCONFIRMED`. The `satisfied` flag is the load-bearing
+part: on a 36-tick tape all three windows read the identical 36 ticks, so they
+agree trivially and would "confirm" anything. This is the same phantom-edge trap
+as the -8 session - live proof, R_100 over 5 at 77 ticks returned UNCONFIRMED
+with all three windows marked `filled=False`, while 1HZ50V over 6 returned EDGE
+with a visibly decaying 11.0pp -> 8.0pp -> 0.1pp across the three windows.
+
+Three real bugs were caught by tests/verification before commit: the copilot
+router read `plan["selected"]` unconditionally and raised `KeyError` on
+probability cards (which have no run ladder); the explicit `kind=probability`
+route ignored the market named in the question; and the first multi-window
+implementation confirmed edges off a single thin tape.
+
+Routes: `POST /ai-copilot/mission` now takes `kind`. Tests:
+`tests/test_digit_markets.py` (14), plus `TestFindSymbol`,
+`TestProbabilityIntent`, `TestProbabilityAnswer`, `TestProbabilityRouting` in
+`tests/test_copilot_mission.py`. Suite: 535 passed.

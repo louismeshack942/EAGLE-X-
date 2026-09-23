@@ -2,14 +2,31 @@
 import Link from "next/link";
 import { useState, useEffect } from "react";
 
+// Every market here offers Deriv DIGIT contracts (verified live via
+// contracts_for). 4 of the old entries (notably several 1HZ###V indices) were
+// dropped: Deriv answers OfferingsInvalidSymbol for them, so they could be
+// selected but never traded or read.
 const MARKET_BTNS: Array<[string, string]> = [
   ["Volatility 100 (1s)", "R_100"],
   ["Volatility   75", "R_75"],
   ["Volatility   50", "R_50"],
   ["Volatility   25", "R_25"],
-  ["Vol   10 (1s)", "1HZ10V"],
+  ["Volatility   10", "R_10"],
+  ["Vol   100 (1s)", "1HZ100V"],
+  ["Vol    10 (1s)", "1HZ10V"],
+  ["Vol   15 (1s)", "1HZ15V"],
   ["Vol   25 (1s)", "1HZ25V"],
   ["Vol   30 (1s)", "1HZ30V"],
+  ["Vol   50 (1s)", "1HZ50V"],
+  ["Vol   75 (1s)", "1HZ75V"],
+  ["Vol   90 (1s)", "1HZ90V"],
+  ["Jump   10", "JD10"],
+  ["Jump   25", "JD25"],
+  ["Jump   50", "JD50"],
+  ["Jump   75", "JD75"],
+  ["Jump  100", "JD100"],
+  ["Bear Market", "RDBEAR"],
+  ["Bull Market", "RDBULL"],
 ];
 const TRADE_TYPES = ["Matches / Differs", "Over / Under", "Even / Odd", "Rise / Fall", "Digit prediction"];
 function fmt(v: any, d =2): string {
@@ -135,16 +152,18 @@ const [fbi, setFbi] = useState<any>(null);
 const [fbiBusy, setFbiBusy] = useState<boolean>(false);
 const [band, setBand] = useState<any>(null);
 const [bandBusy, setBandBusy] = useState<boolean>(false);
-const [copilotQ, setCopilotQ] = useState<string>("scan all markets, over 4 and under 7, entry digit, 5 profitable runs");
+const [copilotQ, setCopilotQ] = useState<string>("what is the probability of over 5 on R_100");
 const [copilot, setCopilot] = useState<any>(null);
 const [copilotBusy, setCopilotBusy] = useState<boolean>(false);
-async function runCopilot() {
+const [copilotKind, setCopilotKind] = useState<string>("auto");
+async function runCopilot(kind?: string) {
+ const k = kind || copilotKind;
  setCopilotBusy(true);
  try {
   const res = await fetch(`/ai-copilot/mission`, {
    method: "POST",
    headers: { "Content-Type": "application/json", Accept: "application/json" },
-   body: JSON.stringify({ question: copilotQ, window: 250 }),
+   body: JSON.stringify({ question: copilotQ, window: 250, kind: k }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   setCopilot(await res.json());
@@ -672,22 +691,90 @@ return (
     <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>AI COPILOT · ASK IN PLAIN ENGLISH</h2>
     <span className="chip chip-violet">all markets · your barriers · entry digit</span>
    </div>
-   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
+   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:8 }}>
     <input value={copilotQ} onChange={(e:any) => setCopilotQ(e.target.value)}
       onKeyDown={(e:any) => { if (e.key === "Enter") runCopilot(); }}
-      placeholder="e.g. scan all markets, over 4 and under 7, entry digit, 5 profitable runs"
+      placeholder="ask anything - e.g. what is the probability of over 5 on R_100"
       style={{ flex:"1 1 320px", minWidth:240, padding:".55rem .8rem", fontSize:".8rem", borderRadius:10, border:"1px solid var(--border)", background:"rgba(12,16,30,0.6)", color:"var(--fg)" }} />
-    <button className="btn" disabled={copilotBusy} onClick={runCopilot}
-      style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,#7c3aed,var(--accent))", color:"#fff", border:"none", opacity:copilotBusy ? .6 : 1 }}>🤖 Run Mission</button>
+    <button className="btn" disabled={copilotBusy} onClick={() => runCopilot()}
+      style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,#7c3aed,var(--accent))", color:"#fff", border:"none", opacity:copilotBusy ? .6 : 1 }}>🤖 Ask</button>
     <button className="btn btn-ghost" onClick={() => setCopilot(null)}
       style={{ padding:".5rem .9rem", fontSize:".8rem" }}>Clear</button>
    </div>
-   {copilotBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Scanning every market against your barriers…</div>}
+   <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 }}>
+    {([["Probability", "probability"], ["Trade plan", "plan"], ["Auto", "auto"]] as Array<[string,string]>).map(([label, kind]) => (
+     <button key={kind} className="btn btn-ghost" disabled={copilotBusy}
+      onClick={() => { setCopilotKind(kind); runCopilot(kind); }}
+      style={{ padding:".35rem .7rem", fontSize:".7rem",
+        borderColor: copilotKind === kind ? "var(--accent)" : undefined,
+        color: copilotKind === kind ? "var(--accent)" : undefined }}>{label}</button>
+    ))}
+   </div>
+   {copilotBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Reading every live market against your question…</div>}
    {!copilot && !copilotBusy && (
-    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ask for the barriers you want ("over 4", "under 7"), how many runs, and whether you want the entry digit. The copilot scans every live market, keeps only the ones clearing the 68% floor, and answers with the exact entry digit. It never places a trade.</div>
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ask a question in your own words. <b>Probability</b> ("what is the probability of over 5 on R_100") answers with the measured chance on the live tape and the breakeven that payout needs. <b>Trade plan</b> ("scan all markets, over 4 and under 7, entry digit, 5 runs") scans every market, keeps only the ones clearing the 68% floor, and gives the exact entry digit. Name a market ("on R_100", "jump 50", "bear market") or omit it to scan all. It never places a trade.</div>
    )}
-   {copilot?.error && <div style={{ fontSize:".76rem", color:"var(--warning)" }}>Mission failed: {copilot.error}</div>}
-   {copilot && !copilot.error && (
+   {copilot?.error && <div style={{ fontSize:".76rem", color:"var(--warning)" }}>Ask failed: {copilot.error}</div>}
+   {copilot && !copilot.error && copilot.kind === "PROBABILITY" && (
+    <div style={{ display:"grid", gap:12 }}>
+     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, border:"1px solid rgba(185,102,255,0.35)", background:"rgba(185,102,255,0.06)", borderRadius:12, padding:".7rem .9rem" }}>
+      <span style={{ fontWeight:800, fontSize:".95rem" }}>
+       {copilot.verdict === "EDGE" ? "✅ CONFIRMED EDGE" : copilot.verdict === "UNCONFIRMED" ? "⚠️ UNCONFIRMED · ONE WINDOW ONLY" : copilot.verdict === "NO_EDGE" ? "🛑 NO EDGE" : copilot.verdict === "NO_TAPE" ? "⏳ NO TAPE YET" : "❓ NEED A BARRIER"}
+      </span>
+      <span className="chip chip-violet">
+       {(copilot.requested_predictions || []).map((p:any) => `${p.side} ${p.barrier}`).join(" + ") || "no barrier"}
+       {copilot.best?.symbol ? ` · ${copilot.best.symbol}` : ""}
+      </span>
+     </div>
+     {copilot.best && (
+      <div style={{ display:"grid", gap:6, gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", fontSize:".74rem", border:"1px solid var(--border)", borderRadius:12, padding:".7rem .9rem" }}>
+       <Row l="Measured chance" v={`${copilot.best.observed_pct?.toFixed(1)}%`} />
+       <Row l="Breakeven" v={`${copilot.best.breakeven_pct?.toFixed(1)}%`} />
+       <Row l="Edge" v={`${copilot.best.edge_pp >= 0 ? "+" : ""}${copilot.best.edge_pp?.toFixed(1)}pp`} />
+       <Row l="Payout" v={`${copilot.best.payout?.toFixed(2)}x`} />
+       <Row l="EV per $1" v={`${copilot.best.ev >= 0 ? "+" : ""}${copilot.best.ev?.toFixed(3)}`} />
+       <Row l="Sample" v={`${copilot.best.n} ticks`} />
+       {copilot.best.entry?.digit != null && <Row l="Entry digit" v={`${copilot.best.entry.digit}`} />}
+      </div>
+     )}
+     {(copilot.windows?.length || 0) > 0 && (
+      <div>
+       <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>WINDOW CHECK · AN EDGE MUST HOLD ON EVERY WINDOW</div>
+       <div style={{ display:"grid", gap:4 }}>
+        {copilot.windows.map((w:any, i:number) => (
+         <div key={i} style={{ display:"grid", gridTemplateColumns:"74px 1fr 74px 74px 70px", gap:8, alignItems:"center", fontSize:".72rem", border:"1px solid var(--border)", borderRadius:8, padding:".35rem .55rem" }}>
+          <span style={{ fontWeight:800 }}>{w.window}</span>
+          <span style={{ color:"var(--muted-2)" }}>{w.n} ticks{w.satisfied ? "" : " · too thin"}</span>
+          <span style={{ fontWeight:800 }}>{w.observed_pct?.toFixed(1)}%</span>
+          <span style={{ fontSize:".68rem", color:"var(--muted-2)" }}>be {w.breakeven_pct?.toFixed(1)}%</span>
+          <span style={{ fontSize:".68rem", color: w.edge_pp > 0 ? "var(--success)" : "var(--warning)" }}>{w.edge_pp >= 0 ? "+" : ""}{w.edge_pp?.toFixed(1)}pp</span>
+         </div>
+        ))}
+       </div>
+      </div>
+     )}
+     <div style={{ fontSize:".8rem", color:"var(--fg)", lineHeight:1.6, border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem", background:"rgba(12,16,30,0.4)" }}>
+      {copilot.answer}
+     </div>
+     {(copilot.probabilities?.length || 0) > 1 && (
+      <div>
+       <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>EVERY MARKET MEASURED · HIGHEST CHANCE FIRST</div>
+       <div style={{ display:"grid", gap:4 }}>
+        {copilot.probabilities.slice(0, 12).map((r:any, i:number) => (
+         <div key={i} style={{ display:"grid", gridTemplateColumns:"88px 1fr 74px 74px 62px", gap:8, alignItems:"center", fontSize:".72rem", border:"1px solid var(--border)", borderRadius:8, padding:".35rem .55rem", background: r.symbol === copilot.best?.symbol ? "rgba(185,102,255,0.08)" : "transparent" }}>
+          <span style={{ fontWeight:800 }}>{r.symbol}</span>
+          <span style={{ color:"var(--muted)" }}>{r.side} {r.barrier}</span>
+          <span style={{ fontWeight:800, color: r.edge_pp > 0 ? "var(--success)" : "var(--muted-2)" }}>{r.observed_pct?.toFixed(1)}%</span>
+          <span style={{ fontSize:".68rem", color:"var(--muted-2)" }}>be {r.breakeven_pct?.toFixed(1)}%</span>
+          <span style={{ fontSize:".68rem", color: r.edge_pp > 0 ? "var(--success)" : "var(--warning)" }}>{r.edge_pp >= 0 ? "+" : ""}{r.edge_pp?.toFixed(1)}pp</span>
+         </div>
+        ))}
+       </div>
+      </div>
+     )}
+    </div>
+   )}
+   {copilot && !copilot.error && copilot.kind !== "PROBABILITY" && (
     <div style={{ display:"grid", gap:12 }}>
      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, border:"1px solid rgba(185,102,255,0.35)", background:"rgba(185,102,255,0.06)", borderRadius:12, padding:".7rem .9rem" }}>
       <span style={{ fontWeight:800, fontSize:".95rem" }}>

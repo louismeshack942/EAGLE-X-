@@ -34,7 +34,9 @@ class AICopilot:
         # Checked before the keyword branches so a trade request never falls
         # through to a generic snapshot answer.
         if any(w in q for w in ["scan", "all market", "entry digit", "profitable run",
-                                "runs", "over ", "under "]):
+                                "runs", "over ", "under ",
+                                "probabilit", "chance of", "odds of", "how likely",
+                                "percentage"]):
             mission = self._try_mission(question)
             if mission is not None:
                 return mission
@@ -249,12 +251,25 @@ class AICopilot:
             logger.warning("mission planning failed: %s", exc)
             return None
 
+        # A probability card has no run ladder and no `selected` list - only a
+        # measured best market. Read each shape explicitly rather than assuming
+        # the plan shape, which used to raise KeyError on probability answers.
+        selected = plan.get("selected") or []
+        best = plan.get("best") or {}
+        if selected:
+            symbol = selected[0]["symbol"]
+        elif best:
+            symbol = best.get("symbol") or "ALL"
+        else:
+            symbol = "ALL"
+
         return {
             "question": question,
             "answer": plan["answer"],
-            "symbol": plan["selected"][0]["symbol"] if plan["selected"] else "ALL",
+            "symbol": symbol,
             "data": plan,
-            "intent": "MISSION_PLAN",
+            "intent": "PROBABILITY" if plan.get("kind") == "PROBABILITY"
+                      else "MISSION_PLAN",
         }
 
 
