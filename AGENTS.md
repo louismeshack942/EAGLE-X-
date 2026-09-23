@@ -633,3 +633,57 @@ example pinned to observed 85% -> confidence ~78%. Suite: 450 passed.
 
 Still advisory — it builds a card and places nothing, like every cockpit
 method.
+
+## AI Copilot mission planning (2026-09-20)
+
+`backend/app/services/mission.py` - turns a plain-English trade request into a
+grounded multi-market plan. The owner's shape:
+
+    "scan all markets favourable, i want to trade over 4 prediction,
+     under 7 prediction, and tell me the entry digit at that market,
+     i want to make 5 profitable runs"
+
+- **`parse_request()`** reads barriers (`over 4`, `under 7`, `o4`/`u7`,
+  `above`/`below`), the run target (`5 profitable runs`, `3 wins`) and an
+  optional confidence floor (`75% confidence`). OVER 9 / UNDER 0 are dropped -
+  they win on nothing. Anything it cannot find stays at its default; it never
+  invents a barrier.
+- **`MissionPlanner.scan()`** checks every market for the USER'S barriers (via
+  `cockpit.legs()`), NOT the engine's favourites. This is the whole point: the
+  copilot must never quietly answer a different question than the one asked.
+  Ranking is confidence then EV. One bad symbol never kills the scan.
+- **`plan()` verdicts:** FULL_LADDER / PARTIAL_LADDER / NO_MARKET /
+  NEED_PREDICTIONS. `runs_short_by` says how many of the requested runs the
+  live board actually supports.
+- **Run target honesty:** `_runs_math()` reports the compounded probability of
+  stringing N wins together plus expected attempts. The note is pinned to
+  "a target, not a promise". On a fair board the honest answer is usually
+  "none supports it - no trade", which is the correct answer.
+- **Demo tape is refused:** a demo-provider market can never be a candidate or
+  a selected run.
+- Route: `POST /ai-copilot/mission` ({question, predictions?, target_runs?,
+  window?, min_confidence?, symbols?}). `ai_copilot.ask()` routes trade-shaped
+  questions (`scan`, `over `, `under `, `entry digit`, `runs`) here first, so
+  they never fall through to a generic snapshot.
+- Frontend: AI COPILOT panel in `twin/app/app/page.tsx` (input + Run Mission +
+  run-ladder table showing entry digits and the honesty maths).
+- Advisory only: builds a card, places nothing.
+- Tests: `tests/test_copilot_mission.py` (35 tests). Suite: 489 passed.
+
+### Two real bugs found and fixed while testing (`cockpit.py`)
+
+1. **`list(d_counts)` returned the dict KEYS (0..9), not the counts.**
+   `band_rows()` summed 4+5+6+7+8+9 = 39 for every OVER barrier, so a genuinely
+   biased tape read as "39.0%" and reported FAIR. `live_digit_counts` now
+   returns a plain list; the band tests caught this, which is why they exist.
+2. **`window` was a lie and ticks could double-count.** `band_predict` built its
+   own tape inline, loading up to `window*4` ticks and never trimming, so
+   `window=250` reported `n=1964`. It now uses the shared `live_digit_counts`,
+   which trims to the requested window. That helper also picks the disk tape OR
+   the queue, never both: `_on_tick` writes every tick to each, so concatenating
+   them counted every tick twice. Regression tests in `TestWindowHonesty`.
+
+Verified live (real Deriv feed, `provider: deriv_live`):
+- `"over 4 under 7, 5 runs"` -> NO_MARKET, best reading 65.3% vs the 68% floor.
+- `"under 8 and over 1, 5 runs"` -> FULL_LADDER, 11 markets, `n=250` each,
+  OVER 1 / entry digit 2 / 86.1% / EV +$0.130, 5-in-a-row 49.4%.

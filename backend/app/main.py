@@ -5,7 +5,7 @@ import mimetypes
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -1620,9 +1620,36 @@ class CopilotBody(BaseModel):
     symbol: Optional[str] = None
 
 
+class MissionBody(BaseModel):
+    question: str = ""
+    predictions: Optional[List[dict]] = None
+    target_runs: Optional[int] = None
+    window: int = 250
+    min_confidence: Optional[float] = None
+    symbols: Optional[List[str]] = None
+
+
 @app.post("/ai-copilot/ask")
 def copilot_ask(body: CopilotBody):
     return ai_copilot.ask(body.question, body.symbol)
+
+
+@app.post("/ai-copilot/mission")
+def copilot_mission(body: MissionBody):
+    """Plan a multi-market trade request against the live tape.
+
+    Advisory only: returns which markets support the requested barriers,
+    their entry digits, and honest run-ladder maths. It places nothing.
+    """
+    from app.services.mission import mission_planner
+    symbols = body.symbols or get_settings().active_symbols
+    return mission_planner.plan(
+        body.question, symbols,
+        predictions=body.predictions,
+        target_runs=body.target_runs,
+        window=body.window,
+        min_confidence=body.min_confidence,
+    )
 
 
 # ---------------- Copy Trading ----------------

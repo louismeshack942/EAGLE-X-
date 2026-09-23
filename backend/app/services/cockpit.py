@@ -34,6 +34,128 @@ BAND_MIN_BARRIER = 3
 BAND_MAX_BARRIER = 8
 MIN_CONFIDENCE_PCT = 68.0
 BREAKEVEN_PCT = 90.0
+
+
+def wilson_lb(p: float, n_: int, z: float = 1.96) -> float:
+    """Wilson score lower bound (95%) - the confidence this module publishes."""
+    if n_ <= 0:
+        return 0.0
+    denom = 1 + z * z / n_
+    center = (p + z * z / (2 * n_)) / denom
+    margin = z * ((p * (1 - p) + z * z / (4 * n_)) / n_) ** 0.5 / denom
+    return max(0.0, min(1.0, center - margin))
+
+
+def live_digit_counts(symbol: str, window: int) -> Tuple[List[int], int]:
+    """Count the most recent `window` live digits for `symbol`.
+
+    Demo ticks are never allowed to drive a verdict - a synthetic tape is what
+    manufactured the phantom edges. The sample is trimmed to the requested
+    window, so a caller asking for 250 ticks gets 250: the window is a promise,
+    not just a buffer size.
+
+    Source is the disk tape OR the in-memory queue, never both: `_on_tick`
+    writes every tick to each, so concatenating them would count every tick
+    twice and silently inflate the sample.
+    """
+    from app.core.queue import tick_queue
+
+    window = max(20, int(window))
+    limit = max(2000, window * 4)
+
+    def from_disk() -> List[int]:
+        out: List[int] = []
+        for t in tick_recorder.load(symbol, limit=limit):
+            if t.get("provider") == "deriv_live":
+                d = t.get("digit")
+                if d is not None and 0 <= int(d) <= 9:
+                    out.append(int(d))
+        return out
+
+    def from_queue() -> List[int]:
+        out: List[int] = []
+        for t in tick_queue.recent(symbol, limit=limit):
+            d = getattr(t, "digit", None)
+            if (d is not None and 0 <= int(d) <= 9
+                    and getattr(t, "provider", "demo") == "deriv_live"):
+                out.append(int(d))
+        return out
+
+    disk, queue = from_disk(), from_queue()
+    # Whichever holds more live ticks; the queue is fresher after a write lag,
+    # the disk survives a restart.
+    digits = (disk if len(disk) >= len(queue) else queue)[-window:]
+
+    counts = [0] * 10
+    for d in digits:
+        counts[d] += 1
+    return counts, sum(counts)
+
+
+def barrier_row(counts: List[int], n: int, side: str, barrier: int) -> Optional[dict]:
+    """One OVER/UNDER row for an arbitrary barrier, or None if it wins nothing.
+
+    Payout over N winning digits is 10/N, breakeven is 1/payout, confidence is
+    the Wilson lower bound. `playable` also demands positive EV.
+    """
+    if n <= 0:
+        return None
+    if side == "OVER":
+        wins = sum(counts[k] for k in range(barrier + 1, 10))
+        outs = 9 - barrier
+    else:
+        wins = sum(counts[k] for k in range(0, barrier))
+        outs = barrier
+    if outs <= 0:
+        return None
+    pay = 10.0 / outs
+    p = wins / n
+    be = 100.0 / pay
+    conf = wilson_lb(p, n) * 100.0
+    ev = p * pay - 1.0
+    return {
+        "side": side, "barrier": barrier,
+        "winning_digits": outs,
+        "payout": round(pay, 4),
+        "observed_pct": round(p * 100, 2),
+        "confidence": round(conf, 2),
+        "breakeven_pct": round(be, 2),
+        "edge_pp": round(p * 100 - be, 2),
+        "ev": round(ev, 4),
+        "sample": n,
+        "playable": conf >= MIN_CONFIDENCE_PCT and ev > 0,
+    }
+
+
+def entry_digit(counts: List[int], n: int, side: str, barrier: int) -> dict:
+    """The entry digit = the winning digit adjacent to the barrier.
+
+    OVER b wins on b+1..9, so the entry is b+1 (OVER 3 -> digit 4); UNDER b
+    wins on 0..b-1, so it is b-1. `inside` is False when that digit's own rate
+    is under 50% - the band can carry the edge while the single digit does not.
+    """
+    if side == "OVER":
+        digit = barrier + 1
+    elif side == "UNDER":
+        digit = barrier - 1
+    else:
+        return {"digit": None, "count": 0, "pct": 0.0, "confidence": 0.0,
+                "wilson_lb": 0.0, "inside": False, "available": False}
+    if not 0 <= digit <= 9 or n <= 0:
+        return {"digit": None, "count": 0, "pct": 0.0, "confidence": 0.0,
+                "wilson_lb": 0.0, "inside": False, "available": False}
+    c = counts[digit]
+    p = c / n
+    return {
+        "digit": digit, "count": c,
+        "pct": round(p * 100, 2),
+        "confidence": round(p * 100, 2),
+        "wilson_lb": round(wilson_lb(p, n) * 100.0, 2),
+        "inside": p >= 0.5,
+        "available": True,
+    }
+
+
 _TICK_DIR = Path(__file__).resolve().parent / "data" / "ticks"
 
 
@@ -551,6 +673,67 @@ class CockpitEngine:
         }
 
 
+    def legs(self, symbol: str, predictions: List[dict],
+             window: int = 250) -> dict:
+        """Evaluate the USER'S OWN predictions on this market's live tape.
+
+        Unlike `band_predict()` (which ranks the whole 3..8 band and picks the
+        best), this answers "is MY over 4 / under 7 actually supported here?".
+        Each leg gets its own confidence, payout, breakeven and EV, plus the
+        entry digit at that exact barrier. Advisory only - it never fires.
+        """
+        window = max(20, int(window))
+        counts, n = live_digit_counts(symbol, window)
+
+        legs: List[dict] = []
+        for p in (predictions or []):
+            try:
+                barrier = int(p.get("barrier"))
+            except (TypeError, ValueError):
+                continue
+            side = str(p.get("side", "")).upper()
+            if side not in ("OVER", "UNDER"):
+                continue
+            if n <= 0:
+                legs.append({
+                    "side": side, "barrier": barrier, "playable": False,
+                    "reason": "no live tape on this market yet",
+                    "entry": None, "sample": 0,
+                })
+                continue
+            row = barrier_row(counts, n, side, barrier)
+            if row is None:
+                legs.append({
+                    "side": side, "barrier": barrier, "playable": False,
+                    "reason": f"{side} {barrier} wins on no digits - it cannot pay.",
+                    "entry": None, "sample": n,
+                })
+                continue
+            entry = entry_digit(counts, n, side, barrier)
+            row["entry"] = entry
+            row["reason"] = (
+                f"{side} {barrier} wins {row['winning_digits']}/10 digits at "
+                f"{row['payout']}x; confidence {row['confidence']:.1f}% vs "
+                f"breakeven {row['breakeven_pct']:.1f}%"
+                + ("" if row["playable"] else " - below the floor")
+            )
+            legs.append(row)
+
+        playable = [x for x in legs if x.get("playable")]
+        best = max(playable, key=lambda r: (r["confidence"], r["ev"])) if playable else None
+        return {
+            "symbol": symbol, "window": window, "n": n,
+            "provider": "deriv_live",
+            "requested": [{"side": str(p.get("side", "")).upper(),
+                           "barrier": p.get("barrier")} for p in (predictions or [])],
+            "legs": legs,
+            "playable_count": len(playable),
+            "all_playable": bool(legs) and len(playable) == len(legs),
+            "best": best,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+
+
     def band_predict(self, symbol: str, window: int = 250, duration: str = "5t",
                      stake: float = 1.0) -> dict:
         """Owner's band spec: OVER 3..UNDER 8, confidence floor 68%, entry digit.
@@ -560,111 +743,26 @@ class CockpitEngine:
         95%) clears MIN_CONFIDENCE_PCT, together with the exact ENTRY digit
         inside that band. Advisory only - it answers, it never fires.
         """
-        from app.core.queue import tick_queue
-
         window = max(20, int(window))
-
-        def digit_tape() -> List[str]:
-            """Live digits: disk tape first, then the in-memory queue.
-
-            Demo ticks are never allowed to drive the verdict - a synthetic
-            tape is what manufactured the phantom edges.
-            """
-            out: List[str] = []
-            for t in tick_recorder.load(symbol, limit=max(2000, window * 4)):
-                if t.get("provider") == "deriv_live":
-                    d = t.get("digit")
-                    if d is not None and 0 <= int(d) <= 9:
-                        out.append(str(int(d)))
-            if len(out) < window:
-                for t in tick_queue.recent(symbol, limit=max(2000, window * 4)):
-                    d = getattr(t, "digit", None)
-                    if (d is not None and 0 <= int(d) <= 9
-                            and getattr(t, "provider", "demo") == "deriv_live"):
-                        out.append(str(int(d)))
-            return out
-
-        def wilson_lb(p: float, n_: int, z: float = 1.96) -> float:
-            """Wilson score lower bound (95%) - the confidence we publish."""
-            if n_ <= 0:
-                return 0.0
-            denom = 1 + z * z / n_
-            center = (p + z * z / (2 * n_)) / denom
-            margin = z * ((p * (1 - p) + z * z / (4 * n_)) / n_) ** 0.5 / denom
-            return max(0.0, min(1.0, center - margin))
-
-        d_counts = {k: 0 for k in range(10)}
-        for d in digit_tape():
-            d_counts[int(d)] += 1
-        n = sum(d_counts.values())
+        d_counts, n = live_digit_counts(symbol, window)
 
         def band_rows() -> Tuple[List[dict], List[dict]]:
             """One row per barrier per side in the 3..8 band."""
             overs: List[dict] = []
             unders: List[dict] = []
-            if n <= 0:
-                return overs, unders
             for b in range(BAND_MIN_BARRIER, BAND_MAX_BARRIER + 1):
-                wins_o = sum(d_counts[k] for k in range(b + 1, 10))
-                wins_u = sum(d_counts[k] for k in range(0, b))
-                outs_o, outs_u = 9 - b, b
-                # Payout over N winning digits is 10/N (OVER 3 -> 1.67x).
-                pay_o = 10.0 / outs_o if outs_o else 0.0
-                pay_u = 10.0 / outs_u if outs_u else 0.0
-                for side, wins, outs, pay in (("OVER", wins_o, outs_o, pay_o),
-                                              ("UNDER", wins_u, outs_u, pay_u)):
-                    p = wins / n
-                    be = 100.0 / pay if pay else 100.0
-                    conf = wilson_lb(p, n) * 100.0
-                    ev = p * pay - 1.0
-                    row = {
-                        "side": side, "barrier": b,
-                        "winning_digits": outs,
-                        "payout": round(pay, 4),
-                        "observed_pct": round(p * 100, 2),
-                        "confidence": round(conf, 2),
-                        "breakeven_pct": round(be, 2),
-                        "edge_pp": round(p * 100 - be, 2),
-                        "ev": round(ev, 4),
-                        "sample": n,
-                        "playable": conf >= MIN_CONFIDENCE_PCT and ev > 0,
-                    }
-                    (overs if side == "OVER" else unders).append(row)
+                for side in ("OVER", "UNDER"):
+                    row = barrier_row(d_counts, n, side, b)
+                    if row:
+                        (overs if side == "OVER" else unders).append(row)
             return overs, unders
 
         rows_over, rows_under = band_rows()
         playable = [r for r in (rows_over + rows_under) if r["playable"]]
         band = max(playable, key=lambda r: (r["confidence"], r["ev"])) if playable else None
 
-        def entry_digit_for(r: Optional[dict]) -> dict:
-            """The entry digit = the winning digit adjacent to the barrier.
-
-            OVER b wins on b+1..9, so the entry is b+1 (OVER 3 -> digit 4,
-            exactly the owner's example); UNDER b wins on 0..b-1, so it is b-1.
-            This is the tightest priced win in the band: the user is buying
-            "the tick lands on the digit just past the barrier", not the whole
-            span. `inside` is False when that digit's own rate is under 50%.
-            """
-            if not r:
-                return {"digit": None, "count": 0, "pct": 0.0, "confidence": 0.0,
-                        "wilson_lb": 0.0, "inside": False, "available": False}
-            b, side = r["barrier"], r["side"]
-            digit = b + 1 if side == "OVER" else b - 1
-            if not 0 <= digit <= 9:
-                return {"digit": None, "count": 0, "pct": 0.0, "confidence": 0.0,
-                        "wilson_lb": 0.0, "inside": False, "available": False}
-            c = d_counts[digit]
-            p = c / n if n else 0.0
-            return {
-                "digit": digit, "count": c,
-                "pct": round(p * 100, 2),
-                "confidence": round(p * 100, 2),
-                "wilson_lb": round(wilson_lb(p, n) * 100.0, 2) if n else 0.0,
-                "inside": p >= 0.5,
-                "available": True,
-            }
-
-        entry = entry_digit_for(band)
+        entry = entry_digit(d_counts, n, band["side"],
+                            band["barrier"]) if band else entry_digit([], 0, "", 0)
         if band and entry["available"]:
             band = dict(band, entry_digit=entry["digit"])
 

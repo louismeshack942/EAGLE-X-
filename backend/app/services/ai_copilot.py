@@ -4,6 +4,7 @@ Rule-based over live analytics by default: every answer is grounded in real
 EV, z-scores, Kelly stakes, and the squad's current form. When OPENAI_API_KEY
 or ANTHROPIC_API_KEY is set, those can be layered on (not required).
 """
+import logging
 from typing import Optional
 
 from app.services import forensics as forensics_svc
@@ -12,17 +13,31 @@ from app.services import season as season_svc
 from app.services.analytics import analytics_engine
 from app.services.analytics_advanced import digit_engine
 from app.services.auto_trader import auto_trader
+from app.config import get_settings
 from app.services.intelligence import intelligence_engine
 from app.services.market_master import market_master
+from app.services.mission import mission_planner, parse_request
 from app.services.money_management import kelly_stake, risk_state
 from app.services.risk_guard import risk_guard
 from app.services.virtual_bank import virtual_bank
+
+logger = logging.getLogger(__name__)
 
 
 class AICopilot:
     def ask(self, question: str, symbol: Optional[str] = None) -> dict:
         q = question.lower().strip()
         symbol = symbol or "R_100"
+
+        # Mission planning: the owner asks for specific barriers across markets
+        # ("scan all markets, over 4 and under 7, entry digit, 5 runs").
+        # Checked before the keyword branches so a trade request never falls
+        # through to a generic snapshot answer.
+        if any(w in q for w in ["scan", "all market", "entry digit", "profitable run",
+                                "runs", "over ", "under "]):
+            mission = self._try_mission(question)
+            if mission is not None:
+                return mission
 
         if any(w in q for w in ["ruin", "blow up", "broke", "monte carlo", "risk of ruin"]):
             r = forensics_svc.risk_of_ruin()
@@ -213,6 +228,33 @@ class AICopilot:
             ),
             "symbol": symbol,
             "data": intel,
+        }
+
+    def _try_mission(self, question: str) -> Optional[dict]:
+        """Route a plain-English trade request to the mission planner.
+
+        Returns None when the question carries no usable barrier, so the normal
+        keyword branches still get their chance. Advisory only - the planner
+        reports what the live tape supports and places nothing.
+        """
+        try:
+            parsed = parse_request(question)
+            if not parsed["predictions"]:
+                return None
+            symbols = get_settings().active_symbols
+            if not symbols:
+                return None
+            plan = mission_planner.plan(question, symbols)
+        except Exception as exc:
+            logger.warning("mission planning failed: %s", exc)
+            return None
+
+        return {
+            "question": question,
+            "answer": plan["answer"],
+            "symbol": plan["selected"][0]["symbol"] if plan["selected"] else "ALL",
+            "data": plan,
+            "intent": "MISSION_PLAN",
         }
 
 

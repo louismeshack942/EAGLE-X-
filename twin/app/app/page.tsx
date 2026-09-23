@@ -135,6 +135,25 @@ const [fbi, setFbi] = useState<any>(null);
 const [fbiBusy, setFbiBusy] = useState<boolean>(false);
 const [band, setBand] = useState<any>(null);
 const [bandBusy, setBandBusy] = useState<boolean>(false);
+const [copilotQ, setCopilotQ] = useState<string>("scan all markets, over 4 and under 7, entry digit, 5 profitable runs");
+const [copilot, setCopilot] = useState<any>(null);
+const [copilotBusy, setCopilotBusy] = useState<boolean>(false);
+async function runCopilot() {
+ setCopilotBusy(true);
+ try {
+  const res = await fetch(`/ai-copilot/mission`, {
+   method: "POST",
+   headers: { "Content-Type": "application/json", Accept: "application/json" },
+   body: JSON.stringify({ question: copilotQ, window: 250 }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  setCopilot(await res.json());
+ } catch (e: any) {
+  setCopilot({ error: String(e?.message || e) });
+ } finally {
+  setCopilotBusy(false);
+ }
+}
 async function loadBand() {
  setBandBusy(true);
  try {
@@ -641,6 +660,78 @@ return (
          </div>
         ))}
        </div>
+      </div>
+     )}
+    </div>
+   )}
+  </section>
+ </div>
+ <div style={{ maxWidth:1240, margin:"0 auto", padding:"16px 1rem 0" }}>
+  <section className="card-glow" style={{ padding:"1rem" }}>
+   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+    <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>AI COPILOT · ASK IN PLAIN ENGLISH</h2>
+    <span className="chip chip-violet">all markets · your barriers · entry digit</span>
+   </div>
+   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
+    <input value={copilotQ} onChange={(e:any) => setCopilotQ(e.target.value)}
+      onKeyDown={(e:any) => { if (e.key === "Enter") runCopilot(); }}
+      placeholder="e.g. scan all markets, over 4 and under 7, entry digit, 5 profitable runs"
+      style={{ flex:"1 1 320px", minWidth:240, padding:".55rem .8rem", fontSize:".8rem", borderRadius:10, border:"1px solid var(--border)", background:"rgba(12,16,30,0.6)", color:"var(--fg)" }} />
+    <button className="btn" disabled={copilotBusy} onClick={runCopilot}
+      style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,#7c3aed,var(--accent))", color:"#fff", border:"none", opacity:copilotBusy ? .6 : 1 }}>🤖 Run Mission</button>
+    <button className="btn btn-ghost" onClick={() => setCopilot(null)}
+      style={{ padding:".5rem .9rem", fontSize:".8rem" }}>Clear</button>
+   </div>
+   {copilotBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Scanning every market against your barriers…</div>}
+   {!copilot && !copilotBusy && (
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ask for the barriers you want ("over 4", "under 7"), how many runs, and whether you want the entry digit. The copilot scans every live market, keeps only the ones clearing the 68% floor, and answers with the exact entry digit. It never places a trade.</div>
+   )}
+   {copilot?.error && <div style={{ fontSize:".76rem", color:"var(--warning)" }}>Mission failed: {copilot.error}</div>}
+   {copilot && !copilot.error && (
+    <div style={{ display:"grid", gap:12 }}>
+     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, border:"1px solid rgba(185,102,255,0.35)", background:"rgba(185,102,255,0.06)", borderRadius:12, padding:".7rem .9rem" }}>
+      <span style={{ fontWeight:800, fontSize:".95rem" }}>
+       {copilot.verdict === "FULL_LADDER" ? "✅ LADDER READY" : copilot.verdict === "PARTIAL_LADDER" ? "⚠️ PARTIAL LADDER" : copilot.verdict === "NO_MARKET" ? "🛑 NO MARKET" : "❓ NEED PREDICTIONS"}
+      </span>
+      <span className="chip chip-violet">
+       {(copilot.requested_predictions || []).map((p:any) => `${p.side} ${p.barrier}`).join(" + ") || "no barriers"} · target {copilot.target_runs} runs
+      </span>
+     </div>
+     <div style={{ fontSize:".8rem", color:"var(--fg)", lineHeight:1.6, border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem", background:"rgba(12,16,30,0.4)" }}>
+      {copilot.answer}
+     </div>
+     {(copilot.selected?.length || 0) > 0 && (
+      <div>
+       <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>RUN LADDER · LIVE MARKETS ONLY</div>
+       <div style={{ display:"grid", gap:6 }}>
+        {copilot.selected.map((c:any, i:number) => (
+         <div key={i} style={{ display:"grid", gridTemplateColumns:"34px 84px 1fr 78px 60px 66px", gap:8, alignItems:"center", fontSize:".74rem", border:"1px solid rgba(40,209,124,0.28)", background:"rgba(40,209,124,0.05)", borderRadius:10, padding:".5rem .6rem" }}>
+          <span style={{ color:"var(--muted-2)", fontWeight:800 }}>#{i+1}</span>
+          <span style={{ fontWeight:800 }}>{c.symbol}</span>
+          <span style={{ color:"var(--muted)" }}>{c.play.side} {c.play.barrier}</span>
+          <span className="chip" style={{ background:"rgba(40,209,124,0.16)", borderColor:"rgba(40,209,124,0.4)", color:"var(--success)", fontWeight:800 }}>{c.play.confidence?.toFixed(1)}%</span>
+          <span style={{ fontSize:".7rem", color:"var(--muted-2)" }}>EV {c.play.ev?.toFixed(3)}</span>
+          <span style={{ display:"flex", alignItems:"center", gap:6 }}>
+           <span style={{ fontSize:".62rem", color:"var(--muted-2)" }}>ENTRY</span>
+           <span style={{ fontWeight:800, fontSize:"1.05rem", color:"#e11d48" }}>{c.play.entry_digit ?? "-"}</span>
+          </span>
+         </div>
+        ))}
+       </div>
+      </div>
+     )}
+     {copilot.runs && (
+      <div style={{ display:"grid", gap:6, gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", fontSize:".74rem", border:"1px solid var(--border)", borderRadius:12, padding:".7rem .9rem" }}>
+       <Row l="Per run" v={`${(copilot.runs.p_single_run * 100).toFixed(1)}%`} />
+       <Row l={`All ${copilot.target_runs} in a row`} v={`${(copilot.runs.p_all_runs * 100).toFixed(2)}%`} />
+       <Row l="Avg attempts" v={`${copilot.runs.expected_attempts_to_target}`} />
+       <Row l="Per 10 attempts" v={`${copilot.runs.expected_runs_per_10_attempts} runs`} />
+      </div>
+     )}
+     {(copilot.scanned?.length || 0) > 0 && (
+      <div style={{ fontSize:".7rem", color:"var(--muted-2)" }}>
+       Markets scanned: {copilot.scanned.filter((s:any) => s.n > 0).length}/{copilot.scanned.length} with live tape
+       {copilot.runs_short_by ? ` · ${copilot.runs_short_by} run(s) short of your ${copilot.target_runs}` : ""}
       </div>
      )}
     </div>

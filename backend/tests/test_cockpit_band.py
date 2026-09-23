@@ -276,6 +276,34 @@ class TestHonestyGates:
             assert row["sample"] == r["n"]
 
 
+class TestWindowHonesty:
+    """`window` must be the sample size, not just a buffer size."""
+
+    def test_n_never_exceeds_the_requested_window(self):
+        r = _band(_repeat(9) * 10, window=100)  # 1000 ticks on tape
+        assert r["n"] == 100
+
+    def test_smaller_window_uses_fewer_ticks(self):
+        tape = _repeat(9) * 10
+        assert _band(tape, window=100)["n"] == 100
+        assert _band(tape, window=250)["n"] == 250
+
+    def test_n_uses_whatever_exists_when_tape_is_short(self):
+        _push([1, 2, 3] * 5)
+        r = CockpitEngine().band_predict(SYM, window=250)
+        assert r["n"] == 15
+
+    def test_ticks_are_not_counted_twice(self):
+        """Every tick lands in both the queue and the disk tape - pick one.
+
+        `_on_tick` writes to each, so a naive concatenation would report
+        double the real sample.
+        """
+        tape = _repeat(9) * 5  # exactly 500 ticks
+        r = _band(tape, window=250)
+        assert r["n"] == 250, "sample was inflated - ticks double-counted"
+
+
 class TestBandSurface:
     """Ranking, payload shape and the HTTP route."""
 
