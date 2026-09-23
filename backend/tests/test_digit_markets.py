@@ -25,7 +25,11 @@ DIGIT_MARKETS = {
     "JD10", "JD25", "JD50", "JD75", "JD100",
     "RDBEAR", "RDBULL",
 }
-# Stream ticks but offer no digit contract - must never be on this board.
+# Not on the board, and must never be: no DIGIT* contract exists for them.
+# 1HZ150V/200V/250V/300V are not even active - Deriv answers
+# OfferingsInvalidSymbol. The rest stream ticks but offer no digit contract.
+# Verified by a full contracts_for sweep of all 89 active symbols: exactly 20
+# are digit-capable, and they are precisely the set above.
 NON_DIGIT = {
     "1HZ150V", "1HZ200V", "1HZ250V", "1HZ300V",
     "BOOM1000", "BOOM500", "CRASH1000", "CRASH500",

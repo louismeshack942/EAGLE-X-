@@ -692,12 +692,18 @@ Verified live (real Deriv feed, `provider: deriv_live`):
 
 **The board was a lie, twice over.** `deriv_active_symbols` advertised 15 digit
 markets; 4 of them (`1HZ150V/1HZ200V/1HZ250V/1HZ300V`) have NO digit contract -
-Deriv answers `OfferingsInvalidSymbol` for every one. Meanwhile `1HZ15V` and
-`1HZ90V` stream live and DO offer digits, and were missing. A live
-`contracts_for` sweep of Deriv's 89 active symbols returns exactly 20
-digit-capable markets; the board is now exactly that set, and `twin/`'s
-`MARKET_BTNS` matches it (was 7). The step/jump/range/boom/crash/forex/index
-symbols stream ticks but offer no `DIGIT*` contract, so they stay off.
+Deriv answers `OfferingsInvalidSymbol` for every one, and are not even active.
+Meanwhile `1HZ15V` and `1HZ90V` stream live and DO offer all 6 digit contract
+types, and were missing. A full `contracts_for` sweep of all 89 active symbols
+returns exactly 20 digit-capable markets - precisely the 20 now on the board,
+and `twin/`'s `MARKET_BTNS` matches it (was 7). The step/jump/range/boom/crash/
+forex/index symbols stream ticks but offer no `DIGIT*` contract, so they stay
+off.
+
+Probe gotcha that cost real time: `contracts_for` rejects a `currency` field on
+this endpoint. Sending it returns `InputValidationFailed` for EVERY symbol,
+which makes the whole board look digit-incapable and silently "confirms" the
+wrong conclusion. Send `contracts_for` alone.
 
 **`Tick.digit` was silently biased on 2dp/4dp markets.** Precision was inferred
 from the float, so `95382.30` stringified to `"95382.3"` and read back as digit

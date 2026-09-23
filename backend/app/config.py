@@ -39,15 +39,19 @@ class Settings(BaseSettings):
     # Full digit-trading board: every synthetic that offers digit contracts.
     # A wider board means more tables the truth gate can find a real skew on.
     #
-    # Probed live against contracts_for on the public endpoint (2026-09-20):
-    # exactly 20 of Deriv's 89 active symbols list DIGIT* contracts, and ALL
-    # 20 are here. 1HZ150V/1HZ200V/1HZ250V/1HZ300V were previously listed but
-    # Deriv answers "OfferingsInvalidSymbol - no contract available for this
-    # symbol" for every one of them, so the board was 4 markets short of a lie:
-    # it advertised 15 digit markets, 4 of which cannot take a digit trade.
-    # 1HZ15V and 1HZ90V stream live and DO offer digits — they replaced them.
-    # The step/jump/range/boom/crash/forex/index symbols stream ticks but
-    # offer no DIGIT* contract at all, so they stay off this board.
+    # Probed live against contracts_for on the public endpoint (2026-09-20).
+    # A full sweep of all 89 active symbols returns EXACTLY 20 that list DIGIT*
+    # contracts, and they are precisely the 20 below. Two corrections were made:
+    # (a) 1HZ150V/1HZ200V/1HZ250V/1HZ300V were listed but are not even active -
+    #     Deriv answers "OfferingsInvalidSymbol" - so the board advertised four
+    #     markets that could never take a digit trade;
+    # (b) 1HZ15V and 1HZ90V stream live and DO offer the full 6 digit contract
+    #     types, and were missing.
+    # The step/jump/range/boom/crash/forex/index symbols stream ticks but offer
+    # no DIGIT* contract, so they stay off this board.
+    # NOTE: contracts_for rejects a `currency` field on this endpoint; sending
+    # it returns InputValidationFailed for every symbol and makes the whole
+    # board look digit-incapable. Send contracts_for alone.
     deriv_active_symbols: str = (
         "R_10,R_25,R_50,R_75,R_100,"
         "1HZ10V,1HZ15V,1HZ25V,1HZ30V,1HZ50V,"
