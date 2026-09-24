@@ -896,7 +896,7 @@ return (
          </span>
         </div>
        )}
-       <div style={{ fontSize:".78rem", color:"var(--fg)", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{m.text}</div>
+       <div style={{ fontSize:".78rem", color:"var(--fg)", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{m.text ?? m.answer ?? ""}</div>
        {(m.limitations || []).filter(Boolean).length > 0 && (
         <div style={{ marginTop:5, fontSize:".66rem", color:"var(--muted-2)", lineHeight:1.45 }}>
          {(m.limitations || []).filter(Boolean).map((l:string, j:number) => <div key={j}>· {l}</div>)}

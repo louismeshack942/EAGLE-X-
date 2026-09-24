@@ -34,6 +34,7 @@ from app.services.mission import parse_request
 from app.services.persistence import journal_engine, settings_store
 from app.services.risk_guard import risk_guard
 from app.services.shell import real_trade_budget
+from app.services.tick_recorder import tick_recorder
 from app.services.truth_engine import truth_engine
 from app.services.virtual_bank import virtual_bank
 from app.core.queue import tick_queue
@@ -64,6 +65,33 @@ def _count_key(conversation_id: str) -> str:
     return f"chat_exchanges_{conversation_id}"
 
 
+def _disk_age(symbol: str) -> Optional[float]:
+    """Seconds since the newest recorded tick, or None.
+
+    The in-memory queue is empty after a restart while the disk tape is not, so
+    an age read from the queue alone renders as "Latest tick Nones ago". The
+    recorded entry names its time `ts`, not `timestamp` - reading the wrong key
+    is what produced the literal None.
+    """
+    try:
+        rows = tick_recorder.load(symbol, limit=1)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("chat: disk age read failed for %s: %s", symbol, exc)
+        return None
+    if not rows:
+        return None
+    raw = rows[-1].get("ts") or rows[-1].get("timestamp")
+    if not raw:
+        return None
+    try:
+        ts = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return round((datetime.now(timezone.utc) - ts).total_seconds(), 1)
+
+
 class PlatformChat:
     """Conversational front door to the platform's own analytics."""
 
@@ -71,8 +99,21 @@ class PlatformChat:
 
     def history(self, conversation_id: str = "default",
                 limit: int = 50) -> List[dict]:
+        """Turns, newest last, with the reply metadata flattened.
+
+        `_append` stores topic/grounded under "meta" because that is the
+        natural shape on the write path, but every reader (the UI, the API
+        consumer) wants those fields at the top level. Flattening here keeps
+        one shape on the wire instead of two, and stops a restored message
+        from silently losing its "measured" marker.
+        """
         turns = settings_store.get(_key(conversation_id), []) or []
-        return turns[-limit:]
+        out: List[dict] = []
+        for t in turns[-limit:]:
+            flat = {k: v for k, v in t.items() if k != "meta"}
+            flat.update(t.get("meta") or {})
+            out.append(flat)
+        return out
 
     def clear(self, conversation_id: str = "default") -> dict:
         settings_store.set(_key(conversation_id), [])
@@ -131,6 +172,7 @@ class PlatformChat:
         turn = self._append(conversation_id, "platform", reply["text"], {
             "topic": reply.get("topic"),
             "grounded": reply.get("grounded"),
+            "limitations": reply.get("limitations", []),
         })
         count = self.exchanges(conversation_id) + 1
         settings_store.set(_count_key(conversation_id), count)
@@ -246,12 +288,15 @@ class PlatformChat:
                     (datetime.now(timezone.utc) - ts).total_seconds(), 1)
             except Exception:  # noqa: BLE001
                 age = None
+        if age is None:
+            age = _disk_age(symbol)
 
         fresh = n >= 250 and (age is None or age <= 30)
         verdict = "FRESH" if fresh else "THIN" if n else "NO TAPE"
+        ago = f"{age}s ago" if age is not None else "age unavailable"
         text = (
             f"{symbol}: {n} live ticks in the 250-tick window, {buffered} buffered "
-            f"in total. Latest tick {age}s ago. Tape is "
+            f"in total. Latest tick {ago}. Tape is "
             + ("fresh — safe to measure on." if fresh else
                "thin — any edge computed on this is not trustworthy yet.")
         )

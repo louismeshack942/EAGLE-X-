@@ -431,12 +431,24 @@ with the platform", grounded in the live tape, the truth engine and the journal.
   Deriving it from `len(history)` froze it at `MAX_TURNS` (200) — a long
   conversation was silently reported as a short one. Regression test:
   `test_exchange_count_keeps_growing_past_the_history_cap`.
+- **One shape on the wire.** `history()` flattens the stored `meta` block so a
+  restored reply exposes `topic` / `grounded` / `limitations` at the top level,
+  exactly like a fresh reply. Before, they were nested, so *every* message
+  reloaded as "not measured" and lost its caveats — the honesty layer silently
+  vanished on refresh. Tests: `test_history_flattens_reply_metadata`,
+  `test_history_keeps_limitations`.
+- **Tape age falls back to the disk tape.** The in-memory queue is empty after a
+  restart while the disk tape is not; the recorded entry names its time `ts`,
+  not `timestamp`. Reading the queue alone rendered "Latest tick Nones ago".
+  `_disk_age()` reads the right key, and a failure there logs instead of
+  returning a silent None. Tests: `test_age_is_never_rendered_as_none`,
+  `test_disk_age_reads_the_ts_key`.
 - Routes: `GET /chat/suggestions`, `GET /chat/history`, `POST /chat/clear`,
   `POST /chat/ask`.
 - Frontend: the "CHAT · ASK THE PLATFORM" panel in `twin/app/app/page.tsx`
   (bubble list, per-reply topic chip + measured/not-measured marker, limitation
   bullets, starter prompts, Clear).
-- Tests: `tests/test_chat.py` (32). Suite: 565 passed.
+- Tests: `tests/test_chat.py` (38). Suite: 573 passed.
 - Test hermeticity gotcha: `live_digit_counts` prefers the ON-DISK tape and only
   then the queue, and `active_symbols` is the real market list — both leak
   production ticks and live symbols into tests. The suite drives fake symbol

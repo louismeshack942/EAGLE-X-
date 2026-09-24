@@ -36,7 +36,7 @@ def _hermetic(monkeypatch):
     cleared on both sides of the test.
     """
     ids = ("t1", "a", "b", "n", "z", "persist-check", "route-t",
-           "cap-check", "reset-check")
+           "cap-check", "reset-check", "flat-check", "shape-check", "lim-check")
     c = PlatformChat()
     for cid in ids:
         c.clear(cid)
@@ -155,6 +155,54 @@ class TestConversation:
         c.clear(cid)
         assert c.exchanges(cid) == 0
 
+    def test_history_flattens_reply_metadata(self):
+        """Regression: topic/grounded were stored under "meta" but the UI reads
+        them at the top level, so every restored reply rendered as
+        'not measured' even when it had been measured."""
+        _push(_flat())
+        c = PlatformChat()
+        cid = "flat-check"
+        c.clear(cid)
+        c.ask("how fresh is the tape", conversation_id=cid, symbol=SYM)
+        reply = c.history(cid)[1]
+        assert reply["role"] == "platform"
+        assert reply.get("topic") == "tape"
+        assert reply.get("grounded") is True
+        assert "meta" not in reply
+        c.clear(cid)
+
+    def test_history_and_ask_agree_on_metadata(self):
+        """A restored reply must expose the same topic/grounded as the live one,
+        because that is what the UI's 'measured' marker is driven by. Content
+        lives under `answer` on a fresh reply and `text` in the stored turn;
+        the UI reads both, so the test asserts reachability rather than
+        pretending the two keys are the same."""
+        _push(_flat())
+        c = PlatformChat()
+        cid = "shape-check"
+        c.clear(cid)
+        live = c.ask("how fresh is the tape", conversation_id=cid, symbol=SYM)
+        restored = c.history(cid)[1]
+        assert live["topic"] == restored["topic"]
+        assert live["grounded"] == restored["grounded"]
+        assert live["answer"] and restored["text"]
+        assert live["answer"] == restored["text"]
+        c.clear(cid)
+
+
+    def test_history_keeps_limitations(self):
+        """Limitations were stored nowhere, so a restored reply silently lost
+        its caveats - the honesty layer vanished on reload."""
+        _push(_flat())
+        c = PlatformChat()
+        cid = "lim-check"
+        c.clear(cid)
+        live = c.ask("how fresh is the tape", conversation_id=cid, symbol=SYM)
+        restored = c.history(cid)[1]
+        assert live["limitations"]
+        assert restored.get("limitations") == live["limitations"]
+        c.clear(cid)
+
 
 class TestTapeTopic:
     def test_thin_tape_is_called_thin(self):
@@ -174,6 +222,28 @@ class TestTapeTopic:
         out = PlatformChat().ask("is the tape fresh", symbol=SYM)
         assert out["data"]["verdict"] == "NO TAPE"
         assert out["grounded"] is False
+
+    def test_age_is_never_rendered_as_none(self):
+        """Regression: with an empty queue the age was None and the text read
+        'Latest tick Nones ago'. It must read as unavailable, never as None."""
+        _push(_flat(1))
+        out = PlatformChat().ask("is the tape fresh", symbol=SYM)
+        assert "Nones" not in out["answer"]
+        assert "None" not in out["answer"]
+
+    def test_disk_age_reads_the_ts_key(self, monkeypatch):
+        """The recorded entry names its time `ts`, not `timestamp`; reading the
+        wrong key silently produced an age of None."""
+        written = datetime.now(timezone.utc).isoformat()
+        monkeypatch.setattr(chat_mod.tick_recorder, "load",
+                            lambda s, limit=1: [{"ts": written, "digit": 4}])
+        age = chat_mod._disk_age(SYM)
+        assert age is not None and age >= 0
+
+    def test_disk_age_is_none_without_a_tape(self, monkeypatch):
+        monkeypatch.setattr(chat_mod.tick_recorder, "load",
+                            lambda s, limit=1: [])
+        assert chat_mod._disk_age(SYM) is None
 
 
 class TestEdgeHonesty:
