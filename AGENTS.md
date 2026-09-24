@@ -406,6 +406,43 @@ Standing order: the CF must NEVER stop. Four failure classes found and fixed:
 Suite: 274 passed.
 
 
+## Platform Chat — "ask the platform anything" (2026-09-24)
+
+`backend/app/services/chat.py` — the conversational front door. Different from
+the mission planner (which answers "what can I trade on these barriers") and
+from `/rooms` (user-to-user community chat): this answers "what is going on
+with the platform", grounded in the live tape, the truth engine and the journal.
+
+- **It can say NO.** `no_edge` and `stale_tape` are first-class verdicts, not
+  fallbacks. On a fair board the edge question returns `proven: []` and the
+  text says "do not trade" — the phantom-edge bug class is a test.
+- **It is honest about itself.** Every reply carries `grounded` (was this
+  measured?) and `limitations`. There is no LLM; it is arithmetic over the live
+  tape, so it must never read like an opinion.
+- **Topics:** probability, tape freshness, edges, why-no-trade, safety, health,
+  performance, help. Anything else falls through to `ai_copilot.ask`.
+- **It never 500s:** routing is wrapped, so a bad question degrades to a
+  labelled error reply rather than a broken endpoint. A chat that breaks on a
+  weird question is worse than no chat.
+- **History is persisted** through `settings_store` (keyed `chat_history_<id>`),
+  so it survives a restart on a writable disk; on Render's free tier it dies
+  with the process, which the health answer admits.
+- **`exchanges` uses a separate monotonic counter** (`chat_exchanges_<id>`).
+  Deriving it from `len(history)` froze it at `MAX_TURNS` (200) — a long
+  conversation was silently reported as a short one. Regression test:
+  `test_exchange_count_keeps_growing_past_the_history_cap`.
+- Routes: `GET /chat/suggestions`, `GET /chat/history`, `POST /chat/clear`,
+  `POST /chat/ask`.
+- Frontend: the "CHAT · ASK THE PLATFORM" panel in `twin/app/app/page.tsx`
+  (bubble list, per-reply topic chip + measured/not-measured marker, limitation
+  bullets, starter prompts, Clear).
+- Tests: `tests/test_chat.py` (32). Suite: 565 passed.
+- Test hermeticity gotcha: `live_digit_counts` prefers the ON-DISK tape and only
+  then the queue, and `active_symbols` is the real market list — both leak
+  production ticks and live symbols into tests. The suite drives fake symbol
+  `CHATX` and stubs `get_settings`.
+- Advisory only: it reads and reports. It places nothing.
+
 ## Cockpit strategy() bundle composer (2026-09-17)
 
 `CockpitEngine.strategy()` in `backend/app/services/cockpit.py` sits between

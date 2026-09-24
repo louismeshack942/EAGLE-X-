@@ -1637,6 +1637,44 @@ def copilot_ask(body: CopilotBody):
     return ai_copilot.ask(body.question, body.symbol)
 
 
+# ---------------- Platform chat: ask the platform anything ----------------
+class ChatBody(BaseModel):
+    message: str
+    conversation_id: str = "default"
+    symbol: Optional[str] = None
+
+
+@app.get("/chat/suggestions")
+def chat_suggestions():
+    from app.services.chat import SUGGESTIONS
+    return {"suggestions": SUGGESTIONS}
+
+
+@app.get("/chat/history")
+def chat_history(conversation_id: str = "default", limit: int = 50):
+    from app.services.chat import platform_chat
+    return {"conversation_id": conversation_id,
+            "messages": platform_chat.history(conversation_id, limit=min(limit, 200))}
+
+
+@app.post("/chat/clear")
+def chat_clear(conversation_id: str = "default"):
+    from app.services.chat import platform_chat
+    return platform_chat.clear(conversation_id)
+
+
+@app.post("/chat/ask")
+def chat_ask(body: ChatBody):
+    """Ask the platform a question and get a grounded answer.
+
+    Advisory only, and honest by design: every reply states whether it was
+    grounded in live data and carries its own limitations. It can - and often
+    does - answer "there is no edge".
+    """
+    from app.services.chat import platform_chat
+    return platform_chat.ask(body.message, body.conversation_id, body.symbol)
+
+
 @app.post("/ai-copilot/mission")
 def copilot_mission(body: MissionBody):
     """Plan a multi-market trade request, or measure a probability.

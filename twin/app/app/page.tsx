@@ -156,6 +156,48 @@ const [copilotQ, setCopilotQ] = useState<string>("what is the probability of ove
 const [copilot, setCopilot] = useState<any>(null);
 const [copilotBusy, setCopilotBusy] = useState<boolean>(false);
 const [copilotKind, setCopilotKind] = useState<string>("auto");
+const [chat, setChat] = useState<any[]>([]);
+const [chatQ, setChatQ] = useState<string>("");
+const [chatBusy, setChatBusy] = useState<boolean>(false);
+useEffect(() => { loadChat(); }, []);
+async function loadChat() {
+ try {
+  const r = await fetch(`/chat/history?limit=60`, { headers: { Accept: "application/json" } });
+  if (!r.ok) return;
+  const d = await r.json();
+  setChat(d.messages || []);
+ } catch { /* history is a nicety, never a blocker */ }
+}
+async function askChat(q?: string) {
+ const message = (q || chatQ).trim();
+ if (!message || chatBusy) return;
+ setChatBusy(true);
+ setChat((prev: any[]) => [...prev, { role: "you", text: message, timestamp: new Date().toISOString() }]);
+ setChatQ("");
+ try {
+  const res = await fetch(`/chat/ask`, {
+   method: "POST",
+   headers: { "Content-Type": "application/json", Accept: "application/json" },
+   body: JSON.stringify({ message, symbol, conversation_id: "default" }),
+  });
+  const d = await res.json();
+  setChat((prev: any[]) => [...prev, {
+   role: "platform",
+   text: d.answer || d.error || "no answer",
+   topic: d.topic, grounded: d.grounded,
+   limitations: d.limitations || [],
+   timestamp: d.timestamp || new Date().toISOString(),
+  }]);
+ } catch (e: any) {
+  setChat((prev: any[]) => [...prev, { role: "platform", text: `Could not reach the platform: ${e?.message || e}`, topic: "error", grounded: false, limitations: [], timestamp: new Date().toISOString() }]);
+ } finally {
+  setChatBusy(false);
+ }
+}
+async function clearChat() {
+ try { await fetch(`/chat/clear?conversation_id=default`, { method: "POST" }); } catch { /* ignore */ }
+ setChat([]);
+}
 async function runCopilot(kind?: string) {
  const k = kind || copilotKind;
  setCopilotBusy(true);
@@ -823,6 +865,62 @@ return (
      )}
     </div>
    )}
+  </section>
+ </div>
+ <div style={{ maxWidth:1240, margin:"0 auto", padding:"16px 1rem 0" }}>
+  <section className="card-glow" style={{ padding:"1rem" }}>
+   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+    <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>CHAT · ASK THE PLATFORM</h2>
+    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+     {chat.length > 0 && <button className="btn btn-ghost" onClick={clearChat} style={{ padding:".25rem .6rem", fontSize:".68rem" }}>Clear</button>}
+    </div>
+   </div>
+   <div style={{ fontSize:".72rem", color:"var(--muted-2)", marginBottom:10, lineHeight:1.5 }}>
+    Grounded in the live tape — every answer says whether it was measured and what it cannot tell you. It will answer “no edge” when there is none.
+   </div>
+   <div style={{ display:"grid", gap:8, maxHeight:420, overflowY:"auto", marginBottom:10 }}>
+    {chat.length === 0 && !chatBusy && (
+     <div style={{ fontSize:".76rem", color:"var(--muted-2)", padding:".7rem .8rem", border:"1px dashed rgba(35,43,77,0.8)", borderRadius:10 }}>
+      Ask me anything about the platform — the tape, the edges, why nothing is trading, or the probability of a barrier. Try: “is any market showing a real edge right now”.
+     </div>
+    )}
+    {chat.map((m:any, i:number) => (
+     <div key={i} style={{ display:"flex", justifyContent: m.role === "you" ? "flex-end" : "flex-start" }}>
+      <div style={{ maxWidth:"86%", border:"1px solid " + (m.role === "you" ? "rgba(40,160,255,0.35)" : "rgba(35,43,77,0.9)"),
+        background: m.role === "you" ? "rgba(40,160,255,0.08)" : "rgba(12,16,30,0.45)", borderRadius:12, padding:".55rem .7rem" }}>
+       {m.role !== "you" && (
+        <div style={{ display:"flex", gap:6, alignItems:"center", marginBottom:4, flexWrap:"wrap" }}>
+         <span className="chip chip-violet" style={{ fontSize:".6rem", padding:".1rem .4rem" }}>{(m.topic || "platform").toUpperCase()}</span>
+         <span style={{ fontSize:".6rem", color: m.grounded ? "var(--success)" : "var(--warning)" }}>
+          {m.grounded ? "● measured" : "○ not measured"}
+         </span>
+        </div>
+       )}
+       <div style={{ fontSize:".78rem", color:"var(--fg)", lineHeight:1.55, whiteSpace:"pre-wrap" }}>{m.text}</div>
+       {(m.limitations || []).filter(Boolean).length > 0 && (
+        <div style={{ marginTop:5, fontSize:".66rem", color:"var(--muted-2)", lineHeight:1.45 }}>
+         {(m.limitations || []).filter(Boolean).map((l:string, j:number) => <div key={j}>· {l}</div>)}
+        </div>
+       )}
+      </div>
+     </div>
+    ))}
+    {chatBusy && <div style={{ fontSize:".74rem", color:"var(--accent)" }}>Reading the live tape…</div>}
+   </div>
+   <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+    <input value={chatQ} onChange={(e:any) => setChatQ(e.target.value)}
+      onKeyDown={(e:any) => { if (e.key === "Enter") askChat(); }}
+      placeholder="ask the platform anything…"
+      style={{ flex:"1 1 320px", minWidth:220, padding:".55rem .8rem", fontSize:".8rem", borderRadius:10, border:"1px solid var(--border)", background:"rgba(12,16,30,0.6)", color:"var(--fg)" }} />
+    <button className="btn" disabled={chatBusy || !chatQ.trim()} onClick={() => askChat()}
+      style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,#7c3aed,var(--accent))", color:"#fff", border:"none", opacity: (chatBusy || !chatQ.trim()) ? .6 : 1 }}>Ask</button>
+   </div>
+   <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 }}>
+    {["is any market showing a real edge right now","how fresh is the tape","why is the platform not trading","what are the safety limits","how am i doing today"].map((s:string) => (
+     <button key={s} className="btn btn-ghost" disabled={chatBusy} onClick={() => askChat(s)}
+      style={{ padding:".25rem .6rem", fontSize:".68rem", opacity: chatBusy ? .6 : 1 }}>{s}</button>
+    ))}
+   </div>
   </section>
  </div>
  <footer style={{ maxWidth:1240, margin:"24px auto 0", padding:"0 1rem", borderTop:"1px solid rgba(35,43,77,0.5)" }}>
