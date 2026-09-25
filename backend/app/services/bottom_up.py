@@ -488,7 +488,15 @@ class BottomUpEngine:
                 sig.state_reason = "signal aged out without confirmation"
                 self._stats["signals_stale"] += 1
                 continue
-            sig.edges.append(c["edge"])
+            # Only record an observation when NEW tape arrived. evaluate() is
+            # also a read path (dashboard refreshes, /bottom-up/signal), so
+            # without this guard a handful of page loads on one tick would
+            # append the same edge over and over -- inflating `observations`
+            # and dragging the decay slope toward whatever the repeated
+            # sample happened to be. Observations must count distinct
+            # evidence, not distinct requests.
+            if tick_idx > sig.last_eval_tick:
+                sig.edges.append(c["edge"])
             sig.last_eval_tick = tick_idx
             life = sig.lifetime()
             if c["edge"] < cfg.edge_cancel_below:

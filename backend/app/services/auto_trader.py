@@ -30,6 +30,7 @@ from app.services.market_master import (
 )
 from app.services import scout as scout_svc
 from app.services.truth_engine import truth_engine
+from app.services import execution_gate
 from app.services.money_management import (
     check_hard_stops,
     compute_stake,
@@ -956,6 +957,37 @@ class AutoTrader:
                         )
                         await asyncio.sleep(3.0)
                         continue
+                    # EXECUTION GATE: the precision layers get a vote. eagle,
+                    # super_profit and bottom-up were built, tested and never
+                    # consulted here -- they could describe a bad trade but not
+                    # stop one. Veto only: they can refuse a play the squad
+                    # already chose, never create one. Mode off preserves the
+                    # previous behaviour exactly; advisory logs without
+                    # blocking; enforce blocks. Fail closed on layer errors.
+                    # One evaluation per symbol, then every play is judged
+                    # against it -- not one full stack run per play.
+                    gate_ctx = execution_gate.evaluate_symbol(best_symbol)
+                    gated = []
+                    for p in best_plays:
+                        v = execution_gate.check_play(p, best_symbol,
+                                                      self.balance, gate_ctx)
+                        p["gate"] = v
+                        if v["would_block"]:
+                            self._log(
+                                f"Execution gate ({v['mode']}): {p.get('name')} — "
+                                + "; ".join(v["blockers"])
+                            )
+                        gated.append(p)
+                    if execution_gate.mode() == "enforce":
+                        allowed = [p for p in gated if p["gate"]["allowed"]]
+                        if not allowed:
+                            reasons = gated[0]["gate"]["blockers"] if gated else ["no plays"]
+                            self.no_trade_reasons[best_symbol] = (
+                                "execution gate: " + "; ".join(reasons)
+                            )
+                            await asyncio.sleep(3.0)
+                            continue
+                        best_plays = allowed
                     # Stake sizing. Manual mode: the manager's exact amount,
                     # capped only by what's spendable — no Kelly, no 10% rule,
                     # no drawdown scaling, no streak halving. The manager owns
@@ -1097,6 +1129,7 @@ class AutoTrader:
             "current_recommendation": self.current_recommendation,
             "decision_history": self.decision_history[-DECISION_HISTORY_LEN:],
             "confirmation_ticks": self.confirmation_ticks,
+            "execution_gate": {"mode": execution_gate.mode()},
             "log": self.log[-50:],
             "bank": virtual_bank.status(),
             "guard": risk_guard.status(),

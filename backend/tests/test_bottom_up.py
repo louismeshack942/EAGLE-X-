@@ -132,6 +132,38 @@ def test_confirmation_window_leads_to_execute():
     assert life["initial_edge"] > 0
 
 
+def test_repeated_reads_do_not_inflate_observations():
+    """evaluate() is a read path as well as a tracking path.
+
+    /bottom-up/signal and /bottom-up/{symbol} call it, and the dashboard polls
+    them. If every call appended an observation, a few page refreshes on a
+    single tick would pile up duplicate edges, inflate `observations`, and drag
+    the decay slope toward the repeated sample -- cancelling healthy signals or
+    confirming dead ones. Observations must count distinct evidence.
+    """
+    eng, q = make_engine(skewed_digits())
+    eng.config.confirmation_ticks = 3
+    eng.evaluate("R_100")
+    tracked = [s for s in eng._signals.values()]
+    assert tracked, "skewed tape must produce a tracked signal"
+    before = max(s.lifetime()["observations"] for s in tracked)
+    for _ in range(5):
+        eng.evaluate("R_100")  # no new ticks pushed
+    after = max(s.lifetime()["observations"] for s in eng._signals.values())
+    assert after == before
+
+
+def test_new_ticks_still_advance_observations():
+    """The guard above must not freeze the tracker entirely."""
+    eng, q = make_engine(skewed_digits())
+    eng.config.confirmation_ticks = 3
+    eng.evaluate("R_100")
+    before = max(s.lifetime()["observations"] for s in eng._signals.values())
+    push_ticks(q, eng, skewed_digits(5)[:5], start=1000)
+    after = max(s.lifetime()["observations"] for s in eng._signals.values())
+    assert after > before
+
+
 # ---------------- §10 false-signal filter ----------------
 def test_short_lived_spike_is_rejected():
     eng, _ = make_engine(spike_digits())
