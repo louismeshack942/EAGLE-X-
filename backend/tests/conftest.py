@@ -13,6 +13,15 @@ import pytest
 _STORE = Path(tempfile.mkdtemp(prefix="eaglex-test-")) / "store.json"
 os.environ.setdefault("EAGLEX_STORE_PATH", str(_STORE))
 
+# Guard: tests must never be able to write the production store. The chat
+# persists conversations through that same store, and eight CHATX turns from an
+# earlier run were found in backend/data/store.json and rendered in the live UI.
+# The env var above is what prevents it, so it is asserted in
+# test_isolation.py rather than trusted.
+# A blanket block on "chat_history_default" writes was tried and rejected: it
+# broke every legitimate default-conversation test. Isolation is the right
+# layer, not a per-key veto.
+
 # Analytics filters out synthetic ticks by default (a generated digit must
 # never reach Market Master or the Truth Engine). Tests build their own tapes
 # from bare `Tick`s, which default to provider "demo", so they opt back in

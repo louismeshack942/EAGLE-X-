@@ -334,6 +334,65 @@ class TestProbabilityViaChat:
         assert "barrier" in out["answer"].lower()
 
 
+class TestOverviewAndAccountTopics:
+    """Two topics a new user hits first, both of which used to misroute.
+
+    "what is this platform" fell through to the copilot, where the substring
+    "form" inside "plat-FORM" matched the CF-form branch -- so the platform
+    introduced itself with a win rate. "how do I connect my deriv account"
+    fell through to a generic market snapshot. Both are pinned here, and the
+    legitimate "form" questions are pinned too, so the word-boundary fix
+    cannot be undone by widening the overview needles.
+    """
+
+    def test_platform_overview_is_not_a_form_answer(self):
+        _push(_flat())
+        out = PlatformChat().ask("what is this platform")
+        assert out["topic"] == "overview"
+        assert "EAGLE-X" in out["answer"]
+        assert "win rate" not in out["answer"]
+        assert "CF form" not in out["answer"]
+
+    def test_overview_phrasings_all_land(self):
+        _push(_flat())
+        for q in ["what is this", "what does this do", "explain the platform",
+                  "how does this work", "what is eaglex"]:
+            assert PlatformChat().ask(q)["topic"] == "overview", q
+
+    def test_account_connection_question_is_answered(self):
+        _push(_flat())
+        out = PlatformChat().ask("how do I connect my deriv account")
+        assert out["topic"] == "account"
+        assert "/auth/token" in out["answer"]
+        # Must not imply that connecting arms real trading.
+        assert "does NOT arm real trading" in out["answer"]
+
+    def test_account_answer_warns_against_pasting_tokens_in_chat(self):
+        _push(_flat())
+        out = PlatformChat().ask("how do I link my account")
+        assert any("Never paste a token" in l for l in out["limitations"])
+
+    def test_form_questions_still_reach_the_copilot(self):
+        """The word-boundary fix must not swallow the real 'form' branch."""
+        _push(_flat())
+        out = PlatformChat().ask("how is the CF form")
+        assert out["topic"] == "platform"
+        assert "CF form" in out["answer"]
+
+    def test_substring_needles_no_longer_match_inside_words(self):
+        """Guards the class of bug rather than the one instance: 'form' must
+        not match platform, 'edge' must not match 'knowledge'."""
+        assert not chat_mod.PlatformChat._has("what is this platform", ["form"])
+        assert chat_mod.PlatformChat._has("what is this platform", ["platform"])
+        assert not chat_mod.PlatformChat._has("tell me about knowledge", ["edge"])
+        assert chat_mod.PlatformChat._has("is there an edge", ["edge"])
+
+    def test_short_needles_stay_substring_matches(self):
+        """Bounding <=3-char needles would break 'cf' / 'ev' lookups."""
+        assert chat_mod.PlatformChat._has("cf status", ["cf"])
+        assert chat_mod.PlatformChat._has("what is the ev here", ["ev"])
+
+
 class TestRoutes:
     def test_ask_route(self):
         from fastapi.testclient import TestClient

@@ -159,7 +159,25 @@ const [copilotKind, setCopilotKind] = useState<string>("auto");
 const [chat, setChat] = useState<any[]>([]);
 const [chatQ, setChatQ] = useState<string>("");
 const [chatBusy, setChatBusy] = useState<boolean>(false);
-useEffect(() => { loadChat(); }, []);
+// Loaded from the backend so the chips cannot drift out of sync with what the
+// chat actually routes. Hardcoded chips silently went stale when new topics
+// (platform overview, connecting an account) were added server-side.
+const [chatSuggestions, setChatSuggestions] = useState<string[]>([
+ "what is this platform",
+ "how do I connect my Deriv account",
+ "is any market showing a real edge right now",
+ "why is the platform not trading",
+ "what are the safety limits",
+]);
+useEffect(() => { loadChat(); loadChatSuggestions(); }, []);
+async function loadChatSuggestions() {
+ try {
+  const r = await fetch(`/chat/suggestions`, { headers: { Accept: "application/json" } });
+  if (!r.ok) return;
+  const d = await r.json();
+  if (Array.isArray(d.suggestions) && d.suggestions.length) setChatSuggestions(d.suggestions);
+ } catch { /* the defaults above are a fine fallback */ }
+}
 async function loadChat() {
  try {
   const r = await fetch(`/chat/history?limit=60`, { headers: { Accept: "application/json" } });
@@ -881,7 +899,7 @@ return (
    <div style={{ display:"grid", gap:8, maxHeight:420, overflowY:"auto", marginBottom:10 }}>
     {chat.length === 0 && !chatBusy && (
      <div style={{ fontSize:".76rem", color:"var(--muted-2)", padding:".7rem .8rem", border:"1px dashed rgba(35,43,77,0.8)", borderRadius:10 }}>
-      Ask me anything about the platform — the tape, the edges, why nothing is trading, or the probability of a barrier. Try: “is any market showing a real edge right now”.
+      Ask me anything about the platform — what it is, how to connect an account, the tape, the edges, or why nothing is trading.
      </div>
     )}
     {chat.map((m:any, i:number) => (
@@ -916,7 +934,7 @@ return (
       style={{ padding:".5rem 1.1rem", fontSize:".8rem", fontWeight:700, background:"linear-gradient(135deg,#7c3aed,var(--accent))", color:"#fff", border:"none", opacity: (chatBusy || !chatQ.trim()) ? .6 : 1 }}>Ask</button>
    </div>
    <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginTop:8 }}>
-    {["is any market showing a real edge right now","how fresh is the tape","why is the platform not trading","what are the safety limits","how am i doing today"].map((s:string) => (
+    {chatSuggestions.map((s:string) => (
      <button key={s} className="btn btn-ghost" disabled={chatBusy} onClick={() => askChat(s)}
       style={{ padding:".25rem .6rem", fontSize:".68rem", opacity: chatBusy ? .6 : 1 }}>{s}</button>
     ))}

@@ -21,6 +21,7 @@ ephemeral hosts (Render free tier) history is naturally lost with the process �
 the reply says so rather than pretending otherwise.
 """
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -44,6 +45,8 @@ logger = logging.getLogger(__name__)
 MAX_TURNS = 200
 
 SUGGESTIONS = [
+    "what is this platform",
+    "how do I connect my Deriv account",
     "what is the probability of over 5 on R_100",
     "is any market showing a real edge right now",
     "how fresh is the tape",
@@ -195,6 +198,19 @@ class PlatformChat:
     def _route(self, q: str, symbol: str) -> dict:
         low = q.lower()
 
+        # "What is this?" is the first question a new user asks, and it used to
+        # fall through to the copilot, where the substring "form" in
+        # "plat-FORM" matched the CF-form branch and answered with a win rate.
+        if self._has(low, ["what is this", "what is the platform", "what does this do",
+                           "what is eaglex", "about the platform", "explain the platform",
+                           "what am i looking at", "how does this work"]):
+            return self._overview()
+        # Connecting an account is a platform question the chat should answer
+        # rather than bounce to a generic market snapshot.
+        if self._has(low, ["connect", "deriv account", "api token", "app id",
+                           "pat token", "link my account", "log in", "login",
+                           "sign in", "credentials"]):
+            return self._account()
         if self._has(low, ["probability", "chance", "odds", "how likely",
                            "percent", "win rate of", "what are the odds"]):
             return self._probability(q, symbol)
@@ -235,7 +251,21 @@ class PlatformChat:
 
     @staticmethod
     def _has(low: str, needles) -> bool:
-        return any(n in low for n in needles)
+        """Whole-word-ish matching, not naive substring.
+
+        Plain `n in low` made "what is this plat-FORM" match the "form" needle
+        and answer a platform question with the CF's win rate. A needle that is
+        a word must match a whole word; multi-word needles still match as
+        phrases. Short needles (<=3 chars) stay substring matches, since
+        bounding them would break things like "cf" and "ev".
+        """
+        for n in needles:
+            if len(n) <= 3 or " " in n:
+                if n in low:
+                    return True
+            elif re.search(rf"\b{re.escape(n)}\b", low):
+                return True
+        return False
 
     @staticmethod
     def _measure(question: str, symbols, named):
@@ -412,6 +442,66 @@ class PlatformChat:
             "data": {"guard": {"killed": g.get("killed"), "kill_reason": g.get("kill_reason")},
                      "budget": {"used": used, "cap": cap, "locked": b.get("locked")},
                      "adviser_only": getattr(s, "cf_adviser_only", True)},
+        }
+
+    def _overview(self) -> dict:
+        """What this platform is, grounded in what it is actually doing now."""
+        s = get_settings()
+        symbols = s.active_symbols
+        streaming = [x for x in symbols if tick_queue.count(x)]
+        g = risk_guard.status()
+        return {
+            "text": (
+                "EAGLE-X is a digit-contract analysis platform for Deriv synthetic "
+                "indices. It ingests live ticks, measures whether any contract is "
+                "genuinely mispriced, and refuses to trade when nothing is. "
+                f"Right now it is watching {len(symbols)} markets "
+                f"({len(streaming)} streaming live), and it is "
+                f"{'adviser-only, so it cannot place a real order' if getattr(s, 'cf_adviser_only', True) else 'in live execution mode'}. "
+                "The point is fewer losses, not more trades: NO TRADE is a valid "
+                "and frequent answer. Ask about edges, the tape, safety limits, or "
+                "why it is not trading."
+            ),
+            "topic": "overview", "grounded": True,
+            "limitations": [
+                "Digit contracts are negative-EV by design; the platform reports "
+                "measured edges, it does not create them.",
+                "Analysis is descriptive statistics over past ticks, not a forecast.",
+            ],
+            "data": {"markets": len(symbols), "streaming": len(streaming),
+                     "adviser_only": getattr(s, "cf_adviser_only", True),
+                     "kill_switch": g.get("killed")},
+        }
+
+    def _account(self) -> dict:
+        """How to connect a Deriv account — and what it does NOT enable.
+
+        Deliberately explicit that connecting does not turn on real trading:
+        adviser-only mode and the real-trade budget are separate switches, and
+        a user must not believe that pasting a token arms the platform.
+        """
+        s = get_settings()
+        return {
+            "text": (
+                "You can connect a Deriv account from the Auth page. Deriv issues "
+                "PAT tokens (pat_...) on developers.deriv.com; POST them to "
+                "/auth/token together with your app id. The platform validates the "
+                "token against Deriv's REST API and mints a fresh single-use "
+                "websocket URL per connection — the token is stored 0600 on disk "
+                "and never leaves the server. Connecting does NOT arm real trading: "
+                f"adviser-only mode is {'ON' if getattr(s, 'cf_adviser_only', True) else 'OFF'}, "
+                "and real test trades are separately capped. Live market data works "
+                "with or without an account."
+            ),
+            "topic": "account", "grounded": True,
+            "limitations": [
+                "Never paste a token into chat. Enter it on the Auth page, which "
+                "posts it directly to the backend.",
+                "Connecting an account grants data access; it does not enable "
+                "unattended real-money trading.",
+            ],
+            "data": {"adviser_only": getattr(s, "cf_adviser_only", True),
+                     "auth_route": "/auth/token"},
         }
 
     def _health(self) -> dict:
