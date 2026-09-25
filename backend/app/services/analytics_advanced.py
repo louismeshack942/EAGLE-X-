@@ -1,5 +1,6 @@
 """Advanced analytics — digit frequency, psychology, contracts, gaps, predictor."""
 import math
+import os
 from collections import Counter
 from typing import Dict, List, Optional
 
@@ -8,9 +9,51 @@ from app.core.queue import tick_queue
 WINDOWS = {"1m": 600, "5m": 3000, "15m": 9000, "1h": 36000}
 EXPECTED_DIGIT_FREQ = 10.0  # a fair random digit appears 10% of the time
 
+# Upper bound on how deep _window_digits will scan the queue while hunting for
+# live ticks. A queue is bounded in memory, so this only guards against an
+# unbounded loop if a caller asks for a window larger than the queue holds.
+_QUEUE_SCAN_CEILING = 1_000_000
+
+
+def _live_only() -> bool:
+    """Whether analytics must ignore synthetic ticks.
+
+    Default ON: a synthetic tape is what manufactured the phantom edges, and
+    this module feeds Market Master AND the Truth Engine, so it is the single
+    most dangerous place to let a generated digit into a verdict. Set
+    EAGLEX_ALLOW_SYNTHETIC=1 to let synthetic ticks back in — the analytics
+    test-suite relies on that, because bare `Tick`s default to provider
+    "demo".
+    """
+    return os.environ.get("EAGLEX_ALLOW_SYNTHETIC", "0") != "1"
+
 
 def _digits(ticks) -> List[int]:
+    if _live_only():
+        ticks = [t for t in ticks if getattr(t, "provider", "demo") == "deriv_live"]
     return [t.digit for t in ticks]
+
+
+def _window_digits(queue, symbol: str, window: int) -> List[int]:
+    """The last `window` usable digits for `symbol`.
+
+    Filtering after slicing would silently shrink the sample: ask for 100
+    ticks on a tape that is half synthetic and the caller gets 50 digits while
+    believing it asked for 100. A single fixed over-fetch is not enough either
+    — if the recent window happens to be dominated by synthetic ticks, 4x
+    still comes back short. So we deepen the fetch until the window is
+    satisfied or the queue is exhausted, and the caller always learns the true
+    sample size from the returned length.
+    """
+    if not _live_only():
+        return _digits(queue.recent(symbol, limit=window))
+
+    limit = max(window * 4, window)
+    digits = _digits(queue.recent(symbol, limit=limit))
+    while len(digits) < window and limit < _QUEUE_SCAN_CEILING:
+        limit *= 4
+        digits = _digits(queue.recent(symbol, limit=limit))
+    return digits[-window:]
 
 
 class AdvancedAnalytics:
@@ -18,10 +61,10 @@ class AdvancedAnalytics:
         self.queue = queue or tick_queue
 
     def get_digit_analysis(self, symbol: str, window: int = 100) -> dict:
-        ticks = self.queue.recent(symbol, limit=window)
-        if not ticks:
+        digits = _window_digits(self.queue, symbol, window)
+        if not digits:
             return {"symbol": symbol, "window": window, "frequency": {}, "most_frequent": None, "least_frequent": None}
-        digits = _digits(ticks)
+
         n = len(digits)
         counts = Counter(digits)
         # Bayesian shrinkage: pull each digit's observed share toward the fair
@@ -142,8 +185,8 @@ class AdvancedAnalytics:
         return {"symbol": symbol, "candidate": candidate, "modes": modes}
 
     def get_gap_analysis(self, symbol: str, window: int = 100) -> dict:
-        ticks = self.queue.recent(symbol, limit=window)
-        digits = _digits(ticks)
+        digits = _window_digits(self.queue, symbol, window)
+
         result: dict = {"symbol": symbol, "gaps": {}}
         if not digits:
             return result
@@ -183,8 +226,8 @@ class AdvancedAnalytics:
 
     def get_ldp_patterns(self, symbol: str, pattern_len: int = 2, window: int = 100) -> dict:
         """Last-digit-pattern analysis: frequency of digit tuples."""
-        ticks = self.queue.recent(symbol, limit=window)
-        digits = _digits(ticks)
+        digits = _window_digits(self.queue, symbol, window)
+
         counts: Counter = Counter()
         for i in range(len(digits) - pattern_len + 1):
             counts[tuple(digits[i:i + pattern_len])] += 1

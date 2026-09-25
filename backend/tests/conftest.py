@@ -13,6 +13,12 @@ import pytest
 _STORE = Path(tempfile.mkdtemp(prefix="eaglex-test-")) / "store.json"
 os.environ.setdefault("EAGLEX_STORE_PATH", str(_STORE))
 
+# Analytics filters out synthetic ticks by default (a generated digit must
+# never reach Market Master or the Truth Engine). Tests build their own tapes
+# from bare `Tick`s, which default to provider "demo", so they opt back in
+# explicitly. Production never sets this.
+os.environ.setdefault("EAGLEX_ALLOW_SYNTHETIC", "1")
+
 from app.services.demo_generator import DemoGenerator  # noqa: E402
 from app.core.queue import tick_queue  # noqa: E402
 

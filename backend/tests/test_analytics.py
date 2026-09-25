@@ -109,3 +109,75 @@ class TestDemoGenerator:
         p1 = [d1._next_price("R_100") for _ in range(3)]
         p2 = [d2._next_price("R_100") for _ in range(3)]
         assert p1 == p2
+
+
+class TestSyntheticTapeIsRefused:
+    """Production analytics must ignore synthetic ticks.
+
+    These run with EAGLEX_ALLOW_SYNTHETIC unset (the production default), which
+    the rest of this module deliberately opts out of because it builds tapes
+    from bare Ticks.
+    """
+
+    def _analytics(self, monkeypatch, provider: str):
+        monkeypatch.delenv("EAGLEX_ALLOW_SYNTHETIC", raising=False)
+        q = BoundedTickQueue(maxlen=500)
+        for d in range(200):
+            q.push(Tick(symbol="SYN", quote=float(d % 10), raw={"digit": d % 10},
+                        provider=provider))
+        return AdvancedAnalytics(queue=q)
+
+    def test_synthetic_tape_yields_no_analysis(self, monkeypatch):
+        eng = self._analytics(monkeypatch, "demo")
+        out = eng.get_digit_analysis("SYN", window=100)
+        assert out["frequency"] == {}  # synthetic digits never enter a verdict
+
+    def test_live_tape_still_analysed(self, monkeypatch):
+        eng = self._analytics(monkeypatch, "deriv_live")
+        out = eng.get_digit_analysis("SYN", window=100)
+        assert out["frequency"]  # the same tape, tagged live, is analysed
+
+    def test_window_is_a_promise_on_mixed_tape(self, monkeypatch):
+        monkeypatch.delenv("EAGLEX_ALLOW_SYNTHETIC", raising=False)
+        q = BoundedTickQueue(maxlen=2000)
+        for i in range(400):
+            q.push(Tick(symbol="MIX", quote=float(i % 10), raw={"digit": i % 10},
+                        provider="deriv_live" if i % 2 == 0 else "demo"))
+        eng = AdvancedAnalytics(queue=q)
+        # 200 live ticks exist, so asking for 100 must return 100 -- not the
+        # 50 that a filter-after-slice would hand back.
+        out = eng.get_digit_analysis("MIX", window=100)
+        assert out["n"] == 100
+
+    def test_demo_does_not_shift_live_distribution(self, monkeypatch):
+        monkeypatch.delenv("EAGLEX_ALLOW_SYNTHETIC", raising=False)
+        q = BoundedTickQueue(maxlen=2000)
+        # Live tape is uniform; a flood of synthetic 7s must not move it.
+        for i in range(300):
+            q.push(Tick(symbol="POLL", quote=float(i % 10), raw={"digit": i % 10},
+                        provider="deriv_live"))
+        for _ in range(1500):
+            q.push(Tick(symbol="POLL", quote=7.0, raw={"digit": 7}, provider="demo"))
+        eng = AdvancedAnalytics(queue=q)
+        out = eng.get_digit_analysis("POLL", window=300)
+        assert out["n"] == 300
+        assert abs(out["frequency"]["7"]["estimate"] - 10.0) < 2.0
+
+    def test_short_window_is_reported_honestly(self, monkeypatch):
+        """When there is not enough live tape, say so — never pad with demo."""
+        monkeypatch.delenv("EAGLEX_ALLOW_SYNTHETIC", raising=False)
+        q = BoundedTickQueue(maxlen=2000)
+        # Synthetic flood first, then the live ticks, so the bounded queue's
+        # eviction cannot be what removes them.
+        for _ in range(2000):
+            q.push(Tick(symbol="THIN", quote=7.0, raw={"digit": 7}, provider="demo"))
+        for i in range(40):
+            q.push(Tick(symbol="THIN", quote=float(i % 10), raw={"digit": i % 10},
+                        provider="deriv_live"))
+        eng = AdvancedAnalytics(queue=q)
+        out = eng.get_digit_analysis("THIN", window=100)
+        # Only 40 live ticks exist. The sample must report 40 -- a shorter
+        # window is honest; filling the gap with synthetic 7s is not.
+        assert out["n"] == 40
+        assert out["frequency"]["7"]["estimate"] < 20.0
+
