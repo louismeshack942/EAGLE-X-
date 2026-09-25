@@ -40,6 +40,20 @@ class BoundedTickQueue:
             buf = self._buffers.get(symbol)
             return len(buf) if buf else 0
 
+    def rehydrate(self, ticks: List[Tick]) -> int:
+        """Load a persisted tape back into the buffers, oldest first.
+
+        The queue is volatile, so without this every restart begins from an
+        empty tape and `proven_edges` (which needs a 1000-tick window) cannot
+        be satisfied for ~17 minutes of continuous streaming. Callers are
+        responsible for filtering what goes in — this only replays.
+        """
+        pushed = 0
+        for tick in ticks:
+            self.push(tick)
+            pushed += 1
+        return pushed
+
     def clear(self, symbol: Optional[str] = None) -> None:
         with self._lock:
             if symbol is None:

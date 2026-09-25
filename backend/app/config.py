@@ -100,6 +100,13 @@ class Settings(BaseSettings):
     # Tick buffer
     max_ticks_per_symbol: int = 2000
     tick_reconnect_max_attempts: int = 3
+    # Boot-time tape rehydration. The queue is volatile but the disk tape is
+    # not, and proven_edges needs a 1000-tick window — without replaying recent
+    # live tape, every restart spends ~17 minutes unable to prove anything.
+    # Only deriv_live ticks within this age are restored; stale tape is not
+    # current tape. Set tape_rehydrate_max_age_sec to 0 to disable.
+    tape_rehydrate_max_age_sec: int = 1800
+    tape_rehydrate_limit: int = 5000
 
     @property
     def active_symbols(self) -> List[str]:

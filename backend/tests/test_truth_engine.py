@@ -5,6 +5,7 @@ stakes, +$0.18. These tests prove the engine answers it with math, not
 with vibes.
 """
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -293,6 +294,138 @@ class TestTickRecorder:
         rec.set_enabled(False)
         assert not rec.record(Tick(symbol="RT_6", quote=100.1, raw={"digit": 1}))
         assert list(Path(tmp_path).glob("*.jsonl")) == []
+
+
+class TestLiveTapeLoader:
+    """load_live_since is what boot rehydration trusts. It must never hand
+    back a synthetic tick, and never hand back stale tape as if it were now."""
+
+    def _rec(self, tmp_path, entries):
+        rec = TickRecorder(directory=tmp_path)
+        for quote, digit, provider, age_sec in entries:
+            rec.record(Tick(
+                symbol="LD_1",
+                quote=quote,
+                raw={"digit": digit},
+                provider=provider,
+                timestamp=datetime.now(timezone.utc) - timedelta(seconds=age_sec),
+            ))
+        return rec
+
+    def test_only_live_ticks_returned(self, tmp_path):
+        rec = self._rec(tmp_path, [
+            (100.1, 1, "deriv_live", 10),
+            (100.2, 2, "demo", 10),
+            (100.3, 3, "deriv_live", 10),
+        ])
+        rows = rec.load_live_since("LD_1", datetime.now(timezone.utc) - timedelta(hours=1))
+        assert [r["digit"] for r in rows] == [1, 3]
+
+    def test_stale_ticks_are_not_current_tape(self, tmp_path):
+        rec = self._rec(tmp_path, [
+            (100.1, 1, "deriv_live", 60),        # fresh
+            (100.2, 2, "deriv_live", 7200),      # 2h old
+        ])
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+        rows = rec.load_live_since("LD_1", cutoff)
+        assert [r["digit"] for r in rows] == [1]
+
+    def test_synthetic_only_tape_returns_nothing(self, tmp_path):
+        rec = self._rec(tmp_path, [(100.1, 1, "demo", 5), (100.2, 2, "demo", 5)])
+        rows = rec.load_live_since("LD_1", datetime.now(timezone.utc) - timedelta(hours=1))
+        assert rows == []
+
+    def test_unparseable_timestamp_is_skipped(self, tmp_path):
+        rec = TickRecorder(directory=tmp_path)
+        (Path(tmp_path) / "LD_1.jsonl").write_text(
+            '{"ts": "not-a-date", "quote": 1.0, "digit": 1, "provider": "deriv_live"}\n'
+            '{"ts": null, "quote": 2.0, "digit": 2, "provider": "deriv_live"}\n'
+        )
+        rows = rec.load_live_since("LD_1", datetime.now(timezone.utc) - timedelta(hours=1))
+        assert rows == []
+
+
+class TestBootRehydration:
+    """_rehydrate_tape restores recent live tape so proven_edges is not blind
+    for ~17 minutes after every restart."""
+
+    def _patch(self, monkeypatch, tmp_path, symbols):
+        from app import main as main_mod
+        from app.services.tick_recorder import TickRecorder
+        rec = TickRecorder(directory=tmp_path)
+        monkeypatch.setattr(main_mod, "tick_recorder", rec)
+        monkeypatch.setattr(
+            type(main_mod.settings), "active_symbols",
+            property(lambda self: symbols),
+        )
+        from app.core.queue import tick_queue
+        tick_queue.clear()
+        return main_mod, rec
+
+    def test_recent_live_tape_is_restored(self, monkeypatch, tmp_path):
+        main_mod, rec = self._patch(monkeypatch, tmp_path, ["RB_1"])
+        now = datetime.now(timezone.utc)
+        for i in range(50):
+            rec.record(Tick(symbol="RB_1", quote=100.0 + i * 0.001,
+                            raw={"digit": i % 10}, provider="deriv_live",
+                            timestamp=now - timedelta(seconds=50 - i)))
+        main_mod._rehydrate_tape()
+        from app.core.queue import tick_queue
+        assert tick_queue.count("RB_1") == 50
+
+    def test_synthetic_tape_is_never_restored(self, monkeypatch, tmp_path):
+        main_mod, rec = self._patch(monkeypatch, tmp_path, ["RB_2"])
+        now = datetime.now(timezone.utc)
+        for i in range(50):
+            rec.record(Tick(symbol="RB_2", quote=100.0, raw={"digit": 7},
+                            provider="demo", timestamp=now - timedelta(seconds=i)))
+        main_mod._rehydrate_tape()
+        from app.core.queue import tick_queue
+        assert tick_queue.count("RB_2") == 0
+
+    def test_stale_tape_is_never_restored(self, monkeypatch, tmp_path):
+        main_mod, rec = self._patch(monkeypatch, tmp_path, ["RB_3"])
+        old = datetime.now(timezone.utc) - timedelta(hours=5)
+        for i in range(50):
+            rec.record(Tick(symbol="RB_3", quote=100.0, raw={"digit": 1},
+                            provider="deriv_live", timestamp=old))
+        main_mod._rehydrate_tape()
+        from app.core.queue import tick_queue
+        assert tick_queue.count("RB_3") == 0
+
+    def test_restored_digits_survive_exactly(self, monkeypatch, tmp_path):
+        """A reloaded tick must keep its original digit, not re-derive it."""
+        main_mod, rec = self._patch(monkeypatch, tmp_path, ["RB_4"])
+        now = datetime.now(timezone.utc)
+        # quote 100.10 with pip_size 2 -> digit 0. Round-tripping through the
+        # tape must not lose that trailing zero.
+        rec.record(Tick(symbol="RB_4", quote=100.10, raw={"digit": 0},
+                        provider="deriv_live", timestamp=now))
+        main_mod._rehydrate_tape()
+        from app.core.queue import tick_queue
+        latest = tick_queue.latest("RB_4")
+        assert latest is not None
+        assert latest.digit == 0
+        assert latest.provider == "deriv_live"
+
+    def test_disabled_rehydration_is_a_noop(self, monkeypatch, tmp_path):
+        main_mod, rec = self._patch(monkeypatch, tmp_path, ["RB_5"])
+        monkeypatch.setattr(main_mod.settings, "tape_rehydrate_max_age_sec", 0)
+        now = datetime.now(timezone.utc)
+        rec.record(Tick(symbol="RB_5", quote=100.0, raw={"digit": 1},
+                        provider="deriv_live", timestamp=now))
+        main_mod._rehydrate_tape()
+        from app.core.queue import tick_queue
+        assert tick_queue.count("RB_5") == 0
+
+    def test_unreadable_tape_does_not_break_boot(self, monkeypatch, tmp_path):
+        main_mod, rec = self._patch(monkeypatch, tmp_path, ["RB_6"])
+
+        def boom(*_a, **_k):
+            raise OSError("disk gone")
+
+        monkeypatch.setattr(rec, "load_live_since", boom)
+        main_mod._rehydrate_tape()  # must not raise
 
 
 # ---------------- routes ----------------

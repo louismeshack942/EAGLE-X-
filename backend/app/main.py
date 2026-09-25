@@ -154,6 +154,7 @@ async def _bootstrap_env_token() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _ingestion_task
+    _rehydrate_tape()
     await _bootstrap_env_token()
     demo_factory = lambda: DemoGenerator(
         seed=settings.demo_seed,
@@ -171,6 +172,50 @@ async def lifespan(app: FastAPI):
     autostart_task.cancel()
     if _ingestion_task:
         _ingestion_task.cancel()
+
+
+def _rehydrate_tape() -> None:
+    """Restore recent live tape into the in-memory queue at boot.
+
+    The queue is volatile but the tape is not, and `proven_edges` needs a
+    1000-tick window. Without this, every restart spends ~17 minutes unable to
+    prove anything, which looks like the market going quiet when it is really
+    the squad starting from zero.
+
+    Only `deriv_live` ticks within TAPE_REHYDRATE_MAX_AGE_SEC are replayed:
+    synthetic digits never come back, and stale tape is not current tape. A
+    failure here is logged and ignored — a cold queue is degraded, not fatal.
+    """
+    from datetime import timedelta
+
+    if settings.tape_rehydrate_max_age_sec <= 0:
+        return  # explicitly disabled
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.tape_rehydrate_max_age_sec)
+    restored = 0
+    for symbol in settings.active_symbols:
+        try:
+            rows = tick_recorder.load_live_since(symbol, cutoff, limit=settings.tape_rehydrate_limit)
+        except Exception:  # noqa: BLE001
+            logger.exception("boot: tape rehydrate failed to read %s", symbol)
+            continue
+        ticks = []
+        for row in rows:
+            try:
+                when = datetime.fromisoformat(row["ts"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            ticks.append(Tick(
+                symbol=symbol,
+                quote=float(row["quote"]),
+                timestamp=when,
+                provider="deriv_live",
+                raw={"digit": row["digit"]} if row.get("digit") is not None else None,
+            ))
+        restored += tick_queue.rehydrate(ticks)
+    if restored:
+        logger.info("boot: rehydrated %d live ticks from tape", restored)
 
 
 async def _autostart_cf() -> None:

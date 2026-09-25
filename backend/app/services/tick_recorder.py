@@ -12,7 +12,7 @@ import json
 import logging
 import threading
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Deque, List, Optional
 
@@ -110,6 +110,36 @@ class TickRecorder:
                 except json.JSONDecodeError:
                     continue
         return list(out)
+
+    def load_live_since(self, symbol: str, cutoff: datetime,
+                        limit: int = 5000) -> List[dict]:
+        """Most recent `deriv_live` entries for `symbol` at/after `cutoff`.
+
+        Two rules, both learned from the contamination audit:
+
+        1. Synthetic ticks never come back. The tape holds 146,624 of them
+           interleaved with live ticks, so a naive reload would resurrect the
+           exact generated digits that manufactured the phantom edges.
+        2. A tick older than `cutoff` is not current tape. Replaying last
+           week's digits as if they were this minute's would let a dead market
+           look live, so freshness is enforced at load, not at use.
+        """
+        out: List[dict] = []
+        for entry in self.load(symbol, limit=limit):
+            if entry.get("provider") != "deriv_live":
+                continue
+            ts = entry.get("ts")
+            if not ts:
+                continue
+            try:
+                when = datetime.fromisoformat(ts)
+            except (TypeError, ValueError):
+                continue
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            if when >= cutoff:
+                out.append(entry)
+        return out
 
     def purge(self, symbol: Optional[str] = None) -> int:
         """Delete tapes (one symbol or all). Returns files removed."""
