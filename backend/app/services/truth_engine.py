@@ -41,6 +41,13 @@ MIN_REAL_EV = 0.02  # 2 cents per 1.0 — below this the "edge" is execution noi
 # shipped 518 such "edges" and every one bled. Without a fat, chance-proof
 # margin the Truth Engine keeps endorsing a lottery.
 MIN_BREAKEVEN_MARGIN_PCT = 4.0
+# The floor below which a verdict is not allowed to say EDGE. Below this, a
+# single hot streak (6 hits in 20 ticks) is indistinguishable from a real
+# skew: z crosses 1.96 on a sample where the observed rate is still ~5pp
+# inside its own error bar. A thin tape gets FAIR, never EDGE — "not enough
+# data to claim anything" and "nothing mispriced" are different statements,
+# and only the second one is honest on 20 ticks.
+MIN_VERDICT_TICKS = 100
 
 
 def _breakeven(payout: float) -> float:
@@ -48,7 +55,9 @@ def _breakeven(payout: float) -> float:
     return round(100.0 / payout, 2) if payout > 0 else 100.0
 
 
-def _verdict(margin_pp: float, ev: float, significant: bool) -> str:
+def _verdict(margin_pp: float, ev: float, significant: bool, n_ticks: int = 0) -> str:
+    if n_ticks and n_ticks < MIN_VERDICT_TICKS:
+        return "FAIR"  # thin tape: claim nothing, assert nothing
     if not significant:
         return "FAIR"
     # EDGE now requires the observed rate to clear break-even by a FAT margin —
@@ -103,6 +112,7 @@ class TruthEngine:
         est = {d: float(freq[str(d)].get("estimate", 10.0)) for d in range(10)}
         z = {d: float(freq[str(d)].get("z", 0.0) or 0.0) for d in range(10)}
         contracts = out["contracts"]
+        n_ticks = analysis.get("n", 0)
 
         # Digit contracts: MATCHES (win if digit == d) and DIFFERS (win if
         # digit != d).
@@ -129,7 +139,7 @@ class TruthEngine:
                     "ev": ev,
                     "z": round(z_eff, 2),
                     "significant": sig,
-                    "verdict": _verdict(margin, ev, sig),
+                    "verdict": _verdict(margin, ev, sig, n_ticks),
                 })
 
         # OVER d wins on digits d+1..9; UNDER d wins on digits 0..d-1.
@@ -161,7 +171,7 @@ class TruthEngine:
                     "ev": ev,
                     "z": round(z_eff, 2),
                     "significant": sig,
-                    "verdict": _verdict(margin, ev, sig),
+                    "verdict": _verdict(margin, ev, sig, n_ticks),
                 })
 
         # ODD / EVEN — fair coin flips by design, but the tape is the
@@ -190,7 +200,7 @@ class TruthEngine:
                 "ev": ev,
                 "z": round(z_eff, 2),
                 "significant": sig,
-                "verdict": _verdict(margin, ev, sig),
+                "verdict": _verdict(margin, ev, sig, n_ticks),
             })
 
         best = max(contracts, key=lambda c: c["ev"], default=None)

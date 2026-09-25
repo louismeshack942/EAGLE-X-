@@ -4,13 +4,23 @@ Portable by default: uses in-memory + JSON file storage so the app runs with
 no database. PostgreSQL/Redis are wired via env flags when available.
 """
 import json
+import os
 import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-_STORE_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "store.json"
+# EAGLEX_STORE_PATH exists so the test suite can point the journal at a
+# throwaway file. Without it, every test that adds an entry wrote into the
+# REAL journal — the same journal the scorecard, the risk analytics and the
+# CF's adaptive z-threshold read. Tests must never touch live state.
+_STORE_PATH = Path(
+    os.environ.get(
+        "EAGLEX_STORE_PATH",
+        str(Path(__file__).resolve().parent.parent.parent / "data" / "store.json"),
+    )
+)
 _STORE_PATH.parent.mkdir(parents=True, exist_ok=True)
 _lock = threading.Lock()
 

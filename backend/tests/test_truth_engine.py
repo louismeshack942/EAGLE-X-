@@ -94,6 +94,26 @@ class TestExpectancy:
 
 
 class TestProvenEdges:
+    def test_thin_tape_never_says_edge(self):
+        """20 ticks can never produce an EDGE verdict.
+
+        The live board called R_50 'MATCHES 4, EDGE, EV 0.4753' on 20 ticks.
+        On a 20-tick sample a single hot streak pushes the raw-count z past
+        1.96 while the observed rate is still inside its own error bar, so the
+        verdict said EDGE on a sample too small to claim anything at all.
+        """
+        eng = TruthEngine()
+        _feed("TRUTH_THIN_EDGE", [3] * 6 + [1] * 14)  # 6 of 20 are digit 3
+        out = eng.expectancy("TRUTH_THIN_EDGE", window=20)
+        assert out["n_ticks"] == 20
+        assert not any(c["verdict"] == "EDGE" for c in out["contracts"])
+
+    def test_verdict_floor_is_enforced_directly(self):
+        from app.services.truth_engine import MIN_VERDICT_TICKS, _verdict
+        # The fat-margin, significant case is EDGE only with enough ticks.
+        assert _verdict(8.0, 0.5, True, MIN_VERDICT_TICKS) == "EDGE"
+        assert _verdict(8.0, 0.5, True, MIN_VERDICT_TICKS - 1) == "FAIR"
+
     def test_persistent_skew_is_proven(self):
         eng = TruthEngine()
         _feed("TRUTH_PERSIST", [(i % 9) + 1 for i in range(1500)])  # 0 absent

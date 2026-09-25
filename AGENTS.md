@@ -455,6 +455,70 @@ with the platform", grounded in the live tape, the truth engine and the journal.
   `CHATX` and stubs `get_settings`.
 - Advisory only: it reads and reports. It places nothing.
 
+## Instrument honesty audit (2026-09-25) — three lies found by measurement
+
+Prompted by "our strikes are imprecise / slow / weak". Measured instead of
+guessed. The market was not beating us; three of our own instruments were
+reporting fiction.
+
+**1. Tests were writing into the production journal.** `_STORE_PATH` was a
+hardcoded `backend/data/store.json` and `conftest.py` had NO isolation, so
+every test calling `journal_engine.add_entry` appended to the real journal.
+`backend/data/store.json` held **6,698 entries — 100% test artifacts**
+(`sp-*` 3456, `bu-*` 1728, `eagle-*` 140, `default` 74), zero real trades.
+Reproduced: running one test (`test_journal_dashboard`) grew the journal by
+exactly 2 entries. This is why `/bottom-up/scorecard` reported a **66.67% win
+rate, $194.16 profit, ROI 2.7, profit_factor 9.09, verdict SUSTAINABLE** —
+manufactured entirely by fixtures. The worst artifact: `MATCHES 3, 48 trades,
+24 wins, win_rate 0.50`. MATCHES pays 10x because the true rate is 10%;
+winning half by luck is z≈9.2. No such edge can exist.
+- Fix: `_STORE_PATH` now honours `EAGLEX_STORE_PATH`; `conftest.py` points it
+  at a `tempfile.mkdtemp()` file **before** app imports. Verified: the full
+  575-test suite now leaves the journal byte-identical (6698 → 6698).
+- Scope: **local only.** `backend/data/` is gitignored and the Dockerfile
+  never runs pytest, so the deployed service was never affected (its
+  scorecard reads `trades: 0`). The lie lived on the dev machine.
+
+**2. Thin tape was labelled EDGE.** `/lab/edge-board` called `R_50`
+`MATCHES 4, EDGE, EV 0.4753` on **20 ticks**. Root cause: `_verdict` gated on
+the *Bayes-shrunk* margin but z came from **raw counts**, so on n=20 a hot
+streak (6 hits) crosses z=1.96 while the shrunk rate is still ~5pp inside its
+own error bar. `proven_edges` was already safe (min_ticks=100); the *board*
+was lying.
+- Fix: new `MIN_VERDICT_TICKS = 100`; `_verdict(..., n_ticks)` returns FAIR
+  below it. "Not enough data to claim anything" is not "nothing mispriced" —
+  on 20 ticks only the first is honest. Verified live: R_50 now reads
+  `n=45 ... FAIR`, `board_has_edge: False`.
+- Regression: `test_thin_tape_never_says_edge`, `test_verdict_floor_is_enforced_directly`.
+  Confirmed both fail with `MIN_VERDICT_TICKS=0` and pass at 100.
+
+**3. `analytics_advanced` never filters provider.** `cockpit.live_digit_counts`
+correctly requires `provider == "deriv_live"`, but `get_digit_analysis` — the
+source for Market Master AND the Truth Engine — has no filter. The disk tape
+holds **146,624 demo ticks** (all 2026-09-20, historical) interleaved into
+`1HZ100V`, `R_10`, `R_25`, `R_75` etc. Live tape is currently clean and demo
+ticks are not re-ingested, so this is latent, not active — but any replay or
+backfill of that tape would poison every downstream edge. **Not fixed** (the
+filter needs care not to break tests that push bare `Tick`s, which default to
+`provider="demo"`); flagged as the next hardening step.
+
+Also confirmed by measurement, so we stop chasing phantoms:
+- **Not slow.** Decision math is ~3ms (`market_master` 3.2ms, pro-trader
+  3.2ms, edge-board 17ms). Lightning's own profiler: `decision_total` p99
+  0.022ms vs 10ms target.
+- **Not weak for lack of data.** Tick rate is a steady **60/min/symbol**
+  across 20 symbols (990/min total).
+- **Real constraint:** `proven_edges` needs 100/300/1000 ticks per window, so
+  a 1000-tick window needs ~17 min of *continuous* live tape. The CF cannot
+  fire for the first ~17 min after a restart. Conservative, not a bug — but
+  the queue is never rehydrated from disk at boot, so every restart pays it.
+
+**Still true and still the biggest structural gap:** `auto_trader.py` imports
+**none** of `eagle`, `organism`, `super_profit`, `bottom_up`, `lightning`
+(grep count: 0). The FIRE path is gated only by `market_master` +
+`truth_engine.proven_edges` + `risk_guard`. Every precision layer is advisory.
+Suite: 575 passed.
+
 ## Cockpit strategy() bundle composer (2026-09-17)
 
 `CockpitEngine.strategy()` in `backend/app/services/cockpit.py` sits between
