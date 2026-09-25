@@ -319,10 +319,68 @@ stays under the ceiling AND health/regime/meta gates pass.
 - Tests: tests/test_rivalry.py (9 incl. explicit no-lookahead regression).
   Suite: 366 passed.
 
+
+## Execution Gate (2026-09-20) — precision layers get a veto
+
+`backend/app/services/execution_gate.py` — the missing link between the
+precision stack and real money. Before this, the CF consulted exactly ONE
+precision layer before staking (`truth_engine.proven_edges`); eagle,
+super_profit, bottom_up, organism and lightning were built, tested, and never
+wired into execution. They could describe a bad trade but not stop one.
+
+- **Veto only, never promote.** Layers can refuse a play the squad already
+  chose; none can create one. Eligibility stays with play selection + the
+  truth gate.
+- **Exact `(contract, barrier)` matching.** A verdict about OVER is not a
+  verdict about OVER 6. The first cut treated a layer's refusal of *its own
+  separate pick* as a veto on this play — which blocked EVERY play at EVERY
+  skew level. Measured on real tape (p=0.30/0.45/0.60/0.75 all blocked), then
+  fixed. `TestGateDiscriminates` pins both directions: fair board blocked,
+  genuine edge allowed at grade A. **A gate that can never open is a blanket
+  ban** — always test that enforce mode still allows a real edge.
+- **Fail closed.** A raising layer refuses the play and records the error. An
+  unevaluated contract is a blocker, not consent.
+- **`EXECUTION_GATE_MODE=off|advisory|enforce`** (default advisory) so the
+  change deploys and is measured before it can block anything. Mode surfaces
+  in CF `status()["execution_gate"]`.
+- **One evaluation per symbol per scan.** `evaluate_symbol()` then
+  `check_play(..., context=ctx)`; a six-play scan went 551ms → 92ms. Judging
+  against a shared context is 0.06ms.
+
+Latency of the full layer stack on a deep live tape: ~92ms/symbol.
+
+Tracker defect fixed while wiring: `bottom_up.evaluate()` is a READ path
+(`/bottom-up/signal`, dashboard polls) as well as a tracking path, and
+appended an observation on every call — five page loads on one tick inflated
+`observations` 1 → 6 and dragged the decay slope toward the repeated sample,
+which can cancel healthy signals. Observations now count distinct evidence,
+not distinct requests. Tests in `test_bottom_up.py`.
+
+Tests: `tests/test_execution_gate.py` (16). Suite: 608 passed.
+
+## The two-frontend history (answer to "two projects that look similar")
+
+The repo carried TWO divergent Next.js frontends over ONE FastAPI backend,
+which is why they looked like near-duplicates:
+
+- `frontend/` — "EAGLE-X / Starting XI" multi-page app (`dashboard/`, `learn/`,
+  `splash/`, `videos/`), plus a video pipeline in `scripts/` (gen_videos.py,
+  videodata.py, ffmpeg + edge-tts). NOT shipped.
+- `twin/` — the "Pro Trader" cockpit (`app/`, `auth/`, `app/app/`). This is
+  what the root `Dockerfile` builds in stage 1 and ships as `frontend_static`.
+
+`frontend/` was deleted in commit 148ada9 ("chore: remove the frontend/
+Starting-XI project", 368 files) along with its video pipeline, since only
+`twin/` is built. `_HTML_PAGES` is now `("index", "auth", "app")` — the
+frontend-only pages (dashboard, learn, splash, videos) are gone.
+
+**Do not resurrect `frontend/`.** If you need a UI change, it goes in `twin/`.
+
+
 ## Commands
 
 - Frontend build: `cd twin && npm run build` → `twin/out`
-- Backend tests: `cd backend && ../backend/.venv/bin/python -m pytest tests/ -q` (51 tests)
+- Backend tests: `cd backend && ../backend/.venv/bin/python -m pytest tests/ -q` (608 tests)
 - Run unified locally: `cd backend && FRONTEND_DIR=$PWD/../twin/out ../backend/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 12000`
 
 ## Render traps (learned the hard way)
