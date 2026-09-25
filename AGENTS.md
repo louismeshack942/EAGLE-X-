@@ -319,6 +319,53 @@ stays under the ceiling AND health/regime/meta gates pass.
 - Tests: tests/test_rivalry.py (9 incl. explicit no-lookahead regression).
   Suite: 366 passed.
 
+## In-platform chat (2026-09-20)
+
+`backend/app/services/chat.py` — "ask the platform anything", backed by
+`/chat/{ask,history,clear,suggestions}`. Rule-based (no LLM), every answer
+grounded in live state and tagged `grounded` + `limitations`. Topics:
+`overview`, `account`, `probability`, `tape`, `edges`, `no_trade`, `safety`,
+`health`, `performance`, `help`; anything else falls through to `ai_copilot`
+and is labelled `platform`.
+
+Two misroutes found by reading the live UI, not the tests:
+
+- **`_has` was substring matching.** "what is this plat-FORM" contains the
+  "form" needle, so the copilot's CF-form branch answered a platform question
+  with a win rate. `_has` now matches whole words for needles >3 chars, and
+  keeps substring matching for short needles ("cf", "ev") and phrases.
+  **When adding a needle, prefer a phrase** — a single common word will
+  collide. `test_form_questions_still_reach_the_copilot` stops the fix from
+  being undone by widening the overview needles.
+- **"how do I connect my deriv account"** fell through to a generic R_100
+  snapshot. The `account` topic explains the PAT flow and states plainly that
+  connecting does NOT arm real trading.
+
+Frontend chips load from `/chat/suggestions` (they were hardcoded and went
+stale, making new topics undiscoverable). Chat panel lives in
+`twin/app/app/page.tsx`.
+
+**Chat history is persisted in the same store as the journal.** Tests once
+wrote eight turns mentioning a fake symbol ("CHATX") into
+`chat_history_default`, which then rendered in the live chat panel — a user
+saw a conversation about a market that does not exist. `tests/test_isolation.py`
+asserts the `EAGLEX_STORE_PATH` redirect holds; that failure mode is silent, so
+it is tested rather than assumed. Always pass an explicit `conversation_id` in
+tests.
+
+## Store isolation — read this before writing a test
+
+Tests must never touch files production reads. Two contamination incidents
+have already happened: fixtures appended to the journal (manufacturing a
+66.67% win rate), and chat turns landed in the live conversation. `conftest.py`
+redirects `EAGLEX_STORE_PATH` to a temp dir and the redirect is asserted.
+
+Anything global is a hazard: `tick_queue` is shared and session-warm, so a
+test that calls `tick_queue.clear()` starves every later test that needs that
+symbol (this broke `test_intel_and_trading` when the execution-gate tests were
+added — `test_execution_gate.py` now snapshots and restores the buffers). When
+a test needs its own tape, use its own symbol name.
+
 
 ## Execution Gate (2026-09-20) — precision layers get a veto
 
