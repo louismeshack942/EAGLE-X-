@@ -22,6 +22,7 @@ from app.services.cockpit import CockpitEngine
 from app.services.mission import (
     DEFAULT_TARGET_RUNS,
     MissionPlanner,
+    _qualifies,
     _runs_math,
     parse_request,
 )
@@ -262,6 +263,119 @@ class TestCopilotRouting:
             assert banned not in blob
 
 
+class TestOverFourScan:
+    """The owner's OVER 4 focus: scan every market, report its best entry point.
+
+    The regression these lock down: an absolute 68% floor was applied to a
+    Wilson LOWER BOUND, which forced every barrier to the same 73.8% observed
+    rate. On OVER 4 (payout 2.0, breakeven 50%) that is a 7.5-sigma demand, so
+    the contract could never be called playable - a genuine +10pp edge was
+    refused. The gate is now breakeven-relative.
+    """
+
+    def test_over_4_with_a_real_edge_is_playable(self):
+        from app.services.cockpit import barrier_row
+        # 60% of the tape on digits 5..9: +10pp over OVER 4's 50% breakeven.
+        counts = [20] * 5 + [30] * 5
+        row = barrier_row(counts, 250, "OVER", 4)
+        assert row["breakeven_pct"] == pytest.approx(50.0)
+        assert row["edge_pp"] == pytest.approx(10.0)
+        assert row["playable"] is True, row
+
+    def test_over_4_on_a_fair_tape_is_not_playable(self):
+        from app.services.cockpit import barrier_row
+        row = barrier_row([25] * 10, 250, "OVER", 4)
+        assert row["observed_pct"] == pytest.approx(50.0)
+        assert row["playable"] is False
+
+    def test_the_same_tape_is_judged_per_contract_not_globally(self):
+        """Each contract is judged against ITS OWN breakeven, not one flat bar.
+
+        A tape skewed low is good for UNDER 8 (breakeven 80%) and bad for
+        OVER 4 (breakeven 50%). Under the old absolute floor both were compared
+        to the same 68%, which is meaningless across different payouts.
+        """
+        from app.services.cockpit import barrier_row
+        counts = [30] * 8 + [5] * 2           # 96% on digits 0..7
+        under8 = barrier_row(counts, 250, "UNDER", 8)
+        over4 = barrier_row(counts, 250, "OVER", 4)
+        assert under8["breakeven_pct"] == pytest.approx(80.0)
+        assert over4["breakeven_pct"] == pytest.approx(50.0)
+        assert under8["playable"] is True
+        assert over4["playable"] is False
+
+    def test_a_high_reading_below_breakeven_is_still_refused(self):
+        """The failure the absolute floor could NOT catch: a wide barrier can
+        read 76% and look 'confident' while still losing at an 80% breakeven."""
+        from app.services.cockpit import barrier_row
+        counts = [20] * 5 + [30] * 5          # 76% on 0..7
+        under8 = barrier_row(counts, 250, "UNDER", 8)
+        assert under8["observed_pct"] == pytest.approx(76.0)
+        assert under8["breakeven_pct"] == pytest.approx(80.0)
+        assert under8["confidence"] > 68.0     # would have cleared the old floor
+        assert under8["edge_pp"] < 0
+        assert under8["playable"] is False
+
+    def test_scan_all_reports_an_entry_point_on_every_market(self):
+        """A "best entry point" question must be answerable even where nothing
+        is playable - the point exists, it just is not an edge."""
+        _push("R_100", ["5"] * 40 + list(range(10)) * 4)
+        _push("R_50", _FLAT_TAPE)
+        card = MissionPlanner().scan(["R_100", "R_50"],
+                                     [{"side": "OVER", "barrier": 4}])
+        assert len(card["scanned"]) == 2
+        for row in card["scanned"]:
+            assert row["best_entry"] is not None, row
+            assert row["best_entry"]["digit"] == 5      # OVER 4 -> entry 5
+            assert row["best_entry"]["side"] == "OVER"
+
+    def test_scan_all_over_4_finds_the_favourable_market(self):
+        _push("R_100", ["7", "8", "9"] * 30 + ["0"] * 10)   # OVER 4 wins big
+        _push("R_50", _FLAT_TAPE)                           # fair
+        card = MissionPlanner().scan(["R_100", "R_50"],
+                                     [{"side": "OVER", "barrier": 4}])
+        assert [c["symbol"] for c in card["candidates"]] == ["R_100"]
+        play = card["candidates"][0]["play"]
+        assert play["side"] == "OVER" and play["barrier"] == 4
+        assert play["entry_digit"] == 5
+        assert play["edge_pp"] > 0
+
+    def test_entry_point_is_the_digit_adjacent_to_the_barrier(self):
+        _push("R_100", ["5"] * 40 + list(range(10)) * 4)
+        card = MissionPlanner().scan(["R_100"],
+                                     [{"side": "OVER", "barrier": 4}])
+        assert card["scanned"][0]["best_entry"]["digit"] == 5
+        assert card["scanned"][0]["best_entry"]["inside"] is True
+
+    def test_plan_answers_over_4_scan_in_plain_english(self):
+        _push("R_100", ["7", "8", "9"] * 30 + ["0"] * 10)
+        plan = MissionPlanner().plan(
+            "scan all over 4 markets and their best entry point",
+            ["R_100"])
+        assert plan["requested_predictions"] == [{"side": "OVER", "barrier": 4}]
+        assert "OVER 4" in plan["answer"]
+        assert "entry digit" in plan["answer"]
+        # The gate is described honestly - no phantom 68% floor.
+        assert "68%" not in plan["answer"]
+
+    def test_no_market_still_names_the_closest_entry_point(self):
+        _push("R_100", _FLAT_TAPE)
+        plan = MissionPlanner().plan("scan all over 4 markets", ["R_100"])
+        assert plan["verdict"] == "NO_MARKET"
+        assert plan["best_entry"] is not None
+        assert "No trade is the correct answer" in plan["answer"]
+
+    def test_explicit_floor_still_bites_when_asked_for(self):
+        """The opt-in floor must remain honoured - it is not simply deleted."""
+        counts = [20] * 5 + [30] * 5     # OVER 4 confidence ~53.8%
+        from app.services.cockpit import barrier_row
+        row = barrier_row(counts, 250, "OVER", 4)
+        assert row["confidence"] < 68.0
+        assert _qualifies(row, None) is True
+        assert _qualifies(row, 68.0) is False
+        assert _qualifies(row, 50.0) is True
+
+
 class TestMissionRoute:
     """HTTP surface."""
 
@@ -278,7 +392,22 @@ class TestMissionRoute:
         assert res.status_code == 200
         body = res.json()
         assert "candidates" in body and "answer" in body
-        assert body["min_confidence_pct"] == 68.0
+        # No floor was named, so none is imposed - the rows are judged by their
+        # own breakeven gate. An absolute floor is opt-in.
+        assert body["min_confidence_pct"] is None
+
+    def test_route_honours_an_explicitly_named_floor(self):
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        _push("R_100", _LOW_TAPE)
+        with TestClient(app) as c:
+            res = c.post("/ai-copilot/mission", json={
+                "question": "over 4 under 7, 3 runs, 70% confidence",
+                "symbols": ["R_100"],
+            })
+        assert res.status_code == 200
+        assert res.json()["min_confidence_pct"] == 70.0
 
     def test_route_accepts_explicit_predictions(self):
         from fastapi.testclient import TestClient

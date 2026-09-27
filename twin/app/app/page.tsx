@@ -671,7 +671,7 @@ return (
   <section className="card-glow" style={{ padding:"1rem" }}>
    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
     <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>BAND PREDICTOR · OVER 3 → UNDER 8</h2>
-    <span className="chip chip-violet">68% confidence floor · entry digit</span>
+    <span className="chip chip-violet">breakeven-relative · entry digit</span>
    </div>
    <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
     <button className="btn" disabled={bandBusy} onClick={loadBand}
@@ -681,7 +681,7 @@ return (
    </div>
    {bandBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Reading the band…</div>}
    {!band && !bandBusy && (
-    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ranks every barrier from OVER 3 to UNDER 8 on the live tape and publishes only a play whose confidence clears 68%, together with the entry digit inside that exact band.</div>
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ranks every barrier from OVER 3 to UNDER 8 on the live tape and publishes only a play whose confidence clears its OWN breakeven by a real margin, together with the entry digit inside that exact band.</div>
    )}
    {band?.error && <div style={{ fontSize:".76rem", color:"var(--warning)" }}>Band read failed: {band.error}</div>}
    {band && !band.error && (
@@ -772,7 +772,7 @@ return (
    </div>
    {copilotBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Reading every live market against your question…</div>}
    {!copilot && !copilotBusy && (
-    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ask a question in your own words. <b>Probability</b> ("what is the probability of over 5 on R_100") answers with the measured chance on the live tape and the breakeven that payout needs. <b>Trade plan</b> ("scan all markets, over 4 and under 7, entry digit, 5 runs") scans every market, keeps only the ones clearing the 68% floor, and gives the exact entry digit. Name a market ("on R_100", "jump 50", "bear market") or omit it to scan all. It never places a trade.</div>
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ask a question in your own words. <b>Probability</b> ("what is the probability of over 5 on R_100") answers with the measured chance on the live tape and the breakeven that payout needs. <b>Trade plan</b> ("scan all markets, over 4 and under 7, entry digit, 5 runs") scans every market, keeps only the ones clearing their own breakeven by a real margin, and gives the exact entry digit. Name a market ("on R_100", "jump 50", "bear market") or omit it to scan all. It never places a trade.</div>
    )}
    {copilot?.error && <div style={{ fontSize:".76rem", color:"var(--warning)" }}>Ask failed: {copilot.error}</div>}
    {copilot && !copilot.error && copilot.kind === "PROBABILITY" && (

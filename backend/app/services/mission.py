@@ -74,7 +74,11 @@ def parse_request(question: str) -> dict:
     if run_match:
         target_runs = max(1, min(MAX_TARGET_RUNS, int(run_match.group(1))))
 
-    floor = MIN_CONFIDENCE_PCT
+    # A confidence floor is OPT-IN. `confidence` is a Wilson lower bound, so a
+    # flat percentage against it means a different margin on every payout -
+    # leaving it as the default stack a 7.5-sigma demand on OVER 4. Only set it
+    # when the user actually typed one ("70% confidence").
+    floor = None
     floor_match = re.search(r"(\d{2}(?:\.\d+)?)\s*%\s*(?:confidence|conf|floor)", q)
     if floor_match:
         floor = max(50.0, min(99.0, float(floor_match.group(1))))
@@ -160,6 +164,69 @@ def _runs_math(p_win: float, target_runs: int) -> dict:
     }
 
 
+def _best_entry(legs: List[dict]) -> Optional[dict]:
+    """The strongest ENTRY POINT across a market's legs.
+
+    An entry point is the digit adjacent to the barrier (OVER 4 -> 5, UNDER 7
+    -> 6). Ranks by the barrier's own confidence, tie-break its edge, so a
+    "best entry point" question gets an answer even on a market where nothing
+    is playable - the point still EXISTS, it just is not an edge.
+
+    `digit_validated` is the honest qualifier: the band's edge can be real
+    while the single entry digit is not itself overweight. When it is False the
+    entry point is a WEAK reading and the card says so rather than presenting
+    it as a signal.
+    """
+    rows = [lg for lg in (legs or []) if lg.get("entry")]
+    if not rows:
+        return None
+    top = max(rows, key=lambda r: (r.get("confidence", 0.0), r.get("edge_pp", 0.0)))
+    entry = top["entry"]
+    validated = bool(entry.get("validated", entry.get("inside", False)))
+    return {
+        "side": top.get("side"),
+        "barrier": top.get("barrier"),
+        "digit": entry.get("digit"),
+        "digit_pct": entry.get("pct"),
+        "digit_wilson_lb": entry.get("wilson_lb"),
+        "digit_fair_pct": entry.get("fair_pct"),
+        "digit_edge_pp": entry.get("edge_pp"),
+        "digit_validated": validated,
+        "inside": validated,
+        "confidence": top.get("confidence"),
+        "breakeven_pct": top.get("breakeven_pct"),
+        "edge_pp": top.get("edge_pp"),
+        "ev": top.get("ev"),
+        "payout": top.get("payout"),
+        "playable": bool(top.get("playable")),
+        # True only when BOTH the band pays and the entry digit is real.
+        "sharp": bool(top.get("playable")) and validated,
+    }
+
+
+def _best_of(scanned: List[dict]) -> Optional[dict]:
+    """Best entry point across every scanned market, labelled with its symbol."""
+    rows = [s for s in (scanned or []) if s.get("best_entry")]
+    if not rows:
+        return None
+    top = max(rows, key=lambda s: (s["best_entry"].get("confidence", 0.0),
+                                   s["best_entry"].get("edge_pp", 0.0)))
+    return {**top["best_entry"], "symbol": top["symbol"], "n": top.get("n")}
+
+
+def _qualifies(leg: dict, min_confidence: Optional[float]) -> bool:
+    """The row's own breakeven gate, plus an explicit user floor if given.
+
+    `min_confidence` is None when the user named no floor - then the row's own
+    gate decides. An absolute floor is opt-in, never the default.
+    """
+    if not leg.get("playable"):
+        return False
+    if min_confidence is None:
+        return True
+    return leg.get("confidence", 0) >= min_confidence
+
+
 class MissionPlanner:
     """Builds the copilot's multi-market answer card. Advisory only."""
 
@@ -168,10 +235,19 @@ class MissionPlanner:
 
     def scan(self, symbols: List[str], predictions: List[dict],
              target_runs: int = DEFAULT_TARGET_RUNS, window: int = DEFAULT_WINDOW,
-             min_confidence: float = MIN_CONFIDENCE_PCT,
+             min_confidence: Optional[float] = None,
              stake: float = 1.0,
              balance: Optional[float] = None) -> dict:
-        """Check every market against the user's OWN barriers, then rank."""
+        """Check every market against the user's OWN barriers, then rank.
+
+        `min_confidence` is an OPTIONAL user override. When None (the default)
+        a leg is judged by `barrier_row`'s own gate - its Wilson lower bound
+        beating that contract's breakeven by MIN_EDGE_PP. An absolute floor is
+        only applied when the caller explicitly asks for one, because a flat
+        percentage against a Wilson bound demands wildly different margins on
+        different payouts (OVER 4 needed a 7.5-sigma tape; UNDER 8 could pass
+        on a losing one).
+        """
         candidates: List[dict] = []
         scanned: List[dict] = []
         probabilities: List[dict] = []
@@ -206,15 +282,18 @@ class MissionPlanner:
                     "entry": lg.get("entry"),
                 })
 
-            playable = [lg for lg in card["legs"] if lg.get("playable")
-                        and lg.get("confidence", 0) >= min_confidence]
+            playable = [lg for lg in card["legs"] if _qualifies(lg, min_confidence)]
             scanned.append({
                 "symbol": symbol, "n": card["n"],
                 "playable_legs": len(playable),
                 "best_confidence": max(
                     [lg.get("confidence", 0) for lg in card["legs"]] or [0.0]),
+                "best_edge_pp": max(
+                    [lg.get("edge_pp", 0.0) for lg in card["legs"]] or [0.0]),
+                # The single best ENTRY POINT on this market, playable or not,
+                # so a "best entry point" question is answerable everywhere.
+                "best_entry": _best_entry(card["legs"]),
             })
-
             if not playable:
                 continue
 
@@ -239,9 +318,15 @@ class MissionPlanner:
                     "side": best["side"], "barrier": best["barrier"],
                     "confidence": best["confidence"], "ev": best["ev"],
                     "payout": best["payout"],
+                    "edge_pp": best["edge_pp"],
                     "entry_digit": (best.get("entry") or {}).get("digit"),
                     "entry_share_pct": (best.get("entry") or {}).get("pct"),
                     "entry_inside": (best.get("entry") or {}).get("inside"),
+                    # The entry digit's own Wilson lower bound vs the 10% a
+                    # single digit fairs at - the honest sharpness test.
+                    "entry_validated": (best.get("entry") or {}).get("validated"),
+                    "entry_wilson_lb": (best.get("entry") or {}).get("wilson_lb"),
+                    "entry_edge_pp": (best.get("entry") or {}).get("edge_pp"),
                 },
             })
 
@@ -454,12 +539,27 @@ class MissionPlanner:
 
         if not candidates:
             best_seen = max([s["best_confidence"] for s in scan["scanned"]] or [0.0])
+            best_edge = max([s.get("best_edge_pp", 0.0) for s in scan["scanned"]]
+                            or [0.0])
+            best_entry = _best_of(scan["scanned"])
+            floor_txt = (f" against your {floor:.0f}% floor"
+                         if floor is not None else "")
+            entry_txt = ""
+            if best_entry:
+                entry_txt = (
+                    f" The closest thing to an entry point anywhere was "
+                    f"{best_entry['side']} {best_entry['barrier']} into digit "
+                    f"{best_entry['digit']} on {best_entry['symbol']} "
+                    f"({best_entry['confidence']:.1f}% confidence, "
+                    f"{best_entry['edge_pp']:+.1f}pp vs breakeven).")
             return {**base, "verdict": "NO_MARKET", "candidates": [],
                     "scanned": scan["scanned"], "selected": [], "runs": None,
+                    "best_entry": best_entry,
                     "answer": (
                         f"I scanned {len(scan['scanned'])} markets for {pred_txt} "
-                        f"and none supports it. Best reading anywhere was "
-                        f"{best_seen:.1f}% against your {floor:.0f}% floor. "
+                        f"and none carries an edge{floor_txt}. Best reading "
+                        f"anywhere was {best_seen:.1f}% confidence at "
+                        f"{best_edge:+.1f}pp over breakeven.{entry_txt} "
                         "No trade is the correct answer here.")}
 
         probs = [c["play"]["confidence"] / 100.0 for c in selected]
@@ -468,25 +568,31 @@ class MissionPlanner:
         verdict = ("FULL_LADDER" if len(selected) >= runs
                    else "PARTIAL_LADDER")
 
+        gate_txt = (f"at {floor:.0f}%+ confidence" if floor is not None
+                    else "each clearing its own breakeven by a real margin")
+        if len(live) == 1 and floor is None:
+            gate_txt = "clearing its own breakeven by a real margin"
         lines = [
             f"I found {len(live)} market"
-            f"{'s' if len(live) != 1 else ''} supporting {pred_txt} "
-            f"at {floor:.0f}%+ confidence."
+            f"{'s' if len(live) != 1 else ''} supporting {pred_txt} {gate_txt}."
         ]
         for i, c in enumerate(selected, 1):
             pl = c["play"]
             entry_txt = ""
             if pl.get("entry_digit") is not None:
                 entry_txt = f", entry digit {pl['entry_digit']}"
+                if pl.get("entry_validated") is False:
+                    entry_txt += " (not itself validated)"
             lines.append(
                 f"Run {i}: {c['symbol']} - {pl['side']} {pl['barrier']}"
                 f"{entry_txt} - {pl['confidence']:.1f}% confidence, "
+                f"{pl['edge_pp']:+.1f}pp vs breakeven, "
                 f"{pl['payout']:.2f}x, EV {pl['ev']:+.3f}/$.")
         if len(selected) < runs:
             lines.append(
                 f"That is {len(selected)} run"
                 f"{'s' if len(selected) != 1 else ''} available, not the {runs} "
-                "you asked for - the other markets did not clear the floor.")
+                "you asked for - the other markets did not clear it.")
         if runs_math:
             lines.append(runs_math["note"])
 

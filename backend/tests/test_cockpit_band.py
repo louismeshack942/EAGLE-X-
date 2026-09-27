@@ -15,7 +15,7 @@ import pytest
 
 from app.core.queue import tick_queue
 from app.models.tick import Tick
-from app.services.cockpit import CockpitEngine
+from app.services.cockpit import CockpitEngine, entry_digit
 from app.services.tick_recorder import tick_recorder
 
 SYM = "BAND_TEST_R_100"
@@ -160,7 +160,8 @@ class TestConfidenceAndGate:
     def test_no_band_clears_floor_reports_best_reading(self):
         r = _band(list(range(10)) * 10)
         assert "no band" in r["reason"]
-        assert "%" in r["reason"]
+        assert "% confidence" in r["reason"]
+        assert "breakeven" in r["reason"]
 
 
 class TestEntryDigit:
@@ -223,7 +224,10 @@ class TestEntryDigit:
         assert r["entry"]["available"] is True
         assert r["entry"]["inside"] in (True, False)
         if not r["entry"]["inside"]:
-            assert "the band carries it" in r["reason"]
+            # The warning must name the REAL reason - the digit is not itself
+            # overweight vs the 10% baseline, not "under 50%" (impossible).
+            assert "NOT itself validated" in r["reason"]
+            assert r["entry"]["fair_pct"] == pytest.approx(10.0)
 
     def test_entry_digit_is_reported_even_when_unplayable(self):
         """No band -> entry is explicitly unavailable, never a silent zero."""
@@ -232,6 +236,32 @@ class TestEntryDigit:
         assert r["entry"]["available"] is False
         assert r["entry"]["inside"] is False
         assert r["entry"]["wilson_lb"] == 0.0
+
+    def test_a_genuinely_overweight_digit_is_validated(self):
+        """The fix: a digit running far above its 10% baseline IS a real signal.
+
+        Under the old p >= 0.5 test this digit - at 3x its fair share - still
+        read as unvalidated, which is why every entry point looked like a trap.
+        """
+        counts = [19] * 10
+        counts[5] = 75                      # digit 5 = 30% of 250
+        e = entry_digit(counts, 250, "OVER", 4)
+        assert e["digit"] == 5
+        assert e["pct"] == pytest.approx(30.0, abs=0.1)
+        assert e["fair_pct"] == pytest.approx(10.0)
+        assert e["edge_pp"] == pytest.approx(20.0, abs=0.1)
+        assert e["wilson_lb"] > 10.0
+        assert e["inside"] is True
+        assert e["validated"] is True
+
+    def test_a_fair_share_digit_is_not_validated(self):
+        """A digit at its 10% baseline carries no edge, and must not claim one."""
+        counts = [25] * 10
+        e = entry_digit(counts, 250, "OVER", 4)
+        assert e["pct"] == pytest.approx(10.0)
+        assert e["edge_pp"] == pytest.approx(0.0)
+        assert e["inside"] is False
+        assert e["validated"] is False
 
 
 class TestHonestyGates:

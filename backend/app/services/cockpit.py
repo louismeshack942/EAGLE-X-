@@ -32,7 +32,18 @@ BREAKEVEN_MARGIN = 1.0
 # breakeven is per-barrier and reported per row.
 BAND_MIN_BARRIER = 3
 BAND_MAX_BARRIER = 8
+# Kept for reporting only. It is a Wilson LOWER BOUND, not a win rate, so a
+# flat floor against it is a category error: it demands the same observed rate
+# (73.8% at n=250) from every barrier regardless of payout, which is +23.8pp of
+# margin on OVER 4 (a 7.5-sigma event) but NEGATIVE margin on UNDER 8. The gate
+# is now breakeven-relative - see MIN_EDGE_PP and `barrier_row`.
 MIN_CONFIDENCE_PCT = 68.0
+# The Wilson lower bound must clear THIS contract's breakeven by this margin.
+# 3pp matches bottom_up's `min_edge` default; the preferred band is 5pp.
+MIN_EDGE_PP = 3.0
+# A single digit's fair share of the tape. The ENTRY digit must be judged
+# against this, not a coin flip - one digit can never appear 50% of the time.
+DIGIT_FAIR_PCT = 10.0
 BREAKEVEN_PCT = 90.0
 
 
@@ -113,6 +124,13 @@ def barrier_row(counts: List[int], n: int, side: str, barrier: int) -> Optional[
     be = 100.0 / pay
     conf = wilson_lb(p, n) * 100.0
     ev = p * pay - 1.0
+    # The gate is breakeven-relative, not an absolute floor. `conf` is a Wilson
+    # LOWER BOUND: requiring LB >= 68% regardless of payout made OVER 4 need a
+    # 7.5-sigma tape while UNDER 8 could pass on a losing one. A contract is
+    # playable when its conservative win rate beats ITS OWN breakeven with a
+    # real margin, and the price still pays.
+    edge_pp = round(p * 100 - be, 2)
+    playable = (conf >= be + MIN_EDGE_PP) and ev > 0
     return {
         "side": side, "barrier": barrier,
         "winning_digits": outs,
@@ -120,19 +138,26 @@ def barrier_row(counts: List[int], n: int, side: str, barrier: int) -> Optional[
         "observed_pct": round(p * 100, 2),
         "confidence": round(conf, 2),
         "breakeven_pct": round(be, 2),
-        "edge_pp": round(p * 100 - be, 2),
+        "edge_pp": edge_pp,
         "ev": round(ev, 4),
         "sample": n,
-        "playable": conf >= MIN_CONFIDENCE_PCT and ev > 0,
+        "playable": playable,
+        # Kept so a caller can see WHICH rule decided it.
+        "min_confidence_pct": MIN_CONFIDENCE_PCT,
+        "min_edge_pp": MIN_EDGE_PP,
+        "confidence_vs_breakeven_pp": round(conf - be, 2),
     }
 
 
 def entry_digit(counts: List[int], n: int, side: str, barrier: int) -> dict:
     """The entry digit = the winning digit adjacent to the barrier.
 
-    OVER b wins on b+1..9, so the entry is b+1 (OVER 3 -> digit 4); UNDER b
-    wins on 0..b-1, so it is b-1. `inside` is False when that digit's own rate
-    is under 50% - the band can carry the edge while the single digit does not.
+    OVER b wins on b+1..9, so the entry is b+1 (OVER 4 -> digit 5); UNDER b
+    wins on 0..b-1, so it is b-1. `inside` is True when that digit ALONE
+    carries a statistically real overweight - its Wilson lower bound beats the
+    10% a single digit fairs at. (It used to test p >= 50%, a rate one digit
+    can never reach, so it read False on every tape and warned "the band
+    carries it, the single digit does not" even on a digit running at 30%.)
     """
     if side == "OVER":
         digit = barrier + 1
@@ -140,18 +165,28 @@ def entry_digit(counts: List[int], n: int, side: str, barrier: int) -> dict:
         digit = barrier - 1
     else:
         return {"digit": None, "count": 0, "pct": 0.0, "confidence": 0.0,
-                "wilson_lb": 0.0, "inside": False, "available": False}
+                "wilson_lb": 0.0, "inside": False, "available": False,
+                "fair_pct": DIGIT_FAIR_PCT, "edge_pp": 0.0, "validated": False}
     if not 0 <= digit <= 9 or n <= 0:
         return {"digit": None, "count": 0, "pct": 0.0, "confidence": 0.0,
-                "wilson_lb": 0.0, "inside": False, "available": False}
+                "wilson_lb": 0.0, "inside": False, "available": False,
+                "fair_pct": DIGIT_FAIR_PCT, "edge_pp": 0.0, "validated": False}
     c = counts[digit]
     p = c / n
+    lb = wilson_lb(p, n)
+    # A single digit is compared to its OWN baseline (10%), not a coin flip.
+    validated = lb > (DIGIT_FAIR_PCT / 100.0)
     return {
         "digit": digit, "count": c,
         "pct": round(p * 100, 2),
         "confidence": round(p * 100, 2),
-        "wilson_lb": round(wilson_lb(p, n) * 100.0, 2),
-        "inside": p >= 0.5,
+        "wilson_lb": round(lb * 100.0, 2),
+        "fair_pct": DIGIT_FAIR_PCT,
+        "edge_pp": round(p * 100 - DIGIT_FAIR_PCT, 2),
+        "validated": validated,
+        # `inside` keeps its original NAME for callers, but now means "this
+        # digit alone is a validated overweight" - the honest question.
+        "inside": validated,
         "available": True,
     }
 
@@ -736,12 +771,12 @@ class CockpitEngine:
 
     def band_predict(self, symbol: str, window: int = 250, duration: str = "5t",
                      stake: float = 1.0) -> dict:
-        """Owner's band spec: OVER 3..UNDER 8, confidence floor 68%, entry digit.
+        """Owner's band spec: OVER 3..UNDER 8, entry digit, honest gate.
 
-        Ranks every barrier in the band (OVER 3..8 and UNDER 3..8) and
-        publishes the strongest play whose CONFIDENCE (Wilson lower bound at
-        95%) clears MIN_CONFIDENCE_PCT, together with the exact ENTRY digit
-        inside that band. Advisory only - it answers, it never fires.
+        Ranks every barrier in the band (OVER 3..8 and UNDER 3..8) and publishes
+        the strongest play whose CONFIDENCE (Wilson lower bound at 95%) clears
+        THAT contract's breakeven by MIN_EDGE_PP, together with the exact ENTRY
+        digit inside that band. Advisory only - it answers, it never fires.
         """
         window = max(20, int(window))
         d_counts, n = live_digit_counts(symbol, window)
@@ -772,17 +807,22 @@ class CockpitEngine:
                 f"(wins {band['winning_digits']}/10 digits at {band['payout']}x) - "
                 f"confidence {band['confidence']:.1f}% vs breakeven "
                 f"{band['breakeven_pct']:.1f}% - EV {band['ev']:+.3f}/$ - "
-                f"ENTRY digit {entry['digit']} ({entry['confidence']:.1f}% of tape "
-                f"on its own digit)"
-                + ("" if entry["inside"] else " (under 50% - the band carries it, "
-                   "the single digit does not)")
+                f"ENTRY digit {entry['digit']} at {entry['pct']:.1f}% of tape "
+                f"({entry['edge_pp']:+.1f}pp vs the {entry['fair_pct']:.0f}% a "
+                f"single digit fairs at)"
+                + ("" if entry["inside"]
+                   else " - that digit is NOT itself validated, so the band's "
+                        "edge is spread across its winners rather than "
+                        "concentrated on the entry point")
             )
         else:
             best = max([r["confidence"] for r in rows_over + rows_under] or [0.0])
+            best_edge = max([r["edge_pp"] for r in rows_over + rows_under] or [0.0])
             reason = (
                 f"Tape n={n} - no band in {BAND_MIN_BARRIER}..{BAND_MAX_BARRIER} "
-                f"clears the {MIN_CONFIDENCE_PCT:.0f}% floor (best reading "
-                f"{best:.1f}%). The bureau stays silent - no over, no under."
+                f"clears its own breakeven by {MIN_EDGE_PP:.0f}pp (best reading "
+                f"{best:.1f}% confidence, {best_edge:+.1f}pp over breakeven). "
+                "The bureau stays silent - no over, no under."
             )
 
         return {
@@ -792,6 +832,12 @@ class CockpitEngine:
             "reason": reason,
             "band_range": {"min_barrier": BAND_MIN_BARRIER,
                            "max_barrier": BAND_MAX_BARRIER},
+            # The REAL gate: the Wilson lower bound must beat the contract's own
+            # breakeven by this much. `min_confidence_pct` is legacy reporting -
+            # it is NOT the threshold any more (a flat bar against a Wilson
+            # bound demanded a different margin on every payout).
+            "gate": "wilson_lb >= breakeven + min_edge_pp",
+            "min_edge_pp": MIN_EDGE_PP,
             "min_confidence_pct": MIN_CONFIDENCE_PCT,
             "breakeven_pct": BREAKEVEN_PCT,
             "band": band,
