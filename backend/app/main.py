@@ -437,6 +437,42 @@ def pro_trader_scan():
     return pro_trader.scan(settings.active_symbols)
 
 
+# ---------------- Sniper (special department) ----------------
+@app.get("/sniper/scan")
+def sniper_scan():
+    """Engage the three cleared targets across every streamed market.
+
+    One shot, one run, then done. Advisory only - it arms a card, it places
+    nothing.
+    """
+    from app.services.sniper import sniper
+    return sniper.scan(settings.active_symbols)
+
+
+@app.get("/sniper/card")
+def sniper_card():
+    """The one-screen sniper card: the shot per target, or why it held fire."""
+    from app.services.sniper import sniper
+    return sniper.card(settings.active_symbols)
+
+
+@app.get("/sniper/targets")
+def sniper_targets():
+    """The department's standing orders - the only three targets it engages."""
+    from app.services.sniper import MATCHES_MIN_EDGE_PP, SHOT_RUNS, SHOT_STAKE, TARGETS
+    return {
+        "department": "SNIPER",
+        "mission": [t["key"] for t in TARGETS],
+        "targets": [dict(t) for t in TARGETS],
+        "shot_runs": SHOT_RUNS,
+        "stake": SHOT_STAKE,
+        "matches_min_edge_pp": MATCHES_MIN_EDGE_PP,
+        "doctrine": ("Three targets only. One shot, one run, then done. "
+                     "No ladder, no hedging, no second shot."),
+    }
+
+
+
 @app.get("/pro-trader/signal/{symbol}")
 def pro_trader_signal(symbol: str):
     return pro_trader.signal(symbol)

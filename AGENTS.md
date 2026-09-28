@@ -969,3 +969,34 @@ Routes: `POST /ai-copilot/mission` now takes `kind`. Tests:
 `tests/test_digit_markets.py` (14), plus `TestFindSymbol`,
 `TestProbabilityIntent`, `TestProbabilityAnswer`, `TestProbabilityRouting` in
 `tests/test_copilot_mission.py`. Suite: 535 passed.
+
+
+## Sniper — special department (2026-09-20)
+
+`backend/app/services/sniper.py` — three targets, one shot, one run, then done.
+
+- **Standing orders:** ONLY `MATCHES` (exact digit, 10x, fair 10%),
+  `OVER 4` (wins 5..9, 2x, breakeven 50%), `UNDER 6` (wins 0..5, 1.67x,
+  breakeven 60%). No other family is ever measured. No ladder, no martingale,
+  no hedging, no second shot — `SHOT_RUNS = 1`, `SHOT_STAKE = 1.0` are
+  constants, not options.
+- **Kill gate:** sample >= 100; the edge must hold across 100/250/1000 (a
+  window that cannot be filled is not evidence, and >= 2 filled windows must
+  all show positive edge — this is the rule that kills the phantom-edge
+  fluke); raw edge AND Wilson lower bound must clear the target's OWN
+  breakeven by `MIN_EDGE_PP` (3pp); EV > 0. MATCHES is judged against its own
+  10% fair share on the Wilson LB (`MATCHES_MIN_EDGE_PP = 1.0pp`) — a raw
+  frequency a short tape can fluke is never enough on its own.
+- **`one_shot`** states both outcomes: `p_win`, `p_miss`, `win_credit`,
+  `loss_debit`, `ev_per_run`. A card showing only the win case would be
+  advertising, not reporting.
+- **Honest silence:** no tape -> `NO_TARGET`; measured but unproven ->
+  `HOLDING_FIRE` carrying every target's best read, its failed rule names,
+  and the numbers. The full board is always returned — a department that goes
+  silent is worse than one that reports "no shot".
+- Routes: `/sniper/scan`, `/sniper/card` (one-screen), `/sniper/targets`
+  (standing orders). Advisory only — arms a card, places nothing.
+- Frontend: red-accented SNIPER panel in `twin/app/app/page.tsx` with an
+  Engage button, 30s auto-refresh (pausable), per-target FIRE/HOLD chips and
+  the shot broken out (payout, chance to land, miss rate, win credit, EV).
+- Tests: `tests/test_sniper.py` (30). Suite: 669 passed.

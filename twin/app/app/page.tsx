@@ -156,6 +156,9 @@ const [copilotQ, setCopilotQ] = useState<string>("what is the probability of ove
 const [copilot, setCopilot] = useState<any>(null);
 const [copilotBusy, setCopilotBusy] = useState<boolean>(false);
 const [copilotKind, setCopilotKind] = useState<string>("auto");
+const [sniper, setSniper] = useState<any>(null);
+const [sniperBusy, setSniperBusy] = useState<boolean>(false);
+const [sniperAuto, setSniperAuto] = useState<boolean>(true);
 const [chat, setChat] = useState<any[]>([]);
 const [chatQ, setChatQ] = useState<string>("");
 const [chatBusy, setChatBusy] = useState<boolean>(false);
@@ -170,6 +173,12 @@ const [chatSuggestions, setChatSuggestions] = useState<string[]>([
  "what are the safety limits",
 ]);
 useEffect(() => { loadChat(); loadChatSuggestions(); }, []);
+useEffect(() => {
+ if (!sniperAuto) return;
+ loadSniper();
+ const id = setInterval(() => loadSniper(), 30000);
+ return () => clearInterval(id);
+}, [sniperAuto]);
 async function loadChatSuggestions() {
  try {
   const r = await fetch(`/chat/suggestions`, { headers: { Accept: "application/json" } });
@@ -243,6 +252,20 @@ async function loadBand() {
   setBand({ error: String(e?.message || e) });
  } finally {
   setBandBusy(false);
+ }
+}
+async function loadSniper(manual?: boolean) {
+ setSniperBusy(true);
+ try {
+  const res = await fetch(`/sniper/scan?_cb=${Date.now()}`, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json().catch(() => null);
+  if (!data) throw new Error("Empty response");
+  setSniper(data);
+ } catch (e: any) {
+  if (manual) setSniper({ error: String(e?.message || e) });
+ } finally {
+  setSniperBusy(false);
  }
 }
 async function loadFbi() {
@@ -941,6 +964,87 @@ return (
   </section>
  </div>
  <div style={{ maxWidth:1240, margin:"0 auto", padding:"16px 1rem 0" }}>
+  <section className="card-glow" style={{ padding:"1rem", border:"1px solid rgba(225,29,72,0.4)" }}>
+   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
+    <h2 style={{ fontSize:".78rem", fontWeight:700, color:"#e11d48", letterSpacing:".08em" }}>🎯 SNIPER · SPECIAL DEPARTMENT</h2>
+    <div style={{ display:"flex", gap:6, alignItems:"center" }}>
+     <span style={{ fontSize:".64rem", color:"var(--muted-2)" }}>{sniperAuto ? "auto-refresh" : "manual"}</span>
+     <button className="btn btn-ghost" style={{ padding:".25rem .6rem", fontSize:".68rem" }}
+      onClick={() => setSniperAuto((v:boolean) => !v)}>{sniperAuto ? "Pause" : "Resume"}</button>
+     <button className="btn" disabled={sniperBusy} onClick={() => loadSniper(true)}
+      style={{ padding:".35rem .8rem", fontSize:".72rem", fontWeight:700, background:"linear-gradient(135deg,#e11d48,#7c3aed)", color:"#fff", border:"none", opacity:sniperBusy ? .6 : 1 }}>
+      {sniperBusy ? "Engaging…" : "Engage"}
+     </button>
+    </div>
+   </div>
+   <div style={{ fontSize:".72rem", color:"var(--muted-2)", marginBottom:10, lineHeight:1.5 }}>
+    Three targets only — <b>MATCHES</b>, <b>OVER 4</b>, <b>UNDER 6</b>. One shot, one run, then done. No ladder, no hedging, no second shot. It fires only when the target survives every window; otherwise it reports HOLDING FIRE with the numbers.
+   </div>
+   {!sniper && (
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)", padding:".7rem .8rem", border:"1px dashed rgba(35,43,77,0.8)", borderRadius:10 }}>
+     The department is idle. Press <b>Engage</b> to scan all three targets across every streaming market.
+    </div>
+   )}
+   {sniper && (
+    <div style={{ display:"grid", gap:10 }}>
+     <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, border:"1px solid " + (sniper.verdict === "TARGET_ACQUIRED" ? "rgba(40,209,124,0.4)" : "rgba(35,43,77,0.9)"), background: sniper.verdict === "TARGET_ACQUIRED" ? "rgba(40,209,124,0.06)" : "rgba(12,16,30,0.45)", borderRadius:12, padding:".6rem .8rem" }}>
+      <span style={{ fontWeight:800, fontSize:".9rem", color: sniper.verdict === "TARGET_ACQUIRED" ? "var(--success)" : "var(--warning)" }}>
+       {sniper.verdict === "TARGET_ACQUIRED" ? "🎯 TARGET ACQUIRED" : sniper.verdict === "HOLDING_FIRE" ? "⏸ HOLDING FIRE" : "❓ NO TARGET"}
+      </span>
+      <span style={{ fontSize:".7rem", color:"var(--muted-2)" }}>
+       {sniper.acquired?.length || 0} of {sniper.mission?.length || 3} acquired · 1 run each · ${sniper.stake?.toFixed(2)} a shot
+      </span>
+     </div>
+     {(sniper.targets || []).map((t:any, i:number) => (
+      <div key={i} style={{ border:"1px solid " + (t.acquired ? "rgba(40,209,124,0.4)" : "var(--border)"), background: t.acquired ? "rgba(40,209,124,0.05)" : "rgba(12,16,30,0.35)", borderRadius:12, padding:".6rem .7rem" }}>
+       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:6 }}>
+        <span style={{ fontWeight:800, fontSize:".8rem" }}>{t.target}</span>
+        <span className="chip" style={{ fontSize:".62rem", padding:".12rem .45rem",
+          background: t.acquired ? "rgba(40,209,124,0.16)" : "rgba(245,158,11,0.12)",
+          borderColor: t.acquired ? "rgba(40,209,124,0.4)" : "rgba(245,158,11,0.35)",
+          color: t.acquired ? "var(--success)" : "var(--warning)", fontWeight:800 }}>
+         {t.acquired ? "FIRE" : "HOLD"} · {t.kills}/{t.markets_scanned}
+        </span>
+       </div>
+       {t.acquired && t.shot ? (
+        <div style={{ display:"grid", gap:4 }}>
+         <div style={{ fontSize:".78rem", color:"var(--fg)" }}>
+          {t.shot.symbol} · {t.shot.side === "MATCHES"
+            ? `MATCHES digit ${t.shot.entry?.digit}`
+            : `${t.shot.side} ${t.shot.barrier} → entry digit ${t.shot.entry?.digit}`}
+         </div>
+         <div style={{ display:"grid", gap:6, gridTemplateColumns:"repeat(auto-fit,minmax(96px,1fr))", fontSize:".72rem" }}>
+          <Row l="Payout" v={`${t.shot.one_shot?.payout?.toFixed(2)}x`} />
+          <Row l="Chance to land" v={`${(t.shot.one_shot?.p_win * 100)?.toFixed(1)}%`} />
+          <Row l="If it misses" v={`${(t.shot.one_shot?.p_miss * 100)?.toFixed(1)}%`} />
+          <Row l="The shot" v={`1 run · $${t.shot.one_shot?.stake?.toFixed(2)}`} />
+          <Row l="Win credit" v={`+$${t.shot.one_shot?.win_credit?.toFixed(2)}`} />
+          <Row l="EV per run" v={`${t.shot.one_shot?.ev_per_run >= 0 ? "+" : ""}${t.shot.one_shot?.ev_per_run?.toFixed(3)}`} />
+         </div>
+        </div>
+       ) : (
+        <div style={{ display:"grid", gap:4 }}>
+         {t.best ? (
+          <>
+           <div style={{ fontSize:".74rem", color:"var(--muted)" }}>
+            Best read: <b>{t.best.symbol}</b> {t.best.side} {t.best.barrier ?? ""} at {t.best.row?.observed_pct?.toFixed(1)}% ({t.best.row?.edge_pp >= 0 ? "+" : ""}{t.best.row?.edge_pp?.toFixed(1)}pp)
+           </div>
+           <div style={{ fontSize:".68rem", color:"var(--warning)" }}>
+            Held by: {Object.entries(t.best.rules || {}).filter(([, v]:any) => !v).map(([k]:any) => k).join(", ") || "unknown"}
+           </div>
+          </>
+         ) : (
+          <div style={{ fontSize:".74rem", color:"var(--muted-2)" }}>No live tape on this target.</div>
+         )}
+        </div>
+       )}
+      </div>
+     ))}
+     <div style={{ fontSize:".68rem", color:"var(--muted-2)", lineHeight:1.5 }}>{sniper.note}</div>
+    </div>
+   )}
+  </section>
+
   <section className="card-glow" style={{ padding:"1rem" }}>
    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
     <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>CHAT · ASK THE PLATFORM</h2>
