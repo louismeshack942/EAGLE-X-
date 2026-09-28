@@ -85,6 +85,16 @@ for (let i = p; i < vals.length; i++) {
 }
 return out;
 }
+
+/** A scan is a LISTING: the table below is the answer, so the chat bubble keeps
+ *  only the summary lines. Printing all 20 markets as prose produced an
+ *  unreadable wall and duplicated the table. */
+function copilotBody(c: any): string {
+  const raw = String(c?.answer || "");
+  if (c?.kind !== "SCAN" || !(c?.markets?.length)) return raw;
+  return raw.split("\n").filter((l: string) => l.trim() && !l.includes("\u2192")).join("\n");
+}
+
 export default function CockpitPage() {
  const [symbol, setSymbol] = useState<string>("R_100");
  const [tradeType, setTradeType] = useState<string>("Matches / Differs");
@@ -836,21 +846,9 @@ return (
        </div>
       </div>
      )}
-     {(() => {
-       const isListing = copilot.kind === "SCAN" && (copilot.markets?.length || 0) > 0;
-       // On a listing the table below IS the answer; repeating every market in
-       // prose above it made the board unreadable. Keep only the summary lines
-       // (the per-market lines contain the entry arrow).
-       const text = isListing
-         ? String(copilot.answer || "").split("\n").filter((l:string) =>
-             !l.includes("\u2192") && l.trim()).join("\n")
-         : copilot.answer;
-       return (
      <div style={{ fontSize:".8rem", color:"var(--fg)", lineHeight:1.6, whiteSpace:"pre-line", border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem", background:"rgba(12,16,30,0.4)" }}>
-      {text}
+      {copilotBody(copilot)}
      </div>
-       );
-     })()}
      {copilot.kind === "SCAN" && copilot.sample_complete === false && (copilot.thin_markets?.length || 0) > 0 && (
       <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", fontSize:".74rem", color:"var(--warning)", border:"1px solid rgba(245,158,11,0.4)", background:"rgba(245,158,11,0.07)", borderRadius:10, padding:".5rem .7rem" }}>
        <b>SHORT TAPE</b>
@@ -949,8 +947,8 @@ return (
        {(copilot.requested_predictions || []).map((p:any) => `${p.side} ${p.barrier}`).join(" + ") || "no barriers"} · target {copilot.target_runs} runs
       </span>
      </div>
-     <div style={{ fontSize:".8rem", color:"var(--fg)", lineHeight:1.6, border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem", background:"rgba(12,16,30,0.4)" }}>
-      {copilot.answer}
+     <div style={{ fontSize:".8rem", color:"var(--fg)", lineHeight:1.6, whiteSpace:"pre-line", border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem", background:"rgba(12,16,30,0.4)" }}>
+      {copilotBody(copilot)}
      </div>
      {(copilot.selected?.length || 0) > 0 && (
       <div>
