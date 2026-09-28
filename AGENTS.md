@@ -1010,3 +1010,25 @@ Routes: `POST /ai-copilot/mission` now takes `kind`. Tests:
   was MARGINAL. Pinned in `TestFalsePositiveRate` so a margin change cannot
   silently ship a looser sniper.
 - Tests: `tests/test_sniper.py` (37). Suite: 676 passed.
+
+
+## Scan window honesty (2026-09-20)
+
+The scan printed "20 markets with live tape (window 250)" while the tape held
+63 ticks (R_*) and 125 (1HZ*/JD*). The window is the CLAIM ABOUT THE EVIDENCE
+under every probability on the board, so this was a lie, not a cosmetic bug -
+and it appears whenever the feed has just reconnected.
+
+- `scan_report` now returns `window_requested`, `window_effective`, `n`,
+  `sample_complete`, `thin_markets`; short markets carry `n=63 THIN` in the
+  text, and the answer opens with "Only 63 ticks available (asked for 250) ...
+  EARLY READS, not full measurements" instead of claiming 250.
+- The listing is a listing: per-market prose lines are dropped on a scan (the
+  table below IS the answer - they were duplicating it) and `pre-line` keeps
+  newlines, so 20 markets no longer collapse into one wall.
+- Frontend: SHORT TAPE banner + a TAPE column (amber "!" below the request).
+- Tests: `tests/test_scan_window.py` (5). Suite: 681 passed.
+
+Lesson worth repeating: any number describing the evidence must be derived
+from the tape itself, never from the request. A default constant shown as if
+it were a measurement is the same class of bug as the phantom edges.
