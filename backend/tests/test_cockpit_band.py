@@ -61,22 +61,30 @@ _UNDER_THREE_TAPE = [2] * 80 + [9] * 20
 
 
 class TestBandRange:
-    """Only barriers 3..8 are ranked - that is the owner's band."""
+    """EVERY tradable barrier is ranked - OVER 0..8 and UNDER 1..9.
 
-    def test_band_edges_are_three_and_eight(self):
-        r = _band(list(range(10)) * 10)
-        assert r["band_range"] == {"min_barrier": 3, "max_barrier": 8}
+    The owner asked to stop being limited to the middle barriers, so the range
+    is the full board. OVER 9 and UNDER 0 win on no digits at all and are
+    correctly absent rather than offered as unpayable contracts.
+    """
 
-    def test_only_middle_barriers_are_offered(self):
+    def test_band_edges_cover_the_full_board(self):
         r = _band(list(range(10)) * 10)
-        for side_key in ("over_bands", "under_bands"):
-            barriers = sorted(x["barrier"] for x in r[side_key])
-            assert barriers == [3, 4, 5, 6, 7, 8], side_key
+        assert r["band_range"] == {"min_barrier": 0, "max_barrier": 9}
 
-    def test_no_row_for_barrier_two_or_nine(self):
+    def test_every_payable_barrier_is_offered(self):
         r = _band(list(range(10)) * 10)
-        all_rows = r["over_bands"] + r["under_bands"]
-        assert not any(x["barrier"] in (0, 1, 2, 9) for x in all_rows)
+        assert sorted(x["barrier"] for x in r["over_bands"]) == list(range(0, 9))
+        assert sorted(x["barrier"] for x in r["under_bands"]) == list(range(1, 10))
+
+    def test_unpayable_barriers_are_never_offered(self):
+        """OVER 9 wins on no digits; UNDER 0 likewise. They must not appear."""
+        r = _band(list(range(10)) * 10)
+        assert not any(x["barrier"] == 9 for x in r["over_bands"])
+        assert not any(x["barrier"] == 0 for x in r["under_bands"])
+        for row in r["over_bands"] + r["under_bands"]:
+            assert row["winning_digits"] > 0
+            assert row["payout"] > 0
 
 
 class TestPayoutAndBreakeven:
@@ -97,12 +105,12 @@ class TestPayoutAndBreakeven:
         assert row["breakeven_pct"] == pytest.approx(30.0, abs=0.01)
 
     def test_payout_rises_as_the_band_narrows(self):
-        """Fewer winning digits means a bigger payout: OVER 3 pays 10/6, OVER 8 pays 10/1."""
+        """Fewer winning digits means a bigger payout: OVER 0 pays 10/9, OVER 8 pays 10/1."""
         r = _band(_repeat(9))
         pays = [x["payout"] for x in sorted(r["over_bands"], key=lambda x: x["barrier"])]
         assert pays == sorted(pays), "higher barrier must pay more"
-        assert pays[0] == pytest.approx(1.6667, abs=1e-3)
-        assert pays[-1] == pytest.approx(10.0, abs=1e-3)
+        assert pays[0] == pytest.approx(1.1111, abs=1e-3)   # OVER 0, 9 digits
+        assert pays[-1] == pytest.approx(10.0, abs=1e-3)    # OVER 8, 1 digit
 
     def test_ev_matches_probability_times_payout_minus_one(self):
         r = _band(_repeat(9))
@@ -353,9 +361,11 @@ class TestBandSurface:
 
     def test_payload_exposes_the_spec(self):
         r = _band(_repeat(9))
-        assert r["min_confidence_pct"] == 68.0
-        assert r["band_range"]["min_barrier"] == 3
-        assert r["band_range"]["max_barrier"] == 8
+        assert r["band_range"]["min_barrier"] == 0
+        assert r["band_range"]["max_barrier"] == 9
+        # The real gate is published; the legacy 68 is reporting only.
+        assert r["min_edge_pp"] == 3.0
+        assert r["gate"] == "wilson_lb >= breakeven + min_edge_pp"
         for key in ("symbol", "n", "verdict", "reason", "band", "bands",
                     "over_bands", "under_bands", "entry", "ts"):
             assert key in r, key
@@ -369,6 +379,6 @@ class TestBandSurface:
             res = c.get(f"/cockpit/band/{SYM}?window=100")
         assert res.status_code == 200
         body = res.json()
-        assert body["band_range"] == {"min_barrier": 3, "max_barrier": 8}
-        assert body["min_confidence_pct"] == 68.0
+        assert body["band_range"] == {"min_barrier": 0, "max_barrier": 9}
+        assert body["min_edge_pp"] == 3.0
         assert "band" in body and "entry" in body

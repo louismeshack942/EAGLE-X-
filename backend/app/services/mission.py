@@ -544,23 +544,41 @@ class MissionPlanner:
             best_entry = _best_of(scan["scanned"])
             floor_txt = (f" against your {floor:.0f}% floor"
                          if floor is not None else "")
+            # Nothing cleared the gate, but the analysis still exists - publish
+            # the board rather than dead-ending. The owner asked to SEE the
+            # markets, so the ranking is the answer, not a refusal.
+            board = sorted(scan["probabilities"],
+                           key=lambda r: (r["edge_pp"], r["confidence"]),
+                           reverse=True)[:10]
+            board_txt = " ".join(
+                f"{r['symbol']} {r['side']} {r['barrier']}: "
+                f"{r['observed_pct']:.1f}% vs {r['breakeven_pct']:.1f}% breakeven "
+                f"({r['edge_pp']:+.1f}pp)."
+                for r in board[:5]) if board else ""
             entry_txt = ""
             if best_entry:
                 entry_txt = (
-                    f" The closest thing to an entry point anywhere was "
+                    f" Strongest entry point on the board: "
                     f"{best_entry['side']} {best_entry['barrier']} into digit "
                     f"{best_entry['digit']} on {best_entry['symbol']} "
                     f"({best_entry['confidence']:.1f}% confidence, "
                     f"{best_entry['edge_pp']:+.1f}pp vs breakeven).")
-            return {**base, "verdict": "NO_MARKET", "candidates": [],
-                    "scanned": scan["scanned"], "selected": [], "runs": None,
+            return {**base, "verdict": "NO_EDGE_FOUND", "candidates": [],
+                    "scanned": scan["scanned"],
+                    "probabilities": scan["probabilities"],
+                    "board": board,
+                    "selected": [], "runs": None,
                     "best_entry": best_entry,
                     "answer": (
-                        f"I scanned {len(scan['scanned'])} markets for {pred_txt} "
-                        f"and none carries an edge{floor_txt}. Best reading "
-                        f"anywhere was {best_seen:.1f}% confidence at "
-                        f"{best_edge:+.1f}pp over breakeven.{entry_txt} "
-                        "No trade is the correct answer here.")}
+                        f"I scanned {len(scan['scanned'])} markets for {pred_txt}. "
+                        f"Nothing cleared its own breakeven by a real margin"
+                        f"{floor_txt}, so there is no edge to take. Best reading "
+                        f"was {best_seen:.1f}% confidence at "
+                        f"{best_edge:+.1f}pp vs breakeven. Here is the board: "
+                        f"{board_txt}{entry_txt} "
+                        "That is the full measurement - the markets are all "
+                        "listed above, so you can see exactly what each one is "
+                        "doing.")}
 
         probs = [c["play"]["confidence"] / 100.0 for c in selected]
         runs_math = _runs_math(min(probs), runs) if probs else None

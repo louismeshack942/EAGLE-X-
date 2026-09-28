@@ -155,9 +155,13 @@ class TestMissionScan:
     def test_flat_tape_qualifies_nothing(self):
         _push("M_FLAT", _FLAT_TAPE)
         plan = MissionPlanner().plan("over 4 under 7, 5 runs", ["M_FLAT"])
-        assert plan["verdict"] == "NO_MARKET"
+        assert plan["verdict"] == "NO_EDGE_FOUND"
         assert plan["candidates"] == []
-        assert "No trade is the correct answer" in plan["answer"]
+        # No edge, but the analysis is still published - the owner asked to see
+        # the markets, so a refusal is not an acceptable answer.
+        assert plan["board"]
+        assert "no edge to take" in plan["answer"]
+        assert plan["probabilities"]
 
     def test_a_direction_the_tape_contradicts_is_not_offered(self):
         """High tape: OVER 4 wins, UNDER 7 must not be reported as playable."""
@@ -170,7 +174,7 @@ class TestMissionScan:
     def test_demo_markets_are_never_selected(self):
         _push("M_DEMO", _LOW_TAPE, provider="demo")
         plan = MissionPlanner().plan("over 4 under 7, 3 runs", ["M_DEMO"])
-        assert plan["verdict"] == "NO_MARKET"
+        assert plan["verdict"] == "NO_EDGE_FOUND"
 
     def test_selected_runs_are_live_only(self):
         _push("M_LOW", _LOW_TAPE)
@@ -198,7 +202,7 @@ class TestMissionScan:
 
     def test_empty_market_list_is_safe(self):
         plan = MissionPlanner().plan("over 4 under 7", [])
-        assert plan["verdict"] == "NO_MARKET"
+        assert plan["verdict"] == "NO_EDGE_FOUND"
 
 
 class TestRunLadderHonesty:
@@ -361,9 +365,9 @@ class TestOverFourScan:
     def test_no_market_still_names_the_closest_entry_point(self):
         _push("R_100", _FLAT_TAPE)
         plan = MissionPlanner().plan("scan all over 4 markets", ["R_100"])
-        assert plan["verdict"] == "NO_MARKET"
+        assert plan["verdict"] == "NO_EDGE_FOUND"
         assert plan["best_entry"] is not None
-        assert "No trade is the correct answer" in plan["answer"]
+        assert "no edge to take" in plan["answer"]
 
     def test_explicit_floor_still_bites_when_asked_for(self):
         """The opt-in floor must remain honoured - it is not simply deleted."""

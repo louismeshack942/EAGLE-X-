@@ -670,7 +670,7 @@ return (
  <div style={{ maxWidth:1240, margin:"0 auto", padding:"16px 1rem 0" }}>
   <section className="card-glow" style={{ padding:"1rem" }}>
    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10, flexWrap:"wrap", gap:8 }}>
-    <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>BAND PREDICTOR · OVER 3 → UNDER 8</h2>
+    <h2 style={{ fontSize:".78rem", fontWeight:700, color:"var(--muted)", letterSpacing:".08em" }}>BAND PREDICTOR · FULL BOARD</h2>
     <span className="chip chip-violet">breakeven-relative · entry digit</span>
    </div>
    <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:12 }}>
@@ -681,7 +681,7 @@ return (
    </div>
    {bandBusy && <div style={{ fontSize:".76rem", color:"var(--accent)", marginBottom:8 }}>Reading the band…</div>}
    {!band && !bandBusy && (
-    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ranks every barrier from OVER 3 to UNDER 8 on the live tape and publishes only a play whose confidence clears its OWN breakeven by a real margin, together with the entry digit inside that exact band.</div>
+    <div style={{ fontSize:".76rem", color:"var(--muted-2)" }}>Ranks every barrier on the live tape (OVER 0-8, UNDER 1-9) and publishes only a play whose confidence clears its OWN breakeven by a real margin, together with the entry digit inside that exact band.</div>
    )}
    {band?.error && <div style={{ fontSize:".76rem", color:"var(--warning)" }}>Band read failed: {band.error}</div>}
    {band && !band.error && (
@@ -719,7 +719,7 @@ return (
       </div>
      ) : (
       <div style={{ fontSize:".78rem", color:"var(--muted)", border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem" }}>
-       No barrier in {band.band_range?.min_barrier}..{band.band_range?.max_barrier} clears the {band.min_confidence_pct?.toFixed(0)}% floor on this tape. Standing down — no over, no under, no entry.
+       No barrier in {band.band_range?.min_barrier}..{band.band_range?.max_barrier} clears its own breakeven by {band.min_edge_pp?.toFixed(0)}pp on this tape. Full ranking below — no over, no under, no entry.
       </div>
      )}
      {band.reason && <div style={{ fontSize:".78rem", color:"var(--muted)", lineHeight:1.5 }}><b style={{ color:"var(--fg)" }}>Evidence: </b>{band.reason}</div>}

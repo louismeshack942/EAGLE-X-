@@ -30,8 +30,12 @@ BREAKEVEN_MARGIN = 1.0
 # clears this floor. `BREAKEVEN_PCT` is the Digit Differs bar (1 payout in 10
 # -> 90% to break even); it is NOT the bar for OVER/UNDER, whose real
 # breakeven is per-barrier and reported per row.
-BAND_MIN_BARRIER = 3
-BAND_MAX_BARRIER = 8
+# The full tradable barrier range, not a hand-picked middle. Every barrier from
+# OVER 0 (wins 1..9) to UNDER 9 (wins 0..8) is ranked. OVER 9 and UNDER 0 win
+# on no digits at all, so `barrier_row` returns None for them and they never
+# appear - the range is inclusive of everything that CAN pay.
+BAND_MIN_BARRIER = 0
+BAND_MAX_BARRIER = 9
 # Kept for reporting only. It is a Wilson LOWER BOUND, not a win rate, so a
 # flat floor against it is a category error: it demands the same observed rate
 # (73.8% at n=250) from every barrier regardless of payout, which is +23.8pp of
