@@ -762,7 +762,7 @@ return (
       style={{ padding:".5rem .9rem", fontSize:".8rem" }}>Clear</button>
    </div>
    <div style={{ display:"flex", gap:6, flexWrap:"wrap", marginBottom:12 }}>
-    {([["Probability", "probability"], ["Trade plan", "plan"], ["Auto", "auto"]] as Array<[string,string]>).map(([label, kind]) => (
+    {([["Scan", "scan"], ["Probability", "probability"], ["Trade plan", "plan"], ["Auto", "auto"]] as Array<[string,string]>).map(([label, kind]) => (
      <button key={kind} className="btn btn-ghost" disabled={copilotBusy}
       onClick={() => { setCopilotKind(kind); runCopilot(kind); }}
       style={{ padding:".35rem .7rem", fontSize:".7rem",
@@ -816,6 +816,27 @@ return (
      <div style={{ fontSize:".8rem", color:"var(--fg)", lineHeight:1.6, border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem", background:"rgba(12,16,30,0.4)" }}>
       {copilot.answer}
      </div>
+     {(copilot.rows?.length || 0) > 0 && copilot.kind === "SCAN" && (
+      <div>
+       <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>MEASURED BOARD · EVERY MARKET, RANKED BY WIN RATE</div>
+       <div style={{ display:"grid", gap:5 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"76px 62px 1fr 1fr 62px 60px 54px", gap:8, fontSize:".64rem", color:"var(--muted-2)", fontWeight:800, letterSpacing:".04em", padding:"0 .6rem" }}>
+         <span>MARKET</span><span>BARRIER</span><span>WIN RATE</span><span>BREAKEVEN</span><span>MARGIN</span><span>PAYOUT</span><span>ENTRY</span>
+        </div>
+        {copilot.rows.map((r:any, i:number) => (
+         <div key={i} style={{ display:"grid", gridTemplateColumns:"76px 62px 1fr 1fr 62px 60px 54px", gap:8, alignItems:"center", fontSize:".74rem", border:"1px solid var(--border)", borderRadius:10, padding:".45rem .6rem", background: r.playable ? "rgba(40,209,124,0.05)" : "rgba(12,16,30,0.35)" }}>
+          <span style={{ fontWeight:800 }}>{r.symbol}</span>
+          <span style={{ color:"var(--muted)" }}>{r.side} {r.barrier}</span>
+          <span style={{ fontWeight:800, color: r.edge_pp > 0 ? "var(--success)" : "var(--warning)" }}>{r.observed_pct?.toFixed(1)}%</span>
+          <span style={{ color:"var(--muted)" }}>{r.breakeven_pct?.toFixed(1)}%</span>
+          <span style={{ fontSize:".7rem", color: r.edge_pp > 0 ? "var(--success)" : "var(--warning)" }}>{r.edge_pp >= 0 ? "+" : ""}{r.edge_pp?.toFixed(1)}pp</span>
+          <span style={{ fontSize:".7rem", color:"var(--muted-2)" }}>{r.payout?.toFixed(2)}x</span>
+          <span style={{ fontWeight:800, fontSize:"1rem", color:"#e11d48", textAlign:"center" }}>{r.entry?.digit ?? "-"}</span>
+         </div>
+        ))}
+       </div>
+      </div>
+     )}
      {(copilot.probabilities?.length || 0) > 1 && (
       <div>
        <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>EVERY MARKET MEASURED · HIGHEST CHANCE FIRST</div>
@@ -838,7 +859,7 @@ return (
     <div style={{ display:"grid", gap:12 }}>
      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, border:"1px solid rgba(185,102,255,0.35)", background:"rgba(185,102,255,0.06)", borderRadius:12, padding:".7rem .9rem" }}>
       <span style={{ fontWeight:800, fontSize:".95rem" }}>
-       {copilot.verdict === "FULL_LADDER" ? "✅ LADDER READY" : copilot.verdict === "PARTIAL_LADDER" ? "⚠️ PARTIAL LADDER" : copilot.verdict === "NO_MARKET" ? "🛑 NO MARKET" : "❓ NEED PREDICTIONS"}
+       {copilot.verdict === "SCAN" ? "📊 MARKET SCAN" : copilot.verdict === "FULL_LADDER" ? "✅ LADDER READY" : copilot.verdict === "PARTIAL_LADDER" ? "⚠️ PARTIAL LADDER" : copilot.verdict === "NO_EDGE_FOUND" ? "🛑 NO EDGE FOUND" : copilot.verdict === "NO_MARKET" ? "🛑 NO MARKET" : "❓ NEED PREDICTIONS"}
       </span>
       <span className="chip chip-violet">
        {(copilot.requested_predictions || []).map((p:any) => `${p.side} ${p.barrier}`).join(" + ") || "no barriers"} · target {copilot.target_runs} runs

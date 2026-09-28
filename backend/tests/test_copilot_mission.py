@@ -205,6 +205,63 @@ class TestMissionScan:
         assert plan["verdict"] == "NO_EDGE_FOUND"
 
 
+class TestScanReporting:
+    """A scan REPORTS; it does not advise. The owner's directive.
+
+    "scan best over 4 markets entry points" must return the OVER 4 probability
+    per market and their entry digits - never a refusal, never a lecture about
+    whether to trade.
+    """
+
+    def test_over_four_scan_reports_probability_and_entry_digit(self):
+        _push("S_A", ["7", "8", "9"] * 30 + ["0"] * 10)
+        _push("S_B", _FLAT_TAPE)
+        plan = MissionPlanner().plan(
+            "scan best over 4 markets entry points", ["S_A", "S_B"])
+        assert plan["verdict"] == "SCAN"
+        rows = plan["rows"]
+        assert {r["symbol"] for r in rows} == {"S_A", "S_B"}
+        for r in rows:
+            assert r["side"] == "OVER" and r["barrier"] == 4
+            assert r["observed_pct"] is not None      # the probability
+            assert r["entry"]["digit"] == 5           # the entry digit
+        # Both markets appear even though only one is playable.
+        assert "S_B" in plan["answer"]
+
+    def test_scan_never_refuses_on_a_flat_tape(self):
+        _push("S_FLAT", _FLAT_TAPE)
+        plan = MissionPlanner().plan("scan all markets over 4", ["S_FLAT"])
+        assert plan["verdict"] == "SCAN"
+        assert plan["rows"]
+        for phrase in ("No trade is the correct answer", "Standing down",
+                       "none supports it", "no edge to take"):
+            assert phrase not in plan["answer"], phrase
+
+    def test_scan_reports_all_ten_barriers_when_asked_for_all(self):
+        _push("S_ALL", _FLAT_TAPE)
+        card = MissionPlanner().scan(["S_ALL"], [])
+        assert card["probabilities"] == []      # no barrier named -> nothing
+
+    def test_scan_lists_every_market_not_only_playable_ones(self):
+        """The whole point: no filtering of the board."""
+        tape = ["7", "8", "9"] * 30 + ["0"] * 10
+        _push("S_GOOD", tape)
+        _push("S_BAD", ["0"] * 125 + ["9"] * 125)
+        card = MissionPlanner().scan(
+            ["S_GOOD", "S_BAD"], [{"side": "OVER", "barrier": 4}])
+        syms = {r["symbol"] for r in card["probabilities"]}
+        assert syms == {"S_GOOD", "S_BAD"}
+        playable = {r["symbol"] for r in card["probabilities"] if r["playable"]}
+        assert "S_GOOD" in playable
+        assert "S_BAD" not in playable
+
+    def test_scan_kind_is_reported_as_scan_intent(self):
+        from app.services.ai_copilot import ai_copilot
+        _push("S_CHAT", _FLAT_TAPE)
+        out = ai_copilot.ask("scan all markets over 4")
+        assert out["intent"] in ("SCAN", "MISSION_PLAN")
+
+
 class TestRunLadderHonesty:
     """The 5-run request must be answered with what is really available."""
 
@@ -362,12 +419,37 @@ class TestOverFourScan:
         # The gate is described honestly - no phantom 68% floor.
         assert "68%" not in plan["answer"]
 
-    def test_no_market_still_names_the_closest_entry_point(self):
+    def test_scan_reports_numbers_instead_of_refusing(self):
+        """A scan request reports the board - it does not advise or refuse.
+
+        The owner's directive: "scan the market as the instruction is given".
+        A flat tape has no edge, but a scan still returns every measurement
+        rather than answering a question about whether to trade.
+        """
         _push("R_100", _FLAT_TAPE)
         plan = MissionPlanner().plan("scan all over 4 markets", ["R_100"])
-        assert plan["verdict"] == "NO_EDGE_FOUND"
-        assert plan["best_entry"] is not None
-        assert "no edge to take" in plan["answer"]
+        assert plan["verdict"] == "SCAN"
+        assert plan["rows"]
+        assert plan["board"]
+        # The numbers are present and ungated: rate, breakeven, margin, payout.
+        row = plan["rows"][0]
+        assert row["observed_pct"] is not None
+        assert row["breakeven_pct"] is not None
+        assert row["payout"] is not None
+        assert "win rate" in plan["answer"]
+        assert "breakeven" in plan["answer"]
+        # No refusal language.
+        assert "No trade is the correct answer" not in plan["answer"]
+
+    def test_scan_ranks_entry_points_when_asked(self):
+        _push("R_100", ["7", "8", "9"] * 30 + ["0"] * 10)
+        plan = MissionPlanner().plan(
+            "scan all over 4 markets and their entry points", ["R_100"])
+        assert plan["verdict"] == "SCAN"
+        assert plan["entries"]
+        top = plan["best_entry"]
+        assert top["digit"] == 5            # OVER 4 -> entry digit 5
+        assert top["digit_pct"] is not None
 
     def test_explicit_floor_still_bites_when_asked_for(self):
         """The opt-in floor must remain honoured - it is not simply deleted."""

@@ -263,13 +263,15 @@ class AICopilot:
         else:
             symbol = "ALL"
 
+        kind = plan.get("kind")
         return {
             "question": question,
             "answer": plan["answer"],
             "symbol": symbol,
             "data": plan,
-            "intent": "PROBABILITY" if plan.get("kind") == "PROBABILITY"
-                      else "MISSION_PLAN",
+            "intent": ("PROBABILITY" if kind == "PROBABILITY"
+                       else "SCAN" if kind == "SCAN"
+                       else "MISSION_PLAN"),
         }
 
 

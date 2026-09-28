@@ -41,6 +41,8 @@ DEFAULT_WINDOW = 250
 DEFAULT_TARGET_RUNS = 5
 MAX_TARGET_RUNS = 50
 MAX_MARKETS = 25
+# Cap on rows spelled out in a scan answer; the full board is always in `rows`.
+MAX_REPORT_ROWS = 25
 
 
 def parse_request(question: str) -> dict:
@@ -212,6 +214,35 @@ def _best_of(scanned: List[dict]) -> Optional[dict]:
     top = max(rows, key=lambda s: (s["best_entry"].get("confidence", 0.0),
                                    s["best_entry"].get("edge_pp", 0.0)))
     return {**top["best_entry"], "symbol": top["symbol"], "n": top.get("n")}
+
+
+def _best_entry_from_rows(rows: List[dict]) -> Optional[dict]:
+    """The strongest entry point across scan probability rows.
+
+    Ranks purely on how often the entry digit lands - that is what an entry
+    point IS. Playability is reported alongside (`band_playable`) rather than
+    used as a filter, so a market with a strong entry and a thin band still
+    appears with both facts stated.
+    """
+    if not rows:
+        return None
+    top = max(rows, key=lambda r: ((r.get("entry") or {}).get("pct") or 0.0,
+                                   r.get("observed_pct") or 0.0))
+    entry = top.get("entry") or {}
+    return {
+        "symbol": top.get("symbol"),
+        "side": top.get("side"), "barrier": top.get("barrier"),
+        "digit": entry.get("digit"),
+        "digit_pct": entry.get("pct"),
+        "digit_edge_pp": entry.get("edge_pp"),
+        "digit_validated": entry.get("validated"),
+        "band_observed_pct": top.get("observed_pct"),
+        "band_breakeven_pct": top.get("breakeven_pct"),
+        "band_edge_pp": top.get("edge_pp"),
+        "payout": top.get("payout"),
+        "band_playable": bool(top.get("playable")),
+        "n": top.get("n"),
+    }
 
 
 def _qualifies(leg: dict, min_confidence: Optional[float]) -> bool:
@@ -477,6 +508,96 @@ class MissionPlanner:
             })
         return out
 
+    def scan_report(self, question: str, symbols: List[str],
+                    predictions: Optional[List[dict]] = None,
+                    window: int = DEFAULT_WINDOW,
+                    symbol: Optional[str] = None) -> dict:
+        """Report the measured numbers for the requested barriers, per market.
+
+        This is the SCAN path. The user asked what the markets are doing, so
+        every market with tape is listed with its measured win rate, the
+        breakeven its payout arithmetically implies, the margin between them,
+        the payout, the EV and the entry digit. Nothing is filtered on
+        playability and nothing is withheld: a scan reports, it does not
+        advise. The user reads the board and decides.
+        """
+        parsed = parse_request(question)
+        preds = predictions if predictions else parsed["predictions"]
+        base = {
+            "question": question,
+            "requested_predictions": preds,
+            "window": window,
+            "provider": "deriv_live",
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "kind": "SCAN",
+        }
+        if not preds:
+            return {**base, "verdict": "NEED_PREDICTIONS", "rows": [], "board": [],
+                    "answer": ("Tell me which barriers to scan - for example "
+                               "\"scan all markets, over 4, entry digit\".")}
+
+        scan_symbols = [symbol] if symbol else symbols
+        rows = self.scan(scan_symbols, preds, window=window)["probabilities"]
+        if not rows:
+            return {**base, "verdict": "NO_TAPE", "rows": [], "board": [],
+                    "answer": ("No market has live tape to measure yet. Nothing "
+                               "is reported until there is real data.")}
+
+        rows.sort(key=lambda r: (r["observed_pct"], r["edge_pp"]), reverse=True)
+        markets = len({r["symbol"] for r in rows})
+
+        # Ranked entry points. Every row carries the digit adjacent to its
+        # barrier (OVER 4 -> 5, UNDER 7 -> 6), so "best entry points" is a
+        # question about which markets read strongest at their entry - not a
+        # question about which are playable.
+        entries = [r for r in rows if (r.get("entry") or {}).get("digit") is not None]
+        entries.sort(key=lambda r: ((r.get("entry") or {}).get("pct") or 0.0),
+                     reverse=True)
+
+        lines = [
+            f"Scanned {markets} markets on the live tape (window {window}), "
+            f"{len(rows)} measurements. Ranked by measured win rate."
+        ]
+        for pred in preds:
+            sel = [r for r in rows
+                   if r["side"] == pred["side"] and r["barrier"] == pred["barrier"]]
+            if not sel:
+                continue
+            lines.append(f"{pred['side']} {pred['barrier']} - "
+                         f"{len(sel)} markets measured:")
+            for r in sel[:MAX_REPORT_ROWS]:
+                entry = r.get("entry") or {}
+                seg = (f"{r['symbol']}: {r['observed_pct']:.1f}% win rate, "
+                       f"breakeven {r['breakeven_pct']:.1f}% "
+                       f"({r['edge_pp']:+.1f}pp), {r['payout']:.2f}x payout, "
+                       f"EV {r['ev']:+.3f} per $1")
+                if entry.get("digit") is not None:
+                    seg += (f", entry digit {entry['digit']} at "
+                            f"{entry.get('pct', 0.0):.1f}%")
+                lines.append(seg)
+
+        if parsed["wants_entry_digit"] and entries:
+            lines.append("Entry points ranked by how often the entry digit "
+                         "actually lands:")
+            for r in entries[:MAX_REPORT_ROWS]:
+                entry = r["entry"]
+                seg = (f"{r['symbol']} {r['side']} {r['barrier']} -> digit "
+                       f"{entry['digit']}: {entry.get('pct', 0.0):.1f}% "
+                       f"({(entry.get('edge_pp') or 0.0):+.1f}pp vs the 10% a "
+                       f"single digit fairs at), band {r['observed_pct']:.1f}% "
+                       f"win rate, {r['payout']:.2f}x payout")
+                lines.append(seg)
+
+        return {
+            **base,
+            "verdict": "SCAN",
+            "rows": rows,
+            "board": rows[:MAX_REPORT_ROWS],
+            "entries": entries[:MAX_REPORT_ROWS],
+            "best_entry": (_best_entry_from_rows(entries)),
+            "answer": " ".join(lines),
+        }
+
     def plan(self, question: str, symbols: List[str],
              predictions: Optional[List[dict]] = None,
              target_runs: Optional[int] = None,
@@ -510,6 +631,22 @@ class MissionPlanner:
                 return self.probability(question, symbols, preds,
                                         window=window, symbol=named)
             return self.probability(question, symbols, preds, window=window)
+
+        # A SCAN request with no run target is a measurement request: report the
+        # numbers and stop. It must not enter the gated ladder flow, which
+        # filters legs on playability and answers a question the user did not
+        # ask ("should I trade?") instead of the one they did ("what are these
+        # markets doing?"). An explicit run count still builds the ladder,
+        # because that IS a trade-planning request.
+        wants_report = parsed["wants_scan_all"] or parsed["wants_entry_digit"]
+        if (preds and wants_report and not parsed["explicit_runs"]
+                and target_runs is None and predictions is None
+                and (force is None or force == "scan")):
+            named = parsed.get("symbol")
+            if named and named in symbols:
+                return self.scan_report(question, symbols, preds,
+                                        window=window, symbol=named)
+            return self.scan_report(question, symbols, preds, window=window)
 
         base = {
             "question": question,

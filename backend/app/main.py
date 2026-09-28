@@ -1673,7 +1673,8 @@ class MissionBody(BaseModel):
     min_confidence: Optional[float] = None
     symbols: Optional[List[str]] = None
     # "auto" (default) infers from the question, "probability" forces a
-    # probability readout, "plan" forces the run ladder.
+    # probability readout, "scan" forces the ungated measurement report,
+    # "plan" forces the run ladder.
     kind: str = "auto"
 
 
@@ -1749,7 +1750,8 @@ def copilot_mission(body: MissionBody):
         target_runs=body.target_runs,
         window=body.window,
         min_confidence=body.min_confidence,
-        force="plan" if kind == "plan" else None,
+        force=("plan" if kind == "plan"
+               else "scan" if kind == "scan" else None),
     )
 
 
