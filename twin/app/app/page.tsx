@@ -816,9 +816,43 @@ return (
      <div style={{ fontSize:".8rem", color:"var(--fg)", lineHeight:1.6, border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem", background:"rgba(12,16,30,0.4)" }}>
       {copilot.answer}
      </div>
+     {(copilot.markets?.length || 0) > 0 && (
+      <div>
+       <div style={{ display:"grid", gap:5 }}>
+        <div style={{ display:"grid", gridTemplateColumns:"74px 1fr 92px 74px 1fr", gap:8, fontSize:".64rem", color:"var(--muted-2)", fontWeight:800, letterSpacing:".04em", padding:"0 .6rem" }}>
+         <span>MARKET</span><span>BEST ENTRY POINT</span><span>WIN RATE</span><span>ENTRY DIGIT</span><span>RUN PROJECTION</span>
+        </div>
+        {copilot.markets.map((m:any, i:number) => (
+         <div key={i} style={{ display:"grid", gridTemplateColumns:"74px 1fr 92px 74px 1fr", gap:8, alignItems:"center", fontSize:".74rem", border:"1px solid var(--border)", borderRadius:10, padding:".5rem .6rem", background: m.best_entry?.playable ? "rgba(40,209,124,0.05)" : "rgba(12,16,30,0.35)" }}>
+          <span style={{ fontWeight:800 }}>{m.symbol}</span>
+          <span style={{ color:"var(--muted)" }}>
+           {m.best_entry?.side} {m.best_entry?.barrier} · {m.best_entry?.payout?.toFixed(2)}x
+           <span style={{ color:"var(--muted-2)", fontSize:".66rem" }}> · be {m.best_entry?.breakeven_pct?.toFixed(1)}%</span>
+          </span>
+          <span style={{ fontWeight:800, color: m.best_entry?.edge_pp > 0 ? "var(--success)" : "var(--warning)" }}>
+           {m.best_entry?.band_observed_pct?.toFixed(1)}%
+           <span style={{ fontSize:".66rem", fontWeight:600 }}> {m.best_entry?.edge_pp >= 0 ? "+" : ""}{m.best_entry?.edge_pp?.toFixed(1)}pp</span>
+          </span>
+          <span style={{ display:"flex", alignItems:"center", gap:5 }}>
+           <span style={{ fontWeight:800, fontSize:"1.05rem", color:"#e11d48" }}>{m.best_entry?.digit ?? "-"}</span>
+           <span style={{ fontSize:".64rem", color:"var(--muted-2)" }}>{m.best_entry?.digit_pct?.toFixed(1)}%</span>
+          </span>
+          <span style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+           {(m.runs || []).map((r:any, j:number) => (
+            <span key={j} style={{ fontSize:".68rem", color:"var(--muted)" }}>
+             <b style={{ color:"var(--fg)" }}>{r.target}</b> runs {(r.p_all_runs * 100).toFixed(2)}%
+            </span>
+           ))}
+          </span>
+         </div>
+        ))}
+       </div>
+      </div>
+     )}
      {(copilot.rows?.length || 0) > 0 && copilot.kind === "SCAN" && (
       <div>
-       <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>MEASURED BOARD · EVERY MARKET, RANKED BY WIN RATE</div>
+       <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>BEST ENTRY POINT PER MARKET{(copilot.target_runs_options?.length || 0) > 0 ? ` · ${copilot.target_runs_options.join("-RUN / ")}-RUN PROJECTION` : ""}</div>
+
        <div style={{ display:"grid", gap:5 }}>
         <div style={{ display:"grid", gridTemplateColumns:"76px 62px 1fr 1fr 62px 60px 54px", gap:8, fontSize:".64rem", color:"var(--muted-2)", fontWeight:800, letterSpacing:".04em", padding:"0 .6rem" }}>
          <span>MARKET</span><span>BARRIER</span><span>WIN RATE</span><span>BREAKEVEN</span><span>MARGIN</span><span>PAYOUT</span><span>ENTRY</span>

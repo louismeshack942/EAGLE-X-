@@ -126,31 +126,37 @@ class TestMissionScan:
     def test_finds_a_market_supporting_the_requested_barriers(self):
         _push("M_LOW", _LOW_TAPE)
         plan = MissionPlanner().plan(OWNER_QUESTION, ["M_LOW"])
-        assert plan["candidates"], plan["answer"]
-        legs = plan["candidates"][0]["legs"]
-        for want in (("OVER", 4), ("UNDER", 7)):
-            assert any(lg["side"] == want[0] and lg["barrier"] == want[1]
-                       for lg in legs), legs
+        assert plan["markets"], plan["answer"]
+        for m in plan["markets"]:
+            wanted = {(b["side"], b["barrier"]) for b in m["all_barriers"]}
+            assert ("OVER", 4) in wanted and ("UNDER", 7) in wanted, wanted
 
     def test_never_reports_a_barrier_the_user_did_not_ask_for(self):
         _push("M_LOW", _LOW_TAPE)
         plan = MissionPlanner().plan(
             "over 4 under 7, 3 runs", ["M_LOW"], predictions=[
                 {"side": "OVER", "barrier": 4}, {"side": "UNDER", "barrier": 7}])
+        # Explicit predictions pin the plan path; it must still only ever
+        # mention the two barriers that were asked for.
         for c in plan["candidates"]:
             for lg in c["legs"]:
                 assert (lg["side"], lg["barrier"]) in {("OVER", 4), ("UNDER", 7)}
+        for r in plan["probabilities"]:
+            assert (r["side"], r["barrier"]) in {("OVER", 4), ("UNDER", 7)}
 
     def test_entry_digit_is_reported_at_the_requested_prediction(self):
         _push("M_LOW", _LOW_TAPE)
         plan = MissionPlanner().plan(OWNER_QUESTION, ["M_LOW"])
-        for c in plan["candidates"]:
-            for lg in c["legs"]:
-                assert lg["entry"] is not None
-                if lg["side"] == "OVER":
-                    assert lg["entry"]["digit"] == lg["barrier"] + 1
+        checked = 0
+        for m in plan["markets"]:
+            for b in m["all_barriers"]:
+                assert b["entry_digit"] is not None
+                if b["side"] == "OVER":
+                    assert b["entry_digit"] == b["barrier"] + 1
                 else:
-                    assert lg["entry"]["digit"] == lg["barrier"] - 1
+                    assert b["entry_digit"] == b["barrier"] - 1
+                checked += 1
+        assert checked > 0
 
     def test_flat_tape_qualifies_nothing(self):
         _push("M_FLAT", _FLAT_TAPE)
@@ -301,11 +307,14 @@ class TestRunLadderHonesty:
 class TestCopilotRouting:
     """The chat entry point must route a trade request to the planner."""
 
-    def test_owner_question_returns_a_plan(self):
+    def test_owner_question_returns_a_scan_listing(self):
         _push("R_100", _LOW_TAPE)
         out = ai_copilot.ask(OWNER_QUESTION)
-        assert out.get("intent") == "MISSION_PLAN"
-        assert "over 4" in out["answer"] or "OVER 4" in out["answer"]
+        assert out.get("intent") == "SCAN"
+        # Both asked barriers are carried; the prose lists each market's best.
+        got = {(p["side"], p["barrier"]) for p in out["data"]["requested_predictions"]}
+        assert got == {("OVER", 4), ("UNDER", 7)}
+        assert out["data"]["markets"]
 
     def test_non_trade_question_is_not_hijacked(self):
         out = ai_copilot.ask("what is my balance")
@@ -446,10 +455,42 @@ class TestOverFourScan:
         plan = MissionPlanner().plan(
             "scan all over 4 markets and their entry points", ["R_100"])
         assert plan["verdict"] == "SCAN"
-        assert plan["entries"]
+        assert plan["markets"]
         top = plan["best_entry"]
         assert top["digit"] == 5            # OVER 4 -> entry digit 5
         assert top["digit_pct"] is not None
+
+    def test_scan_lists_every_market_with_entry_point_and_runs(self):
+        """The directive: after a scan, list ALL markets, their best entry
+        point, and the run projections - not a statement about them."""
+        _push("S_GOOD", ["7", "8", "9"] * 30 + ["0"] * 10)
+        _push("S_FLAT", _FLAT_TAPE)
+        plan = MissionPlanner().plan(
+            "scan all markets over 4 entry point for 5 or 10 runs",
+            ["S_GOOD", "S_FLAT"])
+        assert plan["verdict"] == "SCAN"
+        assert plan["target_runs_options"] == [5, 10]
+        # Every market is listed, playable or not.
+        assert {m["symbol"] for m in plan["markets"]} == {"S_GOOD", "S_FLAT"}
+        for m in plan["markets"]:
+            e = m["best_entry"]
+            assert e["side"] == "OVER" and e["barrier"] == 4
+            assert e["digit"] == 5                     # entry point
+            assert e["band_observed_pct"] is not None  # probability
+            assert [r["target"] for r in m["runs"]] == [5, 10]
+            for r in m["runs"]:
+                assert 0.0 < r["p_all_runs"] <= 1.0
+        # Ranked by measured win rate, best market first.
+        rates = [m["best_entry"]["band_observed_pct"] for m in plan["markets"]]
+        assert rates == sorted(rates, reverse=True)
+
+    def test_scan_answer_is_a_listing_not_advice(self):
+        _push("S_ONE", _FLAT_TAPE)
+        plan = MissionPlanner().plan(
+            "scan all markets over 4 entry point 5 runs", ["S_ONE"])
+        for phrase in ("No trade is the correct answer", "no edge to take",
+                       "I scanned", "Nothing cleared", "Standing down"):
+            assert phrase not in plan["answer"], phrase
 
     def test_explicit_floor_still_bites_when_asked_for(self):
         """The opt-in floor must remain honoured - it is not simply deleted."""

@@ -43,6 +43,8 @@ MAX_TARGET_RUNS = 50
 MAX_MARKETS = 25
 # Cap on rows spelled out in a scan answer; the full board is always in `rows`.
 MAX_REPORT_ROWS = 25
+# Run counts a scan projects by default when none were asked for.
+DEFAULT_RUN_OPTIONS = (5, 10)
 
 
 def parse_request(question: str) -> dict:
@@ -76,6 +78,21 @@ def parse_request(question: str) -> dict:
     if run_match:
         target_runs = max(1, min(MAX_TARGET_RUNS, int(run_match.group(1))))
 
+    # A scan asks for several run horizons at once ("5 or 10 runs", "5, 10 or
+    # 20 runs"). Parse the run clause as a unit - numbers joined by or/and/
+    # commas - so the barrier digit in "over 4 ... for 5 or 10 runs" cannot be
+    # mistaken for a horizon.
+    runs_options: List[int] = []
+    for m in re.finditer(
+            r"((?:\d{1,2}\s*(?:,|/|or|and|&)\s*)*\d{1,2})\s*"
+            r"(?:profitable\s+|winning\s+|consecutive\s+)?"
+            r"(?:runs?|rounds?|wins?)\b", q):
+        for n in re.findall(r"\d{1,2}", m.group(1)):
+            v = int(n)
+            if 1 <= v <= MAX_TARGET_RUNS and v not in runs_options:
+                runs_options.append(v)
+    runs_options.sort()
+
     # A confidence floor is OPT-IN. `confidence` is a Wilson lower bound, so a
     # flat percentage against it means a different margin on every payout -
     # leaving it as the default stack a 7.5-sigma demand on OVER 4. Only set it
@@ -88,6 +105,7 @@ def parse_request(question: str) -> dict:
     return {
         "predictions": predictions,
         "target_runs": target_runs,
+        "runs_options": runs_options,
         "min_confidence": floor,
         "explicit_runs": bool(run_match),
         "symbol": _find_symbol(question),
@@ -511,21 +529,27 @@ class MissionPlanner:
     def scan_report(self, question: str, symbols: List[str],
                     predictions: Optional[List[dict]] = None,
                     window: int = DEFAULT_WINDOW,
-                    symbol: Optional[str] = None) -> dict:
-        """Report the measured numbers for the requested barriers, per market.
+                    symbol: Optional[str] = None,
+                    runs: Optional[List[int]] = None) -> dict:
+        """List every market with its best entry point and run projections.
 
-        This is the SCAN path. The user asked what the markets are doing, so
-        every market with tape is listed with its measured win rate, the
-        breakeven its payout arithmetically implies, the margin between them,
-        the payout, the EV and the entry digit. Nothing is filtered on
-        playability and nothing is withheld: a scan reports, it does not
-        advise. The user reads the board and decides.
+        This is the SCAN path, and it is a LISTING. Each market with tape is
+        reported with the barrier that reads strongest there, the entry digit
+        that barrier points at, the measured win rate, the breakeven its payout
+        implies, the payout, and what that win rate compounds to over N runs.
+
+        Nothing is filtered and nothing is advised: an unplayable market is
+        listed exactly like a playable one, with its own numbers. There is no
+        gate verdict and no recommendation - the board is the answer.
         """
         parsed = parse_request(question)
         preds = predictions if predictions else parsed["predictions"]
+        targets = runs or parsed.get("runs_options") or DEFAULT_RUN_OPTIONS
+        targets = [t for t in targets if 1 <= t <= MAX_TARGET_RUNS] or list(DEFAULT_RUN_OPTIONS)
         base = {
             "question": question,
             "requested_predictions": preds,
+            "target_runs_options": targets,
             "window": window,
             "provider": "deriv_live",
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -533,70 +557,105 @@ class MissionPlanner:
         }
         if not preds:
             return {**base, "verdict": "NEED_PREDICTIONS", "rows": [], "board": [],
-                    "answer": ("Tell me which barriers to scan - for example "
-                               "\"scan all markets, over 4, entry digit\".")}
+                    "markets": [], "answer": (
+                        "Tell me which barriers to scan - for example "
+                        "\"scan all markets, over 4, entry digit, 5 runs\".")}
 
         scan_symbols = [symbol] if symbol else symbols
         rows = self.scan(scan_symbols, preds, window=window)["probabilities"]
         if not rows:
             return {**base, "verdict": "NO_TAPE", "rows": [], "board": [],
-                    "answer": ("No market has live tape to measure yet. Nothing "
-                               "is reported until there is real data.")}
+                    "markets": [], "answer": (
+                        "No market has live tape to measure yet. Nothing is "
+                        "reported until there is real data.")}
 
         rows.sort(key=lambda r: (r["observed_pct"], r["edge_pp"]), reverse=True)
-        markets = len({r["symbol"] for r in rows})
+        markets = self._market_listings(rows, targets)
 
-        # Ranked entry points. Every row carries the digit adjacent to its
-        # barrier (OVER 4 -> 5, UNDER 7 -> 6), so "best entry points" is a
-        # question about which markets read strongest at their entry - not a
-        # question about which are playable.
-        entries = [r for r in rows if (r.get("entry") or {}).get("digit") is not None]
-        entries.sort(key=lambda r: ((r.get("entry") or {}).get("pct") or 0.0),
-                     reverse=True)
-
-        lines = [
-            f"Scanned {markets} markets on the live tape (window {window}), "
-            f"{len(rows)} measurements. Ranked by measured win rate."
-        ]
-        for pred in preds:
-            sel = [r for r in rows
-                   if r["side"] == pred["side"] and r["barrier"] == pred["barrier"]]
-            if not sel:
-                continue
-            lines.append(f"{pred['side']} {pred['barrier']} - "
-                         f"{len(sel)} markets measured:")
-            for r in sel[:MAX_REPORT_ROWS]:
-                entry = r.get("entry") or {}
-                seg = (f"{r['symbol']}: {r['observed_pct']:.1f}% win rate, "
-                       f"breakeven {r['breakeven_pct']:.1f}% "
-                       f"({r['edge_pp']:+.1f}pp), {r['payout']:.2f}x payout, "
-                       f"EV {r['ev']:+.3f} per $1")
-                if entry.get("digit") is not None:
-                    seg += (f", entry digit {entry['digit']} at "
-                            f"{entry.get('pct', 0.0):.1f}%")
-                lines.append(seg)
-
-        if parsed["wants_entry_digit"] and entries:
-            lines.append("Entry points ranked by how often the entry digit "
-                         "actually lands:")
-            for r in entries[:MAX_REPORT_ROWS]:
-                entry = r["entry"]
-                seg = (f"{r['symbol']} {r['side']} {r['barrier']} -> digit "
-                       f"{entry['digit']}: {entry.get('pct', 0.0):.1f}% "
-                       f"({(entry.get('edge_pp') or 0.0):+.1f}pp vs the 10% a "
-                       f"single digit fairs at), band {r['observed_pct']:.1f}% "
-                       f"win rate, {r['payout']:.2f}x payout")
-                lines.append(seg)
+        lines = [f"{len(markets)} markets with live tape (window {window}). "
+                 f"Best entry point per market, "
+                 f"{' / '.join(str(t) + '-run' for t in targets)} projection."]
+        for m in markets:
+            e = m["best_entry"]
+            seg = (f"{m['symbol']} \u00b7 {e['side']} {e['barrier']} \u2192 "
+                   f"entry digit {e['digit']} ({e['digit_pct']:.1f}%) \u00b7 "
+                   f"{e['band_observed_pct']:.1f}% win rate vs "
+                   f"{e['breakeven_pct']:.1f}% breakeven ({e['edge_pp']:+.1f}pp) "
+                   f"\u00b7 {e['payout']:.2f}x")
+            for r in m["runs"]:
+                seg += (f" \u00b7 {r['target']} runs {r['p_all_runs'] * 100:.2f}%")
+            lines.append(seg)
 
         return {
             **base,
             "verdict": "SCAN",
             "rows": rows,
             "board": rows[:MAX_REPORT_ROWS],
-            "entries": entries[:MAX_REPORT_ROWS],
-            "best_entry": (_best_entry_from_rows(entries)),
+            "markets": markets,
+            "best_entry": (markets[0]["best_entry"] if markets else None),
             "answer": " ".join(lines),
         }
+
+    def _market_listings(self, rows: List[dict],
+                         targets: List[int]) -> List[dict]:
+        """One entry per market: its strongest barrier, entry digit and runs.
+
+        The requested barriers are ranked per market by measured win rate, so
+        "best entry point" picks the best of the barriers the user actually
+        asked about rather than inventing one they did not. Playability is
+        carried on the row as a field rather than used to exclude anything.
+        """
+        by_symbol: dict = {}
+        for r in rows:
+            by_symbol.setdefault(r["symbol"], []).append(r)
+
+        out: List[dict] = []
+        for sym, rs in by_symbol.items():
+            ranked = sorted(
+                rs,
+                key=lambda r: (r.get("observed_pct") or 0.0,
+                               (r.get("entry") or {}).get("pct") or 0.0),
+                reverse=True)
+            top = ranked[0]
+            entry = top.get("entry") or {}
+            p_win = (top.get("observed_pct") or 0.0) / 100.0
+            out.append({
+                "symbol": sym,
+                "n": top.get("n"),
+                "provider": top.get("provider"),
+                "live": bool(top.get("live")),
+                "best_entry": {
+                    "side": top.get("side"),
+                    "barrier": top.get("barrier"),
+                    "digit": entry.get("digit"),
+                    "digit_pct": entry.get("pct"),
+                    "digit_edge_pp": entry.get("edge_pp"),
+                    "digit_validated": entry.get("validated"),
+                    "band_observed_pct": top.get("observed_pct"),
+                    "breakeven_pct": top.get("breakeven_pct"),
+                    "edge_pp": top.get("edge_pp"),
+                    "ev": top.get("ev"),
+                    "payout": top.get("payout"),
+                    "playable": bool(top.get("playable")),
+                },
+                "runs": [{"target": t, **_runs_math(p_win, t)} for t in targets],
+                "all_barriers": [{
+                    "side": r["side"], "barrier": r["barrier"],
+                    "observed_pct": r["observed_pct"],
+                    "breakeven_pct": r["breakeven_pct"],
+                    "edge_pp": r["edge_pp"], "payout": r["payout"],
+                    "entry_digit": (r.get("entry") or {}).get("digit"),
+                    "entry_pct": (r.get("entry") or {}).get("pct"),
+                    "playable": bool(r.get("playable")),
+                } for r in ranked],
+            })
+        # Rank markets by their measured win rate for the asked barrier - the
+        # number the run projection is built from. Ties break on entry-digit
+        # frequency.
+        out.sort(key=lambda m: (m["best_entry"].get("band_observed_pct") or 0.0,
+                                m["best_entry"].get("digit_pct") or 0.0),
+                 reverse=True)
+        return out
 
     def plan(self, question: str, symbols: List[str],
              predictions: Optional[List[dict]] = None,
@@ -632,21 +691,23 @@ class MissionPlanner:
                                         window=window, symbol=named)
             return self.probability(question, symbols, preds, window=window)
 
-        # A SCAN request with no run target is a measurement request: report the
-        # numbers and stop. It must not enter the gated ladder flow, which
-        # filters legs on playability and answers a question the user did not
-        # ask ("should I trade?") instead of the one they did ("what are these
-        # markets doing?"). An explicit run count still builds the ladder,
-        # because that IS a trade-planning request.
-        wants_report = parsed["wants_scan_all"] or parsed["wants_entry_digit"]
-        if (preds and wants_report and not parsed["explicit_runs"]
-                and target_runs is None and predictions is None
+        # A SCAN is a LISTING. It lists every market with its best entry point
+        # and the run projections asked for ("5 or 10 runs"), and it never
+        # advises. It must not enter the gated ladder flow, which filters on
+        # playability and answers a question the user did not ask ("should I
+        # trade?") instead of the one they did ("what are these markets
+        # doing?"). Naming run counts does not change that - the projection is
+        # a column in the listing. Only an explicit force="plan" builds a ladder.
+        wants_scan = parsed["wants_scan_all"] or parsed["wants_entry_digit"]
+        if (preds and wants_scan and predictions is None
                 and (force is None or force == "scan")):
             named = parsed.get("symbol")
+            opts = parsed.get("runs_options") or None
             if named and named in symbols:
                 return self.scan_report(question, symbols, preds,
-                                        window=window, symbol=named)
-            return self.scan_report(question, symbols, preds, window=window)
+                                        window=window, symbol=named, runs=opts)
+            return self.scan_report(question, symbols, preds,
+                                    window=window, runs=opts)
 
         base = {
             "question": question,
