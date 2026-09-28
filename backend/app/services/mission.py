@@ -572,11 +572,36 @@ class MissionPlanner:
         rows.sort(key=lambda r: (r["observed_pct"], r["edge_pp"]), reverse=True)
         markets = self._market_listings(rows, targets)
 
-        lines = [f"{len(markets)} markets with live tape (window {window}). "
-                 f"Best entry point per market, "
-                 f"{' / '.join(str(t) + '-run' for t in targets)} projection."]
+        # The window is a PROMISE. A freshly reconnected feed holds far fewer
+        # ticks than the request, and printing "window 250" over a 63-tick tape
+        # would quietly lie about the strength of every number beneath it.
+        depths = [r.get("n") or 0 for r in rows]
+        window_effective = min(depths) if depths else 0
+        window_effective = min(window_effective, window)
+        sample_complete = bool(depths) and all((r.get("n") or 0) >= window
+                                               for r in rows)
+
+        lines = []
+        if sample_complete:
+            lines.append(f"{len(markets)} markets with live tape "
+                         f"(window {window}). Best entry point per market, "
+                         f"{' / '.join(str(t) + '-run' for t in targets)} "
+                         f"projection.")
+        else:
+            # Say the real depth, name the markets that are short, and say it
+            # matters - these rates are early reads, not measurements.
+            short = sorted({r["symbol"] for r in rows
+                            if (r.get("n") or 0) < window})
+            lines.append(f"{len(markets)} markets with live tape. Only "
+                         f"{window_effective} ticks available (asked for "
+                         f"{window}) - the feed is still warming up on "
+                         f"{len(short)} market(s), so these rates are EARLY "
+                         f"READS, not full measurements.")
+        lines.append(f"window_requested {window}, window_effective "
+                     f"{window_effective}.")
         for m in markets:
             e = m["best_entry"]
+            flag = "" if (m.get("n") or 0) >= window else f" \u00b7 n={m.get('n')} THIN"
             seg = (f"{m['symbol']} \u00b7 {e['side']} {e['barrier']} \u2192 "
                    f"entry digit {e['digit']} ({e['digit_pct']:.1f}%) \u00b7 "
                    f"{e['band_observed_pct']:.1f}% win rate vs "
@@ -584,6 +609,7 @@ class MissionPlanner:
                    f"\u00b7 {e['payout']:.2f}x")
             for r in m["runs"]:
                 seg += (f" \u00b7 {r['target']} runs {r['p_all_runs'] * 100:.2f}%")
+            seg += flag
             lines.append(seg)
 
         return {
@@ -593,7 +619,13 @@ class MissionPlanner:
             "board": rows[:MAX_REPORT_ROWS],
             "markets": markets,
             "best_entry": (markets[0]["best_entry"] if markets else None),
-            "answer": " ".join(lines),
+            "window_requested": window,
+            "window_effective": window_effective,
+            "n": window_effective,
+            "sample_complete": sample_complete,
+            "thin_markets": sorted({r["symbol"] for r in rows
+                                    if (r.get("n") or 0) < window}),
+            "answer": "\n".join(lines),
         }
 
     def _market_listings(self, rows: List[dict],

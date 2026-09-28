@@ -836,9 +836,33 @@ return (
        </div>
       </div>
      )}
-     <div style={{ fontSize:".8rem", color:"var(--fg)", lineHeight:1.6, border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem", background:"rgba(12,16,30,0.4)" }}>
-      {copilot.answer}
+     {(() => {
+       const isListing = copilot.kind === "SCAN" && (copilot.markets?.length || 0) > 0;
+       // On a listing the table below IS the answer; repeating every market in
+       // prose above it made the board unreadable. Keep only the summary lines
+       // (the per-market lines contain the entry arrow).
+       const text = isListing
+         ? String(copilot.answer || "").split("\n").filter((l:string) =>
+             !l.includes("\u2192") && l.trim()).join("\n")
+         : copilot.answer;
+       return (
+     <div style={{ fontSize:".8rem", color:"var(--fg)", lineHeight:1.6, whiteSpace:"pre-line", border:"1px solid var(--border)", borderRadius:12, padding:".8rem .9rem", background:"rgba(12,16,30,0.4)" }}>
+      {text}
      </div>
+       );
+     })()}
+     {copilot.kind === "SCAN" && copilot.sample_complete === false && (copilot.thin_markets?.length || 0) > 0 && (
+      <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap", fontSize:".74rem", color:"var(--warning)", border:"1px solid rgba(245,158,11,0.4)", background:"rgba(245,158,11,0.07)", borderRadius:10, padding:".5rem .7rem" }}>
+       <b>SHORT TAPE</b>
+       <span style={{ color:"var(--muted)" }}>
+        only {copilot.window_effective} ticks measured (asked for {copilot.window_requested}) -
+        treat these rates as early reads, not full measurements.
+       </span>
+       <span className="chip" style={{ fontSize:".62rem", borderColor:"rgba(245,158,11,0.45)", color:"var(--warning)" }}>
+        {copilot.thin_markets.length} thin: {copilot.thin_markets.slice(0,6).join(", ")}{copilot.thin_markets.length > 6 ? " +" + (copilot.thin_markets.length - 6) : ""}
+       </span>
+      </div>
+     )}
      {(copilot.markets?.length || 0) > 0 && (
       <div>
        <div style={{ display:"grid", gap:5 }}>
@@ -877,12 +901,15 @@ return (
        <div style={{ fontSize:".7rem", color:"var(--muted-2)", marginBottom:6 }}>BEST ENTRY POINT PER MARKET{(copilot.target_runs_options?.length || 0) > 0 ? ` · ${copilot.target_runs_options.join("-RUN / ")}-RUN PROJECTION` : ""}</div>
 
        <div style={{ display:"grid", gap:5 }}>
-        <div style={{ display:"grid", gridTemplateColumns:"76px 62px 1fr 1fr 62px 60px 54px", gap:8, fontSize:".64rem", color:"var(--muted-2)", fontWeight:800, letterSpacing:".04em", padding:"0 .6rem" }}>
-         <span>MARKET</span><span>BARRIER</span><span>WIN RATE</span><span>BREAKEVEN</span><span>MARGIN</span><span>PAYOUT</span><span>ENTRY</span>
+        <div style={{ display:"grid", gridTemplateColumns:"76px 52px 62px 1fr 1fr 62px 60px 54px", gap:8, fontSize:".64rem", color:"var(--muted-2)", fontWeight:800, letterSpacing:".04em", padding:"0 .6rem" }}>
+         <span>MARKET</span><span>TAPE</span><span>BARRIER</span><span>WIN RATE</span><span>BREAKEVEN</span><span>MARGIN</span><span>PAYOUT</span><span>ENTRY</span>
         </div>
         {copilot.rows.map((r:any, i:number) => (
-         <div key={i} style={{ display:"grid", gridTemplateColumns:"76px 62px 1fr 1fr 62px 60px 54px", gap:8, alignItems:"center", fontSize:".74rem", border:"1px solid var(--border)", borderRadius:10, padding:".45rem .6rem", background: r.playable ? "rgba(40,209,124,0.05)" : "rgba(12,16,30,0.35)" }}>
+         <div key={i} style={{ display:"grid", gridTemplateColumns:"76px 52px 62px 1fr 1fr 62px 60px 54px", gap:8, alignItems:"center", fontSize:".74rem", border:"1px solid var(--border)", borderRadius:10, padding:".45rem .6rem", background: r.playable ? "rgba(40,209,124,0.05)" : "rgba(12,16,30,0.35)" }}>
           <span style={{ fontWeight:800 }}>{r.symbol}</span>
+          <span style={{ fontSize:".66rem", fontWeight:700, color: (r.n||0) >= (copilot.window_requested||0) ? "var(--muted-2)" : "var(--warning)" }}>
+           {r.n ?? "-"}{(r.n||0) < (copilot.window_requested||0) ? "!" : ""}
+          </span>
           <span style={{ color:"var(--muted)" }}>{r.side} {r.barrier}</span>
           <span style={{ fontWeight:800, color: r.edge_pp > 0 ? "var(--success)" : "var(--warning)" }}>{r.observed_pct?.toFixed(1)}%</span>
           <span style={{ color:"var(--muted)" }}>{r.breakeven_pct?.toFixed(1)}%</span>
