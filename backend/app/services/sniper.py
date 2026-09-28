@@ -74,6 +74,23 @@ SNIPER_MIN_EDGE_PP = MIN_EDGE_PP
 # MATCHES must beat its own fair share by this much on the Wilson lower bound.
 MATCHES_MIN_EDGE_PP = 1.0
 
+# How much room the Wilson lower bound has over the target's OWN breakeven -
+# i.e. how much of the measured edge survives the worst case. A kill at 1pp is
+# a digit a hair above fair; a kill at 10pp is a target that holds even if the
+# tape is unkind. Reported as a tier so a marginal shot is never read as a
+# certainty.
+TIER_SNIPER_PP = 10.0
+TIER_SOLID_PP = 5.0
+
+
+def _tier(lb_margin_pp: float) -> str:
+    """Grade a kill by how much edge survives the confidence interval."""
+    if lb_margin_pp >= TIER_SNIPER_PP:
+        return "SNIPER"
+    if lb_margin_pp >= TIER_SOLID_PP:
+        return "SOLID"
+    return "MARGINAL"
+
 
 def _matches_row(counts: List[int], n: int, digit: int) -> dict:
     """One MATCHES target: digit `digit` at 10x, fair at 10%.
@@ -195,12 +212,17 @@ class Sniper:
         if exact:
             raw_ok = row["edge_pp"] >= MATCHES_MIN_EDGE_PP
             lb_ok = row["wilson_edge_pp"] >= MATCHES_MIN_EDGE_PP
+            # The margin that SURVIVES the confidence interval.
+            lb_margin = row["wilson_edge_pp"]
             gate = "MATCHES: Wilson lower bound above the 10% fair share"
+            required_pp = MATCHES_MIN_EDGE_PP
         else:
             raw_ok = row["edge_pp"] >= SNIPER_MIN_EDGE_PP
-            lb_ok = (row["confidence"] - row["breakeven_pct"]) >= SNIPER_MIN_EDGE_PP
+            lb_margin = row["confidence"] - row["breakeven_pct"]
+            lb_ok = lb_margin >= SNIPER_MIN_EDGE_PP
             gate = (f"{side} {target['barrier']}: Wilson lower bound above "
                     f"breakeven by {SNIPER_MIN_EDGE_PP}pp")
+            required_pp = SNIPER_MIN_EDGE_PP
 
         sample_ok = n >= MIN_SAMPLE
         ev_ok = row["ev"] > 0
@@ -216,6 +238,9 @@ class Sniper:
             "n": n,
             "killed": kill,
             "gate": gate,
+            "required_edge_pp": required_pp,
+            "wilson_margin_pp": round(lb_margin, 2),
+            "tier": _tier(lb_margin) if kill else None,
             "rules": {
                 "sample_ok": sample_ok,
                 "raw_edge_ok": bool(raw_ok),
@@ -328,7 +353,8 @@ class Sniper:
                 lines.append(
                     f"{t['target']} \u2192 FIRE {s['symbol']} \u00b7 {call} "
                     f"at {shot['payout']:.2f}x \u00b7 {shot['p_win'] * 100:.1f}% to land "
-                    f"\u00b7 1 run, ${shot['stake']:.2f} \u00b7 EV {shot['ev_per_run']:+.3f}")
+                    f"\u00b7 1 run, ${shot['stake']:.2f} \u00b7 EV {shot['ev_per_run']:+.3f} "
+                    f"\u00b7 {s['tier']} ({s['wilson_margin_pp']:+.1f}pp worst case)")
             else:
                 b = t["best"]
                 if b:

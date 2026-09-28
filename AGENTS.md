@@ -999,4 +999,14 @@ Routes: `POST /ai-copilot/mission` now takes `kind`. Tests:
 - Frontend: red-accented SNIPER panel in `twin/app/app/page.tsx` with an
   Engage button, 30s auto-refresh (pausable), per-target FIRE/HOLD chips and
   the shot broken out (payout, chance to land, miss rate, win credit, EV).
-- Tests: `tests/test_sniper.py` (30). Suite: 669 passed.
+- **Tiers:** every kill is graded by the edge that SURVIVES the confidence
+  interval (`wilson_margin_pp`): SNIPER >= 10pp, SOLID >= 5pp, else MARGINAL.
+  A HOLD never claims one. This exists because a MATCHES kill at the 1pp gate
+  is only a digit running ~12% where it should run 10% - real but weak, and
+  "FIRE" alone would read as certainty. The card states it on every shot.
+- **Measured false-positive rate (fair random walk, 150 x 1200 ticks):**
+  OVER 4 and UNDER 6 fired **0/150** - the 3pp Wilson margin is unreachable
+  by chance. MATCHES fired 3/150 (2%), near its nominal rate, and every one
+  was MARGINAL. Pinned in `TestFalsePositiveRate` so a margin change cannot
+  silently ship a looser sniper.
+- Tests: `tests/test_sniper.py` (37). Suite: 676 passed.

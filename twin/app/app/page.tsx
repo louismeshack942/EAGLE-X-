@@ -999,11 +999,21 @@ return (
       <div key={i} style={{ border:"1px solid " + (t.acquired ? "rgba(40,209,124,0.4)" : "var(--border)"), background: t.acquired ? "rgba(40,209,124,0.05)" : "rgba(12,16,30,0.35)", borderRadius:12, padding:".6rem .7rem" }}>
        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:6 }}>
         <span style={{ fontWeight:800, fontSize:".8rem" }}>{t.target}</span>
-        <span className="chip" style={{ fontSize:".62rem", padding:".12rem .45rem",
-          background: t.acquired ? "rgba(40,209,124,0.16)" : "rgba(245,158,11,0.12)",
-          borderColor: t.acquired ? "rgba(40,209,124,0.4)" : "rgba(245,158,11,0.35)",
-          color: t.acquired ? "var(--success)" : "var(--warning)", fontWeight:800 }}>
-         {t.acquired ? "FIRE" : "HOLD"} · {t.kills}/{t.markets_scanned}
+        <span style={{ display:"flex", gap:5, alignItems:"center" }}>
+         <span className="chip" style={{ fontSize:".62rem", padding:".12rem .45rem",
+           background: t.acquired ? "rgba(40,209,124,0.16)" : "rgba(245,158,11,0.12)",
+           borderColor: t.acquired ? "rgba(40,209,124,0.4)" : "rgba(245,158,11,0.35)",
+           color: t.acquired ? "var(--success)" : "var(--warning)", fontWeight:800 }}>
+          {t.acquired ? "FIRE" : "HOLD"} · {t.kills}/{t.markets_scanned}
+         </span>
+         {t.acquired && t.shot?.tier && (
+          <span className="chip" style={{ fontSize:".6rem", padding:".12rem .45rem", fontWeight:800,
+            background: t.shot.tier === "SNIPER" ? "rgba(40,209,124,0.2)" : t.shot.tier === "SOLID" ? "rgba(40,160,255,0.15)" : "rgba(148,163,184,0.14)",
+            borderColor: t.shot.tier === "SNIPER" ? "rgba(40,209,124,0.5)" : t.shot.tier === "SOLID" ? "rgba(40,160,255,0.4)" : "rgba(148,163,184,0.35)",
+            color: t.shot.tier === "SNIPER" ? "var(--success)" : t.shot.tier === "SOLID" ? "#38a0ff" : "var(--muted-2)" }}>
+           {t.shot.tier}
+          </span>
+         )}
         </span>
        </div>
        {t.acquired && t.shot ? (
@@ -1020,6 +1030,7 @@ return (
           <Row l="The shot" v={`1 run · $${t.shot.one_shot?.stake?.toFixed(2)}`} />
           <Row l="Win credit" v={`+$${t.shot.one_shot?.win_credit?.toFixed(2)}`} />
           <Row l="EV per run" v={`${t.shot.one_shot?.ev_per_run >= 0 ? "+" : ""}${t.shot.one_shot?.ev_per_run?.toFixed(3)}`} />
+          <Row l="Worst case" v={`${t.shot.wilson_margin_pp >= 0 ? "+" : ""}${t.shot.wilson_margin_pp?.toFixed(1)}pp`} />
          </div>
         </div>
        ) : (

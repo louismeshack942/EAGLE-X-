@@ -225,6 +225,101 @@ class TestRestraint:
         assert out["verdict"] == "TARGET_ACQUIRED"
 
 
+class TestFalsePositiveRate:
+    """The measurement that decides whether this department is honest.
+
+    Live Deriv tapes are near-perfect random walks, so the FAIR tape is the
+    real test: a gate that fires often on a random walk is a false-positive
+    machine, and one that never fires is honest but idle. This pins the
+    behaviour so a future margin change cannot silently turn the sniper loose.
+
+    Measured at n=1200: bands 0/150, MATCHES 3/150 (2.0%), any 3/150.
+    """
+
+    def _fires(self, seed: int, runs: int = 40, ticks: int = 1200) -> dict:
+        import random
+        rng = random.Random(seed)
+        counts = {"MATCHES": 0, "OVER_4": 0, "UNDER_6": 0}
+        s = Sniper()
+        for _ in range(runs):
+            digits = [rng.randint(0, 9) for _ in range(ticks)]
+            _push("FP", [str(d) for d in digits])
+            for t in TARGETS:
+                r = s._engage("FP", t)
+                if r and r["killed"]:
+                    counts[t["key"]] += 1
+        return counts
+
+    def test_bands_never_fire_on_a_random_walk(self):
+        """OVER 4 / UNDER 6 need a 3pp margin on the Wilson bound; a fair
+        random walk cannot supply it. Zero tolerance - any fire is a bug."""
+        fires = self._fires(seed=20260920)
+        assert fires["OVER_4"] == 0, fires
+        assert fires["UNDER_6"] == 0, fires
+
+    def test_matches_fires_rarely_on_a_random_walk(self):
+        """MATCHES is judged at only 1pp, so it CAN fire on a fair tape. It
+        must stay rare - under a quarter of runs - and every fire is MARGINAL.
+        """
+        import random
+        rng = random.Random(4242)
+        s = Sniper()
+        fire_tiers = []
+        for _ in range(60):
+            digits = [rng.randint(0, 9) for _ in range(1200)]
+            _push("FP", [str(d) for d in digits])
+            r = s._engage("FP", TARGETS[0])
+            if r and r["killed"]:
+                fire_tiers.append(r["tier"])
+        assert len(fire_tiers) <= 15, fire_tiers       # <= 25%
+        # Any fair-tape fire carries only weak evidence, and says so.
+        assert all(t == "MARGINAL" for t in fire_tiers), fire_tiers
+
+    def test_bands_do_fire_on_a_genuinely_biased_tape(self):
+        """The other half: a real bias must still be engaged, or the gate is
+        just broken closed."""
+        _push("BIAS", ["5", "6", "7", "8", "9", "5", "6", "0", "1", "2"] * 120)
+        r = Sniper()._engage("BIAS", TARGETS[1])       # OVER 4
+        assert r is not None and r["killed"] is True
+        assert r["tier"] in ("SOLID", "SNIPER")
+
+
+class TestTiers:
+    """A marginal shot must never read as a certainty."""
+
+    def test_tier_thresholds(self):
+        from app.services.sniper import _tier
+        assert _tier(12.0) == "SNIPER"
+        assert _tier(6.0) == "SOLID"
+        assert _tier(1.5) == "MARGINAL"
+
+    def test_every_kill_carries_a_tier_and_its_worst_case_margin(self):
+        _push("S_7", _HOT7)
+        out = Sniper().scan(["S_7"])
+        kills = [b for t in out["targets"] for b in t["board"] if b["killed"]]
+        assert kills
+        for k in kills:
+            assert k["tier"] in ("SNIPER", "SOLID", "MARGINAL")
+            assert k["wilson_margin_pp"] is not None
+            assert k["required_edge_pp"] is not None
+
+    def test_card_states_the_worst_case_margin_on_every_fire(self):
+        _push("S_7", _HOT7)
+        c = Sniper().card(["S_7"])
+        for line in c["card"].split(" | "):
+            if "FIRE" in line:
+                assert "worst case" in line
+                assert any(t in line for t in ("SNIPER", "SOLID", "MARGINAL"))
+
+    def test_hold_does_not_claim_a_tier(self):
+        _push("S_F", _FLAT)
+        out = Sniper().scan(["S_F"])
+        for t in out["targets"]:
+            for b in t["board"]:
+                if not b["killed"]:
+                    assert b["tier"] is None
+
+
 class TestGates:
     """Every rule is real, and a failed rule blocks the shot."""
 
