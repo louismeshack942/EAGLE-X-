@@ -32,6 +32,7 @@ from typing import List, Optional
 
 from app.services.cockpit import (
     MIN_CONFIDENCE_PCT,
+    MIN_EDGE_PP,
     CockpitEngine,
 )
 
@@ -213,9 +214,15 @@ def _best_entry(legs: List[dict]) -> Optional[dict]:
         "digit_edge_pp": entry.get("edge_pp"),
         "digit_validated": validated,
         "inside": validated,
+        "observed_pct": top.get("observed_pct"),
         "confidence": top.get("confidence"),
         "breakeven_pct": top.get("breakeven_pct"),
         "edge_pp": top.get("edge_pp"),
+        # Both bases, named. `confidence_margin_pp` is the one the gate uses.
+        "raw_edge_pp": round((top.get("observed_pct") or 0.0)
+                             - (top.get("breakeven_pct") or 0.0), 2),
+        "confidence_margin_pp": round((top.get("confidence") or 0.0)
+                                      - (top.get("breakeven_pct") or 0.0), 2),
         "ev": top.get("ev"),
         "payout": top.get("payout"),
         "playable": bool(top.get("playable")),
@@ -325,6 +332,13 @@ class MissionPlanner:
                     "confidence": lg["confidence"],
                     "breakeven_pct": lg["breakeven_pct"],
                     "edge_pp": lg["edge_pp"], "ev": lg["ev"],
+                    # Two margins, named for their basis. The gate decides on
+                    # `confidence` (the Wilson bound), so a report that pairs a
+                    # bound with a raw margin reads as a contradiction. Keep
+                    # both, labelled, so raw and bound can never be conflated.
+                    "raw_edge_pp": round(lg["observed_pct"] - lg["breakeven_pct"], 2),
+                    "confidence_margin_pp": round(
+                        lg["confidence"] - lg["breakeven_pct"], 2),
                     "payout": lg["payout"],
                     "winning_digits": lg["winning_digits"],
                     "playable": bool(lg.get("playable")),
@@ -368,6 +382,14 @@ class MissionPlanner:
                     "confidence": best["confidence"], "ev": best["ev"],
                     "payout": best["payout"],
                     "edge_pp": best["edge_pp"],
+                    # The basis the gate used, carried so the card can state its
+                    # own margin instead of leaving the reader to subtract.
+                    "observed_pct": best["observed_pct"],
+                    "breakeven_pct": best["breakeven_pct"],
+                    "confidence_margin_pp": round(
+                        best["confidence"] - best["breakeven_pct"], 2),
+                    "raw_edge_pp": round(
+                        best["observed_pct"] - best["breakeven_pct"], 2),
                     "entry_digit": (best.get("entry") or {}).get("digit"),
                     "entry_share_pct": (best.get("entry") or {}).get("pct"),
                     "entry_inside": (best.get("entry") or {}).get("inside"),
@@ -768,43 +790,53 @@ class MissionPlanner:
             "{} {}".format(p["side"], p["barrier"]) for p in preds)
 
         if not candidates:
-            best_seen = max([s["best_confidence"] for s in scan["scanned"]] or [0.0])
-            best_edge = max([s.get("best_edge_pp", 0.0) for s in scan["scanned"]]
-                            or [0.0])
-            best_entry = _best_of(scan["scanned"])
+            # Rank on the margin that DECIDED - the Wilson bound vs breakeven -
+            # and report that same number. Printing the raw margin here made
+            # the board look like it disagreed with its own verdict.
+            rows = sorted(scan["probabilities"],
+                          key=lambda r: (r.get("confidence_margin_pp", -99.0),
+                                         r["edge_pp"]),
+                          reverse=True)
+            board = rows[:10]
             floor_txt = (f" against your {floor:.0f}% floor"
                          if floor is not None else "")
-            # Nothing cleared the gate, but the analysis still exists - publish
-            # the board rather than dead-ending. The owner asked to SEE the
-            # markets, so the ranking is the answer, not a refusal.
-            board = sorted(scan["probabilities"],
-                           key=lambda r: (r["edge_pp"], r["confidence"]),
-                           reverse=True)[:10]
+            # Publish the board rather than dead-ending: the owner asked to SEE
+            # the markets, so the ranking is the answer, not a refusal.
             board_txt = " ".join(
                 f"{r['symbol']} {r['side']} {r['barrier']}: "
-                f"{r['observed_pct']:.1f}% vs {r['breakeven_pct']:.1f}% breakeven "
-                f"({r['edge_pp']:+.1f}pp)."
+                f"{r['observed_pct']:.1f}% observed, "
+                f"{r['confidence']:.1f}% confidence vs "
+                f"{r['breakeven_pct']:.1f}% breakeven "
+                f"({r.get('confidence_margin_pp', 0.0):+.1f}pp)."
                 for r in board[:5]) if board else ""
+            # The single best row on the DECIDING basis, so the headline cannot
+            # mix one row's confidence with another row's margin.
+            top = board[0] if board else None
             entry_txt = ""
-            if best_entry:
+            if top is not None:
+                margin = top.get("confidence_margin_pp", 0.0)
+                verdict_txt = ("clears" if margin >= MIN_EDGE_PP else
+                               "falls short of")
                 entry_txt = (
-                    f" Strongest entry point on the board: "
-                    f"{best_entry['side']} {best_entry['barrier']} into digit "
-                    f"{best_entry['digit']} on {best_entry['symbol']} "
-                    f"({best_entry['confidence']:.1f}% confidence, "
-                    f"{best_entry['edge_pp']:+.1f}pp vs breakeven).")
+                    f" Best on the board: {top['symbol']} {top['side']} "
+                    f"{top['barrier']} - {top['confidence']:.1f}% confidence vs "
+                    f"{top['breakeven_pct']:.1f}% breakeven "
+                    f"({margin:+.1f}pp), which {verdict_txt} the "
+                    f"{MIN_EDGE_PP:.0f}pp margin the gate requires.")
             return {**base, "verdict": "NO_EDGE_FOUND", "candidates": [],
                     "scanned": scan["scanned"],
                     "probabilities": scan["probabilities"],
                     "board": board,
                     "selected": [], "runs": None,
-                    "best_entry": best_entry,
+                    "best_entry": _best_of(scan["scanned"]),
                     "answer": (
                         f"I scanned {len(scan['scanned'])} markets for {pred_txt}. "
-                        f"Nothing cleared its own breakeven by a real margin"
-                        f"{floor_txt}, so there is no edge to take. Best reading "
-                        f"was {best_seen:.1f}% confidence at "
-                        f"{best_edge:+.1f}pp vs breakeven. Here is the board: "
+                        f"No market's confidence lower bound cleared its own "
+                        f"breakeven by the {MIN_EDGE_PP:.0f}pp margin the gate "
+                        f"requires{floor_txt}, so there is no edge to take. "
+                        f"A strong raw rate that does not survive its confidence "
+                        f"bound is variance, not edge - the two are shown "
+                        f"separately below. Here is the board: "
                         f"{board_txt}{entry_txt} "
                         "That is the full measurement - the markets are all "
                         "listed above, so you can see exactly what each one is "
@@ -833,8 +865,9 @@ class MissionPlanner:
                     entry_txt += " (not itself validated)"
             lines.append(
                 f"Run {i}: {c['symbol']} - {pl['side']} {pl['barrier']}"
-                f"{entry_txt} - {pl['confidence']:.1f}% confidence, "
-                f"{pl['edge_pp']:+.1f}pp vs breakeven, "
+                f"{entry_txt} - {pl['confidence']:.1f}% confidence vs "
+                f"{pl['breakeven_pct']:.1f}% breakeven "
+                f"({pl.get('confidence_margin_pp', 0.0):+.1f}pp), "
                 f"{pl['payout']:.2f}x, EV {pl['ev']:+.3f}/$.")
         if len(selected) < runs:
             lines.append(
